@@ -3400,7 +3400,12 @@ class AgentManager:
         
         session.status = "completed"
         session.closed_at = datetime.now()
-        session.cost_usd = 0.001
+        # Mock branch (claude_agent_sdk missing): leave cost untouched so it
+        # stays at its 0.0 default. Setting a fake nonzero value here would
+        # poison cost dashboards in dev. We also tag the session so
+        # _fire_session_completed (called later via close_session) can
+        # detect this is a mock session and skip the analytics emit.
+        setattr(session, "_mock_run", True)
         await ws_manager.send_to_session(session_id, "agent:status", {
             "session_id": session_id,
             "status": "completed",
@@ -4006,16 +4011,43 @@ class AgentManager:
         text = " ".join(parts)
         return text[:max_len]
 
-    def _fire_session_completed(self, session: AgentSession):
-        """Fire the session.completed analytics event exactly once when a session ends."""
+    def _fire_session_completed(self, session: AgentSession, close_reason: str = "user"):
+        """Fire the session.completed analytics event exactly once when a session ends.
+
+        close_reason distinguishes deliberate user close from process shutdown
+        and crash paths, which previously all looked identical to PostHog
+        consumers and inflated "completion rate" metrics. close_reason="mock"
+        means the session ran without claude_agent_sdk (dev-only path) and
+        we skip the emit entirely so dev sessions never reach real
+        dashboards.
+        """
+        if close_reason == "mock" or getattr(session, "_mock_run", False):
+            return
         duration = 0.0
         if session.created_at:
             end = session.closed_at or datetime.now()
             duration = (end - session.created_at).total_seconds()
-        tool_names = [
-            m.content.get("tool", "") for m in session.messages
+        tool_call_msgs = [
+            m for m in session.messages
             if m.role == "tool_call" and isinstance(m.content, dict)
         ]
+        tool_names = [m.content.get("tool", "") for m in tool_call_msgs]
+        # Pair each tool_call with its tool_result (if any) and check for an
+        # error marker so we can split succeeded vs errored at session-end
+        # rather than emitting a conflated total. Heuristic: a tool_result
+        # whose content is a dict with an "error" key, or a string starting
+        # with "Error:", counts as errored. Robust to the agent loop's
+        # current shape; silent for messages that don't follow it.
+        tools_errored = 0
+        for i, m in enumerate(session.messages):
+            if m.role != "tool_result":
+                continue
+            content = m.content
+            if isinstance(content, dict) and (content.get("error") or content.get("is_error")):
+                tools_errored += 1
+            elif isinstance(content, str) and content.lower().startswith("error:"):
+                tools_errored += 1
+        tools_succeeded = max(0, len(tool_call_msgs) - tools_errored)
         user_messages = [
             (m.content if isinstance(m.content, str) else str(m.content))[:200]
             for m in session.messages if m.role == "user"
@@ -4028,7 +4060,10 @@ class AgentManager:
             "message_count": len([m for m in session.messages if m.role in ("user", "assistant")]),
             "duration_seconds": round(duration, 1),
             "status": session.status,
+            "close_reason": close_reason,
             "tool_count": len(tool_names),
+            "tools_succeeded": tools_succeeded,
+            "tools_errored": tools_errored,
             "tools_list": list(set(tool_names)),
             "session_title": session.name,
             "first_user_message": user_messages[0] if user_messages else "",
@@ -4225,7 +4260,9 @@ class AgentManager:
             for req in list(session.pending_approvals):
                 ws_manager.resolve_approval(req.id, {"behavior": "deny", "message": "Server shutting down"})
             session.pending_approvals = []
-            self._fire_session_completed(session)
+            # Fired during process shutdown — distinguish from user-initiated
+            # close so completion-rate dashboards can filter shutdowns out.
+            self._fire_session_completed(session, close_reason="shutdown")
             doc_data = session.model_dump(mode="json")
             doc_data["search_text"] = self._build_search_text(session)
             _save_session(session_id, doc_data)

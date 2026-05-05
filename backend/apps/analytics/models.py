@@ -1,14 +1,4 @@
 from pydantic import BaseModel
-from typing import Optional
-
-
-class AnalyticsEvent(BaseModel):
-    id: Optional[int] = None
-    timestamp: str
-    event_type: str
-    properties: dict
-    session_id: Optional[str] = None
-    dashboard_id: Optional[str] = None
 
 
 class UsageSummary(BaseModel):
@@ -22,16 +12,3 @@ class UsageSummary(BaseModel):
     models_used: dict[str, int] = {}
     modes_used: dict[str, int] = {}
     top_tools: list[list] = []
-
-
-class TimeSeriesPoint(BaseModel):
-    date: str
-    value: float
-
-
-class ExportPayload(BaseModel):
-    export_version: str = "1.0"
-    exported_at: str = ""
-    app_version: str = "unknown"
-    period: dict = {}
-    summary: dict = {}
