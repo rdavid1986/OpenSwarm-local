@@ -169,7 +169,7 @@ async def update_settings(body: AppSettings):
     if safe_changed:
         _analytics("settings.changed", {"changed_keys": safe_changed})
 
-    # Identify user in PostHog when profile is set/changed
+    # Identify user in service-sync when profile is set/changed
     if (body.user_email and body.user_email != getattr(old, "user_email", None)) or \
        (body.user_name and body.user_name != getattr(old, "user_name", None)):
         from backend.apps.analytics.collector import identify as _identify

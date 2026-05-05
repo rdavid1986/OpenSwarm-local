@@ -199,7 +199,7 @@ const OpenSwarmProCard: React.FC = () => {
   const [status, setStatus] = useState<OpenSwarmProStatus | null>(null);
   const [busy, setBusy] = useState<'manage' | 'disconnect' | null>(null);
   // Track which usage thresholds we've already fired this session so the
-  // event doesn't spam PostHog every 30s while the counter hovers past
+  // event doesn't spam every 30s while the counter hovers past
   // the threshold. Reset implicitly on page unmount (settings close).
   const firedUsageThresholds = useRef<Set<number>>(new Set());
 

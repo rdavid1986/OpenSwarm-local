@@ -89,6 +89,15 @@ class AgentSession(BaseModel):
     closed_at: Optional[datetime] = None
     cost_usd: float = 0.0
     tokens: dict[str, int] = Field(default_factory=lambda: {"input": 0, "output": 0})
+    # Total wall-clock ms the agent spent in `status="running"`. Accumulates
+    # across turns; persists across resume. Used by the session-close
+    # report so we can report "agent active time" alongside total session
+    # duration. Off by default so legacy sessions deserialize cleanly.
+    agent_active_ms: int = 0
+    # Accumulated wall-clock ms spent on each model. Updated when the
+    # active model changes (model switch) or on close. Lets dashboards
+    # answer "how long did each model run?" without inferring from turns.
+    time_per_model: dict[str, int] = Field(default_factory=dict)
     messages: list[Message] = Field(default_factory=list)
     pending_approvals: list[ApprovalRequest] = Field(default_factory=list)
     branches: dict[str, "MessageBranch"] = Field(default_factory=lambda: {"main": MessageBranch(id="main")})

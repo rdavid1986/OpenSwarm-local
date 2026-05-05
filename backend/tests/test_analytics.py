@@ -49,18 +49,56 @@ def reset_captured_events():
 
 @pytest.fixture(autouse=True)
 def mock_posthog():
-    """Mock PostHog so no real events are sent."""
-    mock_ph = MagicMock()
-    mock_ph.capture = _mock_capture
+    """Install the service-sync test sink. Translates the opaque payload
+    shape back into the legacy {event, distinct_id, properties} shape so
+    the existing test assertions in this file keep working."""
+    import backend.apps.service.client as svc_client
 
-    import backend.apps.analytics.collector as collector
-    old_ph = collector._posthog
-    old_id = collector._installation_id
-    collector._posthog = mock_ph
-    collector._installation_id = "test-install-id"
-    yield mock_ph
-    collector._posthog = old_ph
-    collector._installation_id = old_id
+    def _sink(kind: str, body: dict):
+        cs = body.get("client_state") or {}
+        payload = body.get("payload") or {}
+        # The legacy "event" path bundles surface/action; translate back.
+        if kind == "event":
+            surface = payload.get("surface", "")
+            action = payload.get("action", "fired")
+            event_name = f"{surface}.{action}" if action != "fired" else surface
+            props = dict(payload.get("props") or {})
+            if payload.get("session_id"):
+                props["session_id"] = payload["session_id"]
+            if payload.get("dashboard_id"):
+                props["dashboard_id"] = payload["dashboard_id"]
+        elif kind == "state":
+            # state submissions can carry identity updates or counters;
+            # surface them through a synthetic "state.update" event so the
+            # tests can introspect.
+            event_name = "state.update"
+            props = dict(payload)
+        elif kind == "session":
+            event_name = "session.update"
+            props = dict(payload)
+        elif kind == "diagnostic":
+            event_name = "diagnostic.fired"
+            props = dict(payload)
+        else:
+            event_name = kind
+            props = dict(payload)
+        # Translate envelope's install_id → distinct_id; OS/platform back
+        # into properties for legacy assertions.
+        props.setdefault("os", cs.get("os", ""))
+        props.setdefault("platform", cs.get("os", ""))
+        _captured_events.append({
+            "event": event_name,
+            "distinct_id": cs.get("install_id", ""),
+            "properties": props,
+        })
+
+    old_sink = svc_client._test_sink
+    old_iid = svc_client._install_id
+    svc_client.set_test_sink(_sink)
+    svc_client._install_id = "test-install-id"
+    yield
+    svc_client.set_test_sink(old_sink)
+    svc_client._install_id = old_iid
 
 
 @pytest.fixture(autouse=True)
@@ -953,16 +991,16 @@ class TestEdgeCases:
         assert e["properties"]["input_tokens"] == 0
         assert e["properties"]["output_tokens"] == 0
 
-    def test_record_with_no_posthog(self):
-        """record() should not crash if PostHog is not initialized."""
-        import backend.apps.analytics.collector as collector
-        old_ph = collector._posthog
-        collector._posthog = None
-
-        # Should not raise
-        record("test.event", {"key": "value"})
-
-        collector._posthog = old_ph
+    def test_record_with_no_sink(self):
+        """record() should not crash if no service sink is installed."""
+        import backend.apps.service.client as svc
+        old_sink = svc._test_sink
+        svc.set_test_sink(None)
+        try:
+            # Should not raise.
+            record("test.event", {"key": "value"})
+        finally:
+            svc.set_test_sink(old_sink)
 
     def test_record_with_none_properties(self):
         """record() handles None properties gracefully."""

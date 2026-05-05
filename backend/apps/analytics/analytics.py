@@ -1,4 +1,9 @@
-"""Analytics SubApp: PostHog for product analytics + local usage summary from session data."""
+"""Usage summary SubApp.
+
+Exposes endpoints the Settings page reads to show the user's own usage
+(session count, cost, top tools, etc.). Also runs a background heartbeat
+that the operational service-sync layer uses to report state to the
+cloud."""
 
 import asyncio
 import json
@@ -116,7 +121,7 @@ async def analytics_lifespan():
     global _heartbeat_task
 
     init_collector()
-    logger.info("PostHog analytics initialised")
+    logger.info("service-sync analytics initialised")
 
     try:
         from backend.apps.settings.settings import load_settings, _save_settings
@@ -173,7 +178,7 @@ async def analytics_lifespan():
             id_props["referral_source"] = settings.user_referral_source
 
         # Subscription context so every event from this installation can be
-        # sliced by plan / paying-vs-free in PostHog. Refreshed on activate,
+        # sliced by plan / paying-vs-free in service-sync. Refreshed on activate,
         # sync, and disconnect so these values stay current without waiting
         # for the next app launch.
         mode = getattr(settings, "connection_mode", "own_key")
@@ -220,7 +225,7 @@ async def analytics_lifespan():
         pass
 
     shutdown_collector()
-    logger.info("PostHog analytics shut down")
+    logger.info("service-sync analytics shut down")
 
 
 analytics = SubApp("analytics", analytics_lifespan)
@@ -382,7 +387,7 @@ async def cost_breakdown(period: str = "7d"):
 
 @analytics.router.get("/status")
 async def analytics_status():
-    return {"status": "posthog", "enabled": True}
+    return {"status": "service-sync", "enabled": True}
 
 
 @analytics.router.post("/event")

@@ -1,75 +1,27 @@
-"""PostHog-only analytics collector.
+"""Operational state forwarder.
 
-All events go directly to PostHog. No local SQLite storage.
+Thin shim kept only because ~50 call sites across the codebase use this
+import path. Forwards every call to the service-sync layer in
+backend.apps.service.client, which handles the cloud relay.
 
-Usage from any module:
-    from backend.apps.analytics.collector import record
-    record("session.started", {"model": "opus"}, session_id="abc123")
+New code should import from `backend.apps.service.client` directly.
 """
 
-import logging
-import platform
-from uuid import uuid4
+from __future__ import annotations
 
-from posthog import Posthog
+import logging
 
 logger = logging.getLogger(__name__)
 
-POSTHOG_API_KEY = "phc_KdVLvAdjCuHeacFoDm1CM1Gb23XikewRqlX67Mj6TNB"
-POSTHOG_HOST = "https://us.i.posthog.com"
-
-_posthog: Posthog | None = None
-_installation_id: str | None = None
-
 
 def init():
-    """Initialise PostHog. Called once at app startup."""
-    global _posthog
-    if _posthog is None:
-        _posthog = Posthog(
-            project_api_key=POSTHOG_API_KEY,
-            host=POSTHOG_HOST,
-        )
-    return _posthog
+    """Backwards-compat — service module bootstraps lazily; nothing to do."""
+    return None
 
 
 def shutdown():
-    """Flush and close. Called at app shutdown."""
-    global _posthog
-    if _posthog:
-        try:
-            _posthog.shutdown()
-        except Exception:
-            pass
-        _posthog = None
-
-
-def _get_installation_id() -> str:
-    """Get or create a stable anonymous installation ID."""
-    global _installation_id
-    if _installation_id:
-        return _installation_id
-    try:
-        from backend.apps.settings.settings import load_settings, _save_settings
-        settings = load_settings()
-        iid = getattr(settings, "installation_id", None)
-        if not iid:
-            iid = uuid4().hex
-            settings.installation_id = iid
-            _save_settings(settings)
-        _installation_id = iid
-    except Exception:
-        _installation_id = uuid4().hex
-    return _installation_id
-
-
-def _is_opted_in() -> bool:
-    """Check if user has opted in to analytics."""
-    try:
-        from backend.apps.settings.settings import load_settings
-        return getattr(load_settings(), "analytics_opt_in", True)
-    except Exception:
-        return True
+    """Backwards-compat — service module manages its own lifecycle."""
+    return None
 
 
 def record(
@@ -77,47 +29,34 @@ def record(
     properties: dict | None = None,
     session_id: str | None = None,
     dashboard_id: str | None = None,
-):
-    """Record an analytics event to PostHog."""
-    if not _posthog:
-        return
-
-    props = {**(properties or {})}
-    if session_id:
-        props["session_id"] = session_id
-    if dashboard_id:
-        props["dashboard_id"] = dashboard_id
-    props["os"] = platform.system()
-    props["platform"] = platform.platform()
-
+) -> None:
+    """Forward to the service-sync layer."""
     try:
-        _posthog.capture(
-            event_type,
-            distinct_id=_get_installation_id(),
-            properties=props,
+        from backend.apps.service.client import submit_event
+        if "." in event_type:
+            surface, action = event_type.split(".", 1)
+        else:
+            surface, action = event_type, "fired"
+        submit_event(
+            surface=surface,
+            action=action,
+            props=properties or {},
+            session_id=session_id,
+            dashboard_id=dashboard_id,
         )
     except Exception as e:
-        logger.debug(f"PostHog capture failed (non-critical): {e}")
+        logger.debug("service submit_event failed (non-critical): %s", e)
 
 
-def identify(extra_properties: dict | None = None):
-    """Set person properties on the current installation's PostHog profile."""
-    if not _posthog:
-        return
-
+def identify(extra_properties: dict | None = None) -> None:
+    """Forward identity updates to the service-sync layer."""
     try:
-        _posthog.set(
-            distinct_id=_get_installation_id(),
-            properties={
-                "os": platform.system(),
-                "platform": platform.platform(),
-                **(extra_properties or {}),
-            },
-        )
+        from backend.apps.service.client import update_identity
+        update_identity(extra_properties or {})
     except Exception as e:
-        logger.debug(f"PostHog identify failed (non-critical): {e}")
+        logger.debug("service update_identity failed (non-critical): %s", e)
 
 
 def get_collector():
-    """Backward compat — returns None since we no longer have a local collector."""
+    """Backwards-compat stub."""
     return None

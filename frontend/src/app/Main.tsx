@@ -31,6 +31,7 @@ const OnboardingModal = lazy(() => import('./components/OnboardingModal'));
 import { trackEvent, getLastAction, getLastPage, getTimeSpent } from '@/shared/analytics';
 import { useKeyboardShortcuts } from '@/shared/hooks/useKeyboardShortcuts';
 import { useDeepLink } from '@/shared/hooks/useDeepLink';
+import { useInteractionHeartbeat } from '@/shared/hooks/useInteractionHeartbeat';
 import KeyboardShortcutsHelp from './components/KeyboardShortcutsHelp';
 import { ThemeProvider, useThemeMode, useClaudeTokens } from '@/shared/styles/ThemeContext';
 import { ClaudeTokens } from '@/shared/styles/claudeTokens';
@@ -163,6 +164,10 @@ const ShortcutsProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
 const DeepLinkListener: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   useDeepLink();
+  // Single global interaction-timestamp recorder. Powers idle-dim and
+  // similar UX, and gives the session-close dump a real "last user
+  // interaction" timestamp.
+  useInteractionHeartbeat();
   return <>{children}</>;
 };
 

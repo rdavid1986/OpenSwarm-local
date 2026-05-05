@@ -1181,3 +1181,49 @@ async def test_e2e_50_random_activation_sequences():
             result = await mgr._build_mcp_servers(allowed, active)
             keys = set(result.keys())
             assert keys == set(active), f"mismatch: active={active} keys={keys}"
+
+
+def test_session_agent_active_ms_default_zero_for_legacy():
+    """A session loaded from JSON without `agent_active_ms` deserializes
+    cleanly with default 0 (not None, not missing-key crash)."""
+    from backend.apps.agents.models import AgentSession
+    s = AgentSession(name="legacy", model="sonnet", mode="agent")
+    assert s.agent_active_ms == 0
+    assert s.time_per_model == {}
+
+
+def test_session_agent_active_ms_round_trip():
+    from backend.apps.agents.models import AgentSession
+    s = AgentSession(name="t", model="sonnet", mode="agent",
+                     agent_active_ms=12345, time_per_model={"haiku": 1000, "sonnet": 11345})
+    d = s.model_dump(mode="json")
+    s2 = AgentSession(**d)
+    assert s2.agent_active_ms == 12345
+    assert s2.time_per_model == {"haiku": 1000, "sonnet": 11345}
+
+
+def test_session_agent_active_ms_accumulates_via_dict_update():
+    """Simulates two turns adding to the bucket — the production accumulator
+    pattern in agent_manager._on_result."""
+    from backend.apps.agents.models import AgentSession
+    s = AgentSession(name="t", model="sonnet", mode="agent")
+    s.agent_active_ms = (s.agent_active_ms or 0) + 1500
+    s.time_per_model[s.model] = int(s.time_per_model.get(s.model, 0)) + 1500
+    s.agent_active_ms = (s.agent_active_ms or 0) + 800
+    s.time_per_model[s.model] = int(s.time_per_model.get(s.model, 0)) + 800
+    assert s.agent_active_ms == 2300
+    assert s.time_per_model == {"sonnet": 2300}
+
+
+def test_session_time_per_model_records_switch():
+    """Simulates a model switch mid-session — each model accumulates its
+    own bucket."""
+    from backend.apps.agents.models import AgentSession
+    s = AgentSession(name="t", model="haiku", mode="agent")
+    # Turn 1 on haiku
+    s.time_per_model[s.model] = int(s.time_per_model.get(s.model, 0)) + 1200
+    # User switches to sonnet
+    s.model = "sonnet"
+    # Turn 2 on sonnet
+    s.time_per_model[s.model] = int(s.time_per_model.get(s.model, 0)) + 8400
+    assert s.time_per_model == {"haiku": 1200, "sonnet": 8400}

@@ -52,9 +52,9 @@ async def _clear_subscription(settings_obj) -> None:
 
 
 def _sync_subscription_identity(settings_obj) -> None:
-    """Push the installation's current subscription state into PostHog person
+    """Push the installation's current subscription state into service-sync person
     properties so every event from this user is segmentable by plan /
-    paying-vs-free. Safe to call from hot paths — PostHog is fire-and-forget
+    paying-vs-free. Safe to call from hot paths — service-sync is fire-and-forget
     and swallows errors internally."""
     try:
         from backend.apps.analytics.collector import identify as _identify
@@ -231,7 +231,7 @@ async def sync():
     No-op when not in openswarm-pro mode. Best-effort: network failures are
     swallowed — the caller still gets a 200 with whatever local state we
     already had."""
-    # Lazy-import the PostHog helper so subscription/router doesn't pay the
+    # Lazy-import the service-sync helper so subscription/router doesn't pay the
     # cost when analytics are disabled.
     from backend.apps.analytics.collector import record as _record
 

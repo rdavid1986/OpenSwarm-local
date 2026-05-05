@@ -2413,6 +2413,19 @@ class AgentManager:
                         pass
                 if _turn_started_ts is not None:
                     _turn_total_ms = int((time.time() - _turn_started_ts) * 1000)
+                    # Accumulate into session-level "agent active time" and
+                    # the per-model breakdown so a session that spans
+                    # multiple turns reports the total wall-clock time the
+                    # agent was running. Per-model bucket uses the model
+                    # active *now* (model can be switched mid-turn but the
+                    # current value is the right attribution for the work
+                    # just produced).
+                    try:
+                        session.agent_active_ms = int(getattr(session, "agent_active_ms", 0) or 0) + _turn_total_ms
+                        m = session.model or "unknown"
+                        session.time_per_model[m] = int(session.time_per_model.get(m, 0)) + _turn_total_ms
+                    except Exception:
+                        pass
                 if _turn_thinking_msg_id is None:
                     _turn_thinking_msg_id = uuid4().hex
                 # Combined token total for the pill — input + output for
@@ -4015,7 +4028,7 @@ class AgentManager:
         """Fire the session.completed analytics event exactly once when a session ends.
 
         close_reason distinguishes deliberate user close from process shutdown
-        and crash paths, which previously all looked identical to PostHog
+        and crash paths, which previously all looked identical to service-sync
         consumers and inflated "completion rate" metrics. close_reason="mock"
         means the session ran without claude_agent_sdk (dev-only path) and
         we skip the emit entirely so dev sessions never reach real
