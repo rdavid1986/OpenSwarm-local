@@ -147,7 +147,7 @@ To use Google Calendar, Gmail, Drive, and other Google tools from your agents, y
 Paste the values into `backend/.env`:
 
 ```env
-GOOGLE_OAUTH_CLIENT_ID=123456789-abc.apps.googleusercontent.com
+GOOGLE_OAUTH_CLIENT_ID=YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com
 GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-...
 ```
 

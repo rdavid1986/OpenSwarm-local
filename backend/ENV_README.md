@@ -79,8 +79,8 @@ A popup appears with your credentials:
 - **Client Secret** — copy this into `GOOGLE_OAUTH_CLIENT_SECRET`
 
 ```
-GOOGLE_OAUTH_CLIENT_ID=123456789-xxxxxxxxx.apps.googleusercontent.com
-GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxxxx
+GOOGLE_OAUTH_CLIENT_ID=YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com
+GOOGLE_OAUTH_CLIENT_SECRET=YOUR_GOOGLE_OAUTH_CLIENT_SECRET
 ```
 
 ---
@@ -204,8 +204,8 @@ GH_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 BACKEND_PORT=8324
 
-GOOGLE_OAUTH_CLIENT_ID=123456789-xxxxxxxxx.apps.googleusercontent.com
-GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxxxx
+GOOGLE_OAUTH_CLIENT_ID=YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com
+GOOGLE_OAUTH_CLIENT_SECRET=YOUR_GOOGLE_OAUTH_CLIENT_SECRET
 
 APPLE_ID=you@example.com
 APPLE_APP_SPECIFIC_PASSWORD=abcd-efgh-ijkl-mnop
