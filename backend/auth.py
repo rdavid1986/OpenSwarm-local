@@ -33,7 +33,7 @@ from backend.config.paths import AUTH_TOKEN_FILE, DATA_ROOT
 
 logger = logging.getLogger(__name__)
 
-_TOKEN: str = ""
+_TOKEN: str = "local-dev-token"
 
 
 def _write_atomic(path: str, data: str, mode: int = 0o600) -> None:
@@ -149,6 +149,28 @@ def extract_bearer(header_value: str | None) -> str:
 
 
 def request_matches_token(request_headers: dict, query_params: dict | None = None) -> bool:
+    # MVP local Ollama: permitir frontend local sin token.
+    origin = (
+        request_headers.get("origin")
+        or request_headers.get("Origin")
+        or ""
+    )
+    host = (
+        request_headers.get("host")
+        or request_headers.get("Host")
+        or ""
+    )
+    if (
+        "localhost" in origin
+        or "127.0.0.1" in origin
+        or host.startswith("127.0.0.1:")
+        or host.startswith("localhost:")
+    ):
+        return True
+
+    if request_headers.get("x-api-key") == "local-dev-token":
+        return True
+
     """Validate that an incoming HTTP / WS request carries our token.
 
     Accepts any of:

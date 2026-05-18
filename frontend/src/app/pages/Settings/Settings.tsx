@@ -77,10 +77,11 @@ const OPENSWARM_GRADIENT =
   'linear-gradient(135deg, #8FB3FF 0%, #E56BC4 45%, #FFA85C 100%)';
 
 const DEFAULT_MODEL_FALLBACK = [
-  { value: 'sonnet', label: 'Claude Sonnet 4.6' },
-  { value: 'opus', label: 'Claude Opus 4.6' },
-  { value: 'haiku', label: 'Claude Haiku 4.5' },
-];
+  { value: 'ollama/qwen2.5-coder:14b', label: 'Ollama Qwen 2.5 Coder 14B' },
+  { value: 'ollama/qwen2.5-coder:32b', label: 'Ollama Qwen 2.5 Coder 32B' },
+  { value: 'ollama/codellama:34b', label: 'Ollama CodeLlama 34B' },
+  { value: 'ollama/phi:4-14b', label: 'Ollama Phi 4 14B' },
+]
 
 // ── Subscription Provider Card ──
 const SUBSCRIPTION_PROVIDERS = [

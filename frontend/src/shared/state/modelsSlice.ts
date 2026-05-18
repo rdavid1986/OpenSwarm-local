@@ -29,11 +29,16 @@ const initialState: ModelsState = {
 };
 
 export const fetchModels = createAsyncThunk('models/fetchModels', async () => {
-  const res = await fetch(`${AGENTS_API}/models`);
+  const res = await fetch(`${AGENTS_API}/models`, {
+    headers: { 'x-api-key': 'local-dev-token' },
+  });
   if (!res.ok) throw new Error('Failed to fetch models');
   const data = await res.json();
+  // DEBUG LOCAL OLLAMA
+  console.log('[OpenSwarm models response]', data);
   // API returns { models: { provider: [...] } }
   const models = data.models || data;
+  console.log('[OpenSwarm models parsed]', models);
   return models as Record<string, ModelOption[]>;
 });
 

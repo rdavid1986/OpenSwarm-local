@@ -2,9 +2,11 @@ from backend.config.Apps import SubApp
 from backend.apps.agents.agent_manager import agent_manager
 from backend.apps.agents.ws_manager import ws_manager
 from backend.apps.agents.models import AgentConfig, ApprovalResponse
+from backend.apps.agents.plans import create_plan_from_text, get_plan, list_plans, update_execution_state, append_validation_log
 from contextlib import asynccontextmanager
 from fastapi import WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import JSONResponse
+import asyncio
 import json
 import logging
 
@@ -23,24 +25,200 @@ async def agents_lifespan():
 
 agents = SubApp("agents", agents_lifespan)
 
+
+def _mode_label(mode: str | None) -> str:
+    labels = {
+        "agent": "Agent",
+        "ask": "Ask",
+        "plan": "Plan",
+        "skill-builder": "Skill Builder",
+        "view-builder": "View Builder",
+        "app-builder": "App Builder",
+    }
+    normalized = str(mode or "").strip()
+    return labels.get(normalized, normalized.replace("-", " ").title() or "Session")
+
+
+def _session_payload(session):
+    payload = session.model_dump(mode="json")
+    mode_label = _mode_label(payload.get("mode"))
+    name = str(payload.get("name") or payload.get("id") or "Untitled").strip()
+    payload["mode_label"] = mode_label
+    payload["display_label"] = f"{mode_label} · {name}"
+    payload["technical_id"] = payload.get("id")
+    return payload
+
+
 # REST Endpoints
 
 @agents.router.get("/sessions")
 async def list_sessions(dashboard_id: str = ""):
     sessions = agent_manager.get_all_sessions(dashboard_id=dashboard_id or None)
-    return {"sessions": [s.model_dump(mode="json") for s in sessions]}
+    return {"sessions": [_session_payload(s) for s in sessions]}
 
 @agents.router.get("/sessions/{session_id}")
 async def get_session(session_id: str):
     session = agent_manager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    return session.model_dump(mode="json")
+    return _session_payload(session)
 
 @agents.router.post("/launch")
 async def launch_agent(config: AgentConfig):
     session = await agent_manager.launch_agent(config)
-    return {"session_id": session.id, "session": session.model_dump(mode="json")}
+    return {"session_id": session.id, "session": _session_payload(session)}
+
+@agents.router.get("/plans")
+async def api_list_plans(dashboard_id: str | None = None):
+    return list_plans(dashboard_id=dashboard_id)
+
+
+@agents.router.get("/plans/{plan_id}")
+async def api_get_plan(plan_id: str):
+    result = get_plan(plan_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("error", "Plan not found"))
+    return result
+
+
+@agents.router.post("/plans")
+async def api_create_plan(body: dict):
+    title = str(body.get("title") or "").strip()
+    content = str(body.get("content") or "").strip()
+
+    if not title:
+        raise HTTPException(status_code=400, detail="title is required")
+    if not content:
+        raise HTTPException(status_code=400, detail="content is required")
+
+    return create_plan_from_text(
+        title,
+        content,
+        session_id=body.get("session_id"),
+        created_by_session_id=body.get("created_by_session_id"),
+        dashboard_id=body.get("dashboard_id"),
+        source_mode=str(body.get("source_mode") or "plan"),
+    )
+
+
+@agents.router.patch("/plans/{plan_id}/execution-state")
+async def api_update_execution_state(plan_id: str, body: dict):
+    result = update_execution_state(plan_id, body)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("error", "Execution state not found"))
+    return result
+
+
+async def _watch_plan_execution_completion(
+    session_id: str,
+    plan_id: str,
+    minimum_message_count: int,
+    timeout_seconds: int = 120,
+):
+    """Cierra el execution_state del plan cuando el Agent produce una respuesta final nueva."""
+    for _ in range(timeout_seconds):
+        await asyncio.sleep(1)
+
+        session = agent_manager.get_session(session_id)
+        if not session:
+            continue
+
+        new_messages = list(session.messages)[minimum_message_count:]
+
+        for message in reversed(new_messages):
+            if getattr(message, "role", None) == "assistant" and str(getattr(message, "content", "")).strip():
+                update_execution_state(plan_id, {
+                    "status": "completed",
+                    "current_phase_index": 1,
+                    "completed_phase_indexes": [0],
+                    "last_error": None,
+                    "last_execution_session_id": session_id,
+                })
+                append_validation_log(plan_id, "execute_plan_completed", {
+                    "session_id": session_id,
+                    "message_count": len(session.messages),
+                })
+                return
+
+    update_execution_state(plan_id, {
+        "status": "running",
+        "last_error": "Timed out waiting for new final assistant message.",
+    })
+    append_validation_log(plan_id, "execute_plan_timeout", {
+        "session_id": session_id,
+        "timeout_seconds": timeout_seconds,
+    })
+
+
+@agents.router.post("/sessions/{session_id}/execute-plan")
+async def execute_plan(session_id: str, body: dict):
+    plan_id = str(body.get("plan_id") or "").strip()
+    if not plan_id:
+        raise HTTPException(status_code=400, detail="plan_id is required")
+
+    result = get_plan(plan_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("error", "Plan not found"))
+
+    plan = result.get("plan") or {}
+    title = plan.get("title") or plan_id
+    content = plan.get("content") or ""
+
+    prompt = f"""Ejecutá este plan persistente.
+
+PLAN_ID: {plan_id}
+TÍTULO: {title}
+
+Reglas:
+- Leé el plan antes de actuar.
+- Ejecutá solo la primera fase pendiente.
+- No avances fases sin validar.
+- Si falta una decisión, preguntá antes de modificar.
+- Después de ejecutar, resumí archivos modificados y validación realizada.
+
+Contenido del plan:
+{content}
+"""
+
+    session_before_execution = agent_manager.get_session(session_id)
+    if not session_before_execution:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    minimum_message_count = len(session_before_execution.messages)
+
+    update_execution_state(plan_id, {
+        "status": "running",
+        "current_phase_index": 0,
+        "completed_phase_indexes": [],
+        "failed_phase_indexes": [],
+        "last_error": None,
+        "last_execution_session_id": session_id,
+    })
+    append_validation_log(plan_id, "execute_plan_sent", {
+        "session_id": session_id,
+        "minimum_message_count": minimum_message_count,
+    })
+
+    await agent_manager.send_message(
+        session_id,
+        prompt,
+        mode="agent",
+        hidden=False,
+    )
+
+    asyncio.create_task(_watch_plan_execution_completion(
+        session_id,
+        plan_id,
+        minimum_message_count,
+    ))
+
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "plan_id": plan_id,
+        "status": "sent_to_agent",
+    }
+
 
 @agents.router.post("/sessions/{session_id}/message")
 async def send_message(session_id: str, body: dict):

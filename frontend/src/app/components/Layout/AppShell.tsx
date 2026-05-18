@@ -120,7 +120,9 @@ const AppShell: React.FC = () => {
   // which didn't refresh when a non-Anthropic subscription was connected.
   const modelsByProvider = useAppSelector((s) => s.models.byProvider);
   const modelsLoaded = useAppSelector((s) => s.models.loaded);
-  const hasModelConnected = Object.keys(modelsByProvider).length > 0;
+  const defaultModel = useAppSelector((s) => s.settings.data.default_model);
+  const hasLocalOllamaModel = typeof defaultModel === 'string' && defaultModel.startsWith('ollama/');
+  const hasModelConnected = hasLocalOllamaModel || Object.keys(modelsByProvider).length > 0;
   // Don't flash the banner while the initial /agents/models fetch is in flight
   const showWarningBanner = !isOnline || (modelsLoaded && !hasModelConnected);
 
@@ -760,9 +762,6 @@ const AppShell: React.FC = () => {
               </Box>
             </Collapse>
           </Box>
-
-          {/* Divider */}
-          <Box sx={{ mx: 1.5, my: 0.5, borderTop: `0.5px solid ${c.border.subtle}` }} />
 
           {/* Customization section */}
           <Box sx={{ px: 1, mb: 0.25 }}>

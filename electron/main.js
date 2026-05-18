@@ -81,10 +81,12 @@ app.on('open-url', (event, url) => {
   if (mainWindow) mainWindow.focus();
 });
 
+// Windows local MVP: disable Chromium GPU acceleration to avoid blurry text/UI
+// caused by hardware acceleration, DPI scaling, or GPU rasterization issues.
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('disable-gpu-compositing');
 app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling');
-app.commandLine.appendSwitch('ignore-gpu-blocklist');
-app.commandLine.appendSwitch('enable-gpu-rasterization');
-app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 let mainWindow = null;

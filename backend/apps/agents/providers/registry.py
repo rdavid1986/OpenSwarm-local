@@ -14,6 +14,21 @@ logger = logging.getLogger(__name__)
 # subscription_only, reasoning, route ("cc"|"api"|"openrouter"|None).
 # 9Router prefixes: cc/ Claude sub (dashes), cx/ Codex sub (dots), gc/ Gemini CLI.
 BUILTIN_MODELS: dict[str, list[dict[str, Any]]] = {
+    "Ollama Local": [
+        {"value": "ollama/qwen2.5-coder:14b", "label": "Ollama Qwen 2.5 Coder 14B",
+         "context_window": 32_000, "model_id": "ollama/qwen2.5-coder:14b",
+         "router_model_id": "ollama/qwen2.5-coder:14b", "api": "ollama", "reasoning": False, "route": "local"},
+        {"value": "ollama/qwen2.5-coder:32b", "label": "Ollama Qwen 2.5 Coder 32B",
+         "context_window": 32_000, "model_id": "ollama/qwen2.5-coder:32b",
+         "router_model_id": "ollama/qwen2.5-coder:32b", "api": "ollama", "reasoning": False, "route": "local"},
+        {"value": "ollama/codellama:34b", "label": "Ollama CodeLlama 34B",
+         "context_window": 16_000, "model_id": "ollama/codellama:34b",
+         "router_model_id": "ollama/codellama:34b", "api": "ollama", "reasoning": False, "route": "local"},
+        {"value": "ollama/phi:4-14b", "label": "Ollama Phi 4 14B",
+         "context_window": 16_000, "model_id": "ollama/phi:4-14b",
+         "router_model_id": "ollama/phi:4-14b", "api": "ollama", "reasoning": False, "route": "local"},
+    ],
+
     "Anthropic": [
         # Opus 4.7: SDK currently strips plaintext thinking deltas (encrypted only)
         # so the live "Thought for Ns" pill loses mid-turn text. Final answer + tokens fine.
@@ -825,6 +840,8 @@ def compute_billing_kind(
       - route="cc" (Claude sub via 9Router)
       - api=anthropic, adaptive route, Pro mode active with bearer
     """
+    if api == "ollama":
+        return "free"
     if api == "codex":
         return "subscription"
     if api == "gemini-cli":

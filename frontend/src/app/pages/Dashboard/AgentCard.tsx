@@ -894,7 +894,7 @@ const AgentCard: React.FC<Props> = ({
             }}
           >
             <Typography sx={{ color: c.text.primary, fontWeight: 600, fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {session.name}
+              {session.display_label || session.name}
             </Typography>
             <Chip
               label={session.status.replace('_', ' ')}

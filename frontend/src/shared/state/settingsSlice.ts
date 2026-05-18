@@ -106,7 +106,7 @@ const initialState: SettingsState = {
   data: {
     default_system_prompt: DEFAULT_SYSTEM_PROMPT,
     default_folder: null,
-    default_model: 'sonnet',
+    default_model: 'ollama/qwen2.5-coder:14b',
     default_mode: 'agent',
     default_max_turns: null,
     default_thinking_level: 'auto',
@@ -127,7 +127,9 @@ const initialState: SettingsState = {
 };
 
 export const fetchSettings = createAsyncThunk('settings/fetch', async () => {
-  const res = await fetch(SETTINGS_API);
+  const res = await fetch(SETTINGS_API, {
+    headers: { 'x-api-key': 'local-dev-token' },
+  });
   return (await res.json()) as AppSettings;
 });
 
@@ -136,7 +138,10 @@ export const updateSettings = createAsyncThunk(
   async (settings: AppSettings) => {
     const res = await fetch(SETTINGS_API, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': 'local-dev-token',
+      },
       body: JSON.stringify(settings),
     });
     const data = await res.json();

@@ -233,6 +233,8 @@ interface IdentityStatus {
 }
 
 const SignInGateLoader: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  return <>{children}</>;
+
   const dispatch = useAppDispatch();
   const settings = useAppSelector((s) => s.settings.data);
   const settingsLoaded = useAppSelector((s) => s.settings.loaded);
@@ -298,15 +300,16 @@ const SignInGateLoader: React.FC<{ children: React.ReactNode }> = ({ children })
     } catch { /* localStorage unavailable */ }
   }, []);
 
-  if (!settingsLoaded || !status) return null;
-  if (status.authed) return <>{children}</>;
+  if (!settingsLoaded || status == null) return null;
+  const gateStatus = status as NonNullable<typeof status>;
+  if (gateStatus.authed) return <>{children}</>;
 
   // Onboarding hasn't completed yet — let OnboardingModal handle sign-in.
   // Render children so OnboardingModal (mounted as a sibling) can paint
   // over them with its own modal.
   if (deferToOnboarding) return <>{children}</>;
 
-  const skipActive = !status.hard_gate && Date.now() < skipTs;
+  const skipActive = !gateStatus.hard_gate && Date.now() < skipTs;
   if (skipActive) return <>{children}</>;
 
   return (
@@ -314,7 +317,7 @@ const SignInGateLoader: React.FC<{ children: React.ReactNode }> = ({ children })
       {children}
       <Suspense fallback={null}>
         <SignInGate
-          softGate={!status.hard_gate}
+          softGate={!gateStatus.hard_gate}
           onSkip={() => {
             // 7-day reminder window for soft gate.
             const until = Date.now() + 7 * 24 * 60 * 60 * 1000;
@@ -334,6 +337,7 @@ const SignInGateLoader: React.FC<{ children: React.ReactNode }> = ({ children })
 // preferred fallback ordering: direct provider keys first, then OpenSwarm
 // Pro, then Copilot-powered OpenSwarm free tier.
 const DEFAULT_MODEL_PRIORITY: string[] = [
+  'Ollama Local',
   'Anthropic',
   'OpenAI',
   'Google',
@@ -345,6 +349,7 @@ const DEFAULT_MODEL_PRIORITY: string[] = [
 // stated preference: Sonnet mid-tier for Claude, GPT-5.4 Mini for OpenAI,
 // Flash for Gemini, and conservative picks for the shared tiers.
 const DEFAULT_MODEL_PICKS: Record<string, string[]> = {
+  'Ollama Local': ['ollama/qwen2.5-coder:14b', 'ollama/qwen2.5-coder:32b', 'ollama/codellama:34b', 'ollama/phi:4-14b'],
   Anthropic: ['sonnet-cc', 'sonnet'],
   OpenAI: ['gpt-5.4-mini', 'gpt-5.4'],
   Google: ['gemini-2.5-flash', 'gemini-3-flash', 'gemini-2.5-pro'],
@@ -528,9 +533,7 @@ const ThemedApp: React.FC = () => {
                     </Routes>
                   </Suspense>
                 </ErrorBoundary>
-                <Suspense fallback={null}>
-                  <OnboardingModal />
-                </Suspense>
+                {/* Onboarding desactivado para modo local Ollama */}
               </DeepLinkListener>
             </UpdateListener>
             </DefaultModelGuard>

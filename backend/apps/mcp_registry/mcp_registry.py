@@ -223,9 +223,13 @@ async def _fetch_google_servers() -> dict[str, dict]:
 async def _fetch_github_stars(servers: dict[str, dict]):
     """Batch-fetch GitHub star counts for servers with GitHub repos.
 
-    Uses an in-memory cache so stars accumulate across refresh cycles even
-    when rate-limited (60 req/hr unauthenticated, 5 000 with GITHUB_TOKEN).
+    MVP local:
+    desactivado para evitar llamadas externas a GitHub en modo local.
     """
+    _apply_stars(servers)
+    logger.info("GitHub stars fetch disabled in local MVP mode")
+    return
+
     global _stars_cache
 
     needed: list[str] = []

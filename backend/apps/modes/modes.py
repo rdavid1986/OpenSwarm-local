@@ -22,7 +22,7 @@ async def modes_lifespan():
     if os.path.exists(chat_path):
         try:
             import json as _json
-            with open(chat_path) as _f:
+            with open(chat_path, encoding="utf-8") as _f:
                 _data = _json.load(_f)
             if _data.get("is_builtin") is True and _data.get("id") == "chat":
                 os.remove(chat_path)
@@ -45,21 +45,21 @@ def _load_all() -> list[Mode]:
         return result
     for fname in os.listdir(DATA_DIR):
         if fname.endswith(".json"):
-            with open(os.path.join(DATA_DIR, fname)) as f:
+            with open(os.path.join(DATA_DIR, fname), encoding="utf-8") as f:
                 result.append(Mode(**json.load(f)))
     return result
 
 
 def _save(mode: Mode):
-    with open(os.path.join(DATA_DIR, f"{mode.id}.json"), "w") as f:
-        json.dump(mode.model_dump(), f, indent=2)
+    with open(os.path.join(DATA_DIR, f"{mode.id}.json"), "w", encoding="utf-8") as f:
+        json.dump(mode.model_dump(), f, indent=2, ensure_ascii=False)
 
 
 def _load(mode_id: str) -> Mode:
     path = os.path.join(DATA_DIR, f"{mode_id}.json")
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Mode not found")
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return Mode(**json.load(f))
 
 
@@ -68,7 +68,7 @@ def load_mode(mode_id: str) -> Mode | None:
     path = os.path.join(DATA_DIR, f"{mode_id}.json")
     if not os.path.exists(path):
         return None
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return Mode(**json.load(f))
 
 

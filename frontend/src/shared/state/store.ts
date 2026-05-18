@@ -13,6 +13,8 @@ import dashboardsReducer from './dashboardsSlice';
 import updateReducer from './updateSlice';
 import modelsReducer from './modelsSlice';
 import interactionReducer from './interactionSlice';
+import plansReducer from './plansSlice';
+import experimentalSwarmsReducer from './experimentalSwarmsSlice';
 
 export const store = configureStore({
   reducer: {
@@ -30,6 +32,8 @@ export const store = configureStore({
     update: updateReducer,
     models: modelsReducer,
     interaction: interactionReducer,
+    plans: plansReducer,
+    experimentalSwarms: experimentalSwarmsReducer,
   },
 });
 

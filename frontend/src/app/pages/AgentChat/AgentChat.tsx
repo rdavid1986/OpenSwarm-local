@@ -10,7 +10,6 @@ import ClickAwayListener from '@mui/material/ClickAwayListener';
 import CloseIcon from '@mui/icons-material/Close';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import CheckIcon from '@mui/icons-material/Check';
@@ -74,10 +73,10 @@ const thinkingShimmerKeyframes = `
 // Single-word labels picked deterministically per session-turn so the pill
 // has variety without flickering between renders. Mirrors MessageBubble's list.
 const STREAMING_LABELS: ReadonlyArray<string> = [
-  'Thinking', 'Pondering', 'Cooking', 'Marinating', 'Deliberating',
-  'Reasoning', 'Reflecting', 'Untangling', 'Stewing', 'Locking-in',
-  'Considering', 'Processing', 'Vibing', 'Calculating', 'Chefing',
-  'Geeking', 'Brewing',
+  'Pensando', 'Analizando', 'Procesando', 'Calculando', 'Revisando',
+  'Razonando', 'Evaluando', 'Ordenando', 'Preparando', 'Resolviendo',
+  'Considerando', 'Trabajando', 'Verificando', 'Construyendo', 'Armando',
+  'Leyendo', 'Comprobando',
 ];
 
 function streamingLabelFor(seedKey: string | undefined): string {
@@ -1220,7 +1219,6 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
             {showResumeBubble && session.status === 'stopped' && (
               <Box sx={{ display: 'flex', justifyContent: 'flex-start', my: 0.75 }}>
                 <Box
-                  onClick={handleResume}
                   sx={{
                     display: 'inline-flex',
                     alignItems: 'center',
@@ -1228,19 +1226,12 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                     px: 1.5,
                     py: 0.75,
                     borderRadius: '12px',
-                    cursor: 'pointer',
-                    bgcolor: `${c.accent.primary}10`,
-                    border: `1px solid ${c.accent.primary}30`,
-                    transition: 'all 0.15s',
-                    '&:hover': {
-                      bgcolor: `${c.accent.primary}1a`,
-                      border: `1px solid ${c.accent.primary}50`,
-                    },
+                    bgcolor: `${c.text.secondary}10`,
+                    border: `1px solid ${c.border.medium}`,
                   }}
                 >
-                  <PlayArrowIcon sx={{ fontSize: 14, color: c.accent.primary }} />
-                  <Typography sx={{ fontSize: '0.78rem', fontWeight: 500, color: c.accent.primary }}>
-                    Resume Agent Response
+                  <Typography sx={{ fontSize: '0.78rem', fontWeight: 500, color: c.text.secondary }}>
+                    Agente detenido
                   </Typography>
                 </Box>
               </Box>

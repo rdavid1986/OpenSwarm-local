@@ -16,16 +16,16 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 from typeguard import typechecked
 
-import debug
+from backend import debug
 
 from backend.config.Apps import SubApp
 
 
 @asynccontextmanager
 async def web_lifespan():
-    debug("START")
+    debug.debug("START")
     yield
-    debug("END")
+    debug.debug("END")
 
 
 web = SubApp("web", web_lifespan)

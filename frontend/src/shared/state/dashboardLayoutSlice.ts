@@ -10,6 +10,10 @@ export const DEFAULT_VIEW_CARD_W = 1280;
 export const DEFAULT_VIEW_CARD_H = 800;
 export const DEFAULT_BROWSER_CARD_W = 1280;
 export const DEFAULT_BROWSER_CARD_H = 800;
+export const DEFAULT_PLANS_CARD_W = 720;
+export const DEFAULT_PLANS_CARD_H = 560;
+export const DEFAULT_SWARM_CARD_W = 760;
+export const DEFAULT_SWARM_CARD_H = 620;
 export const EXPANDED_CARD_MIN_H = 620;
 export const GRID_GAP = 24;
 const GRID_ORIGIN = { x: 40, y: 100 };
@@ -38,6 +42,26 @@ export interface BrowserTab {
   url: string;
   title: string;
   favicon?: string;
+}
+
+export interface PlansCardPosition {
+  plans_card_id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  zOrder: number;
+  collapsed?: boolean;
+}
+
+export interface SwarmCardPosition {
+  swarm_card_id: string;
+  swarm_id?: string | null;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  zOrder: number;
 }
 
 export interface BrowserCardPosition {
@@ -76,6 +100,8 @@ export interface DashboardLayoutState {
   cards: Record<string, CardPosition>;
   viewCards: Record<string, ViewCardPosition>;
   browserCards: Record<string, BrowserCardPosition>;
+  plansCards: Record<string, PlansCardPosition>;
+  swarmCards: Record<string, SwarmCardPosition>;
   notes: Record<string, NotePosition>;
   closedCardPositions: Record<string, CardPosition>;
   glowingBrowserCards: Record<string, { sourceId: string; fading: boolean; label?: string }>;
@@ -96,6 +122,8 @@ const initialState: DashboardLayoutState = {
   cards: {},
   viewCards: {},
   browserCards: {},
+  plansCards: {},
+  swarmCards: {},
   notes: {},
   closedCardPositions: {},
   glowingBrowserCards: {},
@@ -112,6 +140,8 @@ interface LayoutPayload {
   cards: Record<string, CardPosition>;
   viewCards: Record<string, ViewCardPosition>;
   browserCards: Record<string, BrowserCardPosition>;
+  plansCards: Record<string, PlansCardPosition>;
+  swarmCards: Record<string, SwarmCardPosition>;
   notes: Record<string, NotePosition>;
   expandedSessionIds: string[];
 }
@@ -144,6 +174,8 @@ export const fetchLayout = createAsyncThunk(
       cards: (layout.cards ?? {}) as Record<string, CardPosition>,
       viewCards: (layout.view_cards ?? {}) as Record<string, ViewCardPosition>,
       browserCards: browserCards as Record<string, BrowserCardPosition>,
+      plansCards: (layout.plans_cards ?? {}) as Record<string, PlansCardPosition>,
+      swarmCards: (layout.swarm_cards ?? {}) as Record<string, SwarmCardPosition>,
       notes: (layout.notes ?? {}) as Record<string, NotePosition>,
       expandedSessionIds: (layout.expanded_session_ids ?? []) as string[],
     } satisfies LayoutPayload;
@@ -165,6 +197,8 @@ export const saveLayout = createAsyncThunk(
           cards: payload.cards,
           view_cards: payload.viewCards,
           browser_cards: payload.browserCards,
+          plans_cards: payload.plansCards,
+          swarm_cards: payload.swarmCards,
           notes: payload.notes,
           expanded_session_ids: payload.expandedSessionIds,
         },
@@ -203,6 +237,12 @@ function collectOccupiedRects(
   }
   for (const n of Object.values(state.notes)) {
     rects.push({ x: n.x, y: n.y, w: n.width, h: n.height });
+  }
+  for (const pc of Object.values(state.plansCards || {})) {
+    rects.push({ x: pc.x, y: pc.y, w: pc.width, h: pc.height });
+  }
+  for (const sc of Object.values(state.swarmCards || {})) {
+    rects.push({ x: sc.x, y: sc.y, w: sc.width, h: sc.height });
   }
   return rects;
 }
@@ -269,7 +309,7 @@ const dashboardLayoutSlice = createSlice({
 
     bringToFront(
       state,
-      action: PayloadAction<{ id: string; type: 'agent' | 'view' | 'browser' | 'note' }>,
+      action: PayloadAction<{ id: string; type: 'agent' | 'view' | 'browser' | 'note' | 'plans' | 'swarm' }>,
     ) {
       const { id, type } = action.payload;
       const z = state.nextZOrder++;
@@ -282,14 +322,161 @@ const dashboardLayoutSlice = createSlice({
       } else if (type === 'note') {
         const note = state.notes[id];
         if (note) note.zOrder = z;
-      } else {
+      } else if (type === 'browser') {
         const card = state.browserCards[id];
+        if (card) card.zOrder = z;
+      } else if (type === 'plans') {
+        const card = state.plansCards[id];
+        if (card) card.zOrder = z;
+      } else if (type === 'swarm') {
+        const card = state.swarmCards[id];
         if (card) card.zOrder = z;
       }
     },
 
     removeCard(state, action: PayloadAction<string>) {
       delete state.cards[action.payload];
+    },
+
+    addPlansCard(state, action: PayloadAction<{ expandedSessionIds?: string[] } | undefined>) {
+      const id = 'plans-main';
+      if (state.plansCards[id]) return;
+      const rects = collectOccupiedRects(state, action.payload?.expandedSessionIds);
+      const pos = findOpenGridCell(rects, DEFAULT_PLANS_CARD_W, DEFAULT_PLANS_CARD_H);
+      state.plansCards[id] = {
+        plans_card_id: id,
+        x: pos.x,
+        y: pos.y,
+        width: DEFAULT_PLANS_CARD_W,
+        height: DEFAULT_PLANS_CARD_H,
+        zOrder: state.nextZOrder++,
+        collapsed: false,
+      };
+    },
+
+    setPlansCardPosition(
+      state,
+      action: PayloadAction<{ plansCardId: string; x: number; y: number }>
+    ) {
+      const { plansCardId, x, y } = action.payload;
+      const card = state.plansCards[plansCardId];
+      if (card) {
+        card.x = x;
+        card.y = y;
+      }
+    },
+
+    setPlansCardSize(
+      state,
+      action: PayloadAction<{ plansCardId: string; width: number; height: number }>
+    ) {
+      const { plansCardId, width, height } = action.payload;
+      const card = state.plansCards[plansCardId];
+      if (card) {
+        card.width = Math.max(420, width);
+        card.height = Math.max(320, height);
+      }
+    },
+
+    removePlansCard(state, action: PayloadAction<string>) {
+      delete state.plansCards[action.payload];
+    },
+
+    addSwarmCard(state, action: PayloadAction<{ expandedSessionIds?: string[]; swarmId?: string | null } | undefined>) {
+      const id = 'swarm-main';
+      if (state.swarmCards[id]) return;
+      const rects = collectOccupiedRects(state, action.payload?.expandedSessionIds);
+      const pos = findOpenGridCell(rects, DEFAULT_SWARM_CARD_W, DEFAULT_SWARM_CARD_H);
+      state.swarmCards[id] = {
+        swarm_card_id: id,
+        swarm_id: action.payload?.swarmId ?? null,
+        x: pos.x,
+        y: pos.y,
+        width: DEFAULT_SWARM_CARD_W,
+        height: DEFAULT_SWARM_CARD_H,
+        zOrder: state.nextZOrder++,
+      };
+    },
+
+    setSwarmCardPosition(
+      state,
+      action: PayloadAction<{ swarmCardId: string; x: number; y: number }>
+    ) {
+      const { swarmCardId, x, y } = action.payload;
+      const card = state.swarmCards[swarmCardId];
+      if (card) {
+        card.x = x;
+        card.y = y;
+      }
+    },
+
+    setSwarmCardSize(
+      state,
+      action: PayloadAction<{ swarmCardId: string; width: number; height: number }>
+    ) {
+      const { swarmCardId, width, height } = action.payload;
+      const card = state.swarmCards[swarmCardId];
+      if (card) {
+        card.width = Math.max(460, width);
+        card.height = Math.max(360, height);
+      }
+    },
+
+    setSwarmCardSwarmId(
+      state,
+      action: PayloadAction<{ swarmCardId: string; swarmId: string | null }>
+    ) {
+      const { swarmCardId, swarmId } = action.payload;
+      const card = state.swarmCards[swarmCardId];
+      if (card) {
+        card.swarm_id = swarmId;
+      }
+    },
+
+    removeSwarmCard(state, action: PayloadAction<string>) {
+      delete state.swarmCards[action.payload];
+    },
+
+    togglePlansCardCollapsed(state, action: PayloadAction<string>) {
+      const card = state.plansCards[action.payload];
+      if (card) {
+        card.collapsed = !card.collapsed;
+      }
+    },
+
+    ensureAgentCard(
+      state,
+      action: PayloadAction<{ sessionId: string; expandedSessionIds?: string[] }>,
+    ) {
+      const { sessionId, expandedSessionIds } = action.payload;
+
+      if (state.cards[sessionId]) {
+        state.cards[sessionId].zOrder = state.nextZOrder++;
+        return;
+      }
+
+      const savedPos = state.closedCardPositions[sessionId];
+      if (savedPos) {
+        state.cards[sessionId] = {
+          ...savedPos,
+          session_id: sessionId,
+          zOrder: state.nextZOrder++,
+        };
+        delete state.closedCardPositions[sessionId];
+        return;
+      }
+
+      const rects = collectOccupiedRects(state, expandedSessionIds);
+      const pos = findOpenGridCell(rects, DEFAULT_CARD_W, DEFAULT_CARD_H);
+
+      state.cards[sessionId] = {
+        session_id: sessionId,
+        x: pos.x,
+        y: pos.y,
+        width: DEFAULT_CARD_W,
+        height: DEFAULT_CARD_H,
+        zOrder: state.nextZOrder++,
+      };
     },
 
     reconcileSessions(
@@ -634,7 +821,7 @@ const dashboardLayoutSlice = createSlice({
     moveCards(
       state,
       action: PayloadAction<{
-        items: Array<{ id: string; type: 'agent' | 'view' | 'browser' | 'note' }>;
+        items: Array<{ id: string; type: 'agent' | 'view' | 'browser' | 'note' | 'plans' | 'swarm' }>;
         dx: number;
         dy: number;
       }>,
@@ -659,8 +846,20 @@ const dashboardLayoutSlice = createSlice({
             note.x += dx;
             note.y += dy;
           }
-        } else {
+        } else if (item.type === 'browser') {
           const card = state.browserCards[item.id];
+          if (card) {
+            card.x += dx;
+            card.y += dy;
+          }
+        } else if (item.type === 'plans') {
+          const card = state.plansCards[item.id];
+          if (card) {
+            card.x += dx;
+            card.y += dy;
+          }
+        } else if (item.type === 'swarm') {
+          const card = state.swarmCards[item.id];
           if (card) {
             card.x += dx;
             card.y += dy;
@@ -786,6 +985,7 @@ const dashboardLayoutSlice = createSlice({
       state.cards = {};
       state.viewCards = {};
       state.browserCards = {};
+      state.plansCards = {};
       state.notes = {};
       state.closedCardPositions = {};
       state.glowingBrowserCards = {};
@@ -801,6 +1001,13 @@ const dashboardLayoutSlice = createSlice({
     builder
       .addCase(fetchLayout.pending, (state) => {
         state.loading = true;
+        state.initialized = false;
+        state.cards = {};
+        state.viewCards = {};
+        state.browserCards = {};
+        state.plansCards = {};
+        state.notes = {};
+        state.persistedExpandedSessionIds = [];
       })
       .addCase(fetchLayout.fulfilled, (state, action) => {
         state.loading = false;
@@ -808,6 +1015,7 @@ const dashboardLayoutSlice = createSlice({
         state.cards = action.payload.cards;
         state.viewCards = action.payload.viewCards;
         state.browserCards = action.payload.browserCards;
+        state.plansCards = action.payload.plansCards || {};
         state.notes = action.payload.notes || {};
         state.persistedExpandedSessionIds = action.payload.expandedSessionIds;
 
@@ -851,7 +1059,18 @@ export const {
   placeCard,
   setCardSize,
   removeCard,
+  addPlansCard,
+  setPlansCardPosition,
+  setPlansCardSize,
+  removePlansCard,
+  addSwarmCard,
+  setSwarmCardPosition,
+  setSwarmCardSize,
+  setSwarmCardSwarmId,
+  removeSwarmCard,
+  togglePlansCardCollapsed,
   bringToFront,
+  ensureAgentCard,
   reconcileSessions,
   replaceDraftId,
   tidyLayout,

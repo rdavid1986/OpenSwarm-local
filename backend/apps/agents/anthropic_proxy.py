@@ -47,6 +47,7 @@ _CLAUDE_MODEL_PREFIXES = (
 )
 
 _GEMINI_MODEL_PREFIXES = ("gemini/", "gc/", "ag/")
+_OLLAMA_MODEL_PREFIXES = ("ollama/",)
 
 # Fields Gemini's function_declarations validator rejects. 9Router 0.3.60's
 # translator strips allOf/anyOf/oneOf/const-toplevel/required but misses these.
@@ -115,6 +116,12 @@ _HOP_HEADERS = {
 }
 
 
+
+def _is_ollama_model(model: str) -> bool:
+    m = (model or "").strip().lower()
+    return m.startswith(_OLLAMA_MODEL_PREFIXES)
+
+
 def _is_claude_model(model: str) -> bool:
     m = (model or "").strip().lower()
     return m.startswith(_CLAUDE_MODEL_PREFIXES)
@@ -129,6 +136,12 @@ def _pick_upstream(model: str) -> tuple[str, dict[str, str]]:
     """Return (base_url_without_v1, auth_headers) for this model."""
     from backend.apps.settings.settings import load_settings
     s = load_settings()
+
+    if _is_ollama_model(model):
+        return (
+            "http://127.0.0.1:11434",
+            {"Authorization": "Bearer ollama"},
+        )
 
     if _is_claude_model(model):
         # Prefer Pro cloud proxy when configured.

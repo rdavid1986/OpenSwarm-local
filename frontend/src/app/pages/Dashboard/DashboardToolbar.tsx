@@ -12,6 +12,8 @@ import StickyNote2OutlinedIcon from '@mui/icons-material/StickyNote2Outlined';
 import HistoryRoundedIcon from '@mui/icons-material/HistoryRounded';
 import LanguageIcon from '@mui/icons-material/Language';
 import SearchIcon from '@mui/icons-material/Search';
+import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
+import ScienceIcon from '@mui/icons-material/Science';
 import { motion } from 'framer-motion';
 import ChatInput from '@/app/pages/AgentChat/ChatInput';
 import type { ContextPath } from '@/app/components/DirectoryBrowser';
@@ -26,6 +28,7 @@ import type { Output } from '@/shared/state/outputsSlice';
 
 interface Props {
   inputOpen: boolean;
+  onAddSwarm: () => void;
   onNewAgent: () => void;
   onCancel: () => void;
   onSend: (
@@ -42,6 +45,7 @@ interface Props {
   onHistoryResume: (sessionId: string) => void;
   onAddBrowser: () => void;
   onAddNote: () => void;
+  onAddPlans: () => void;
   dashboardId?: string;
   newAgentBounce?: boolean;
   onNewAgentBounceEnd?: () => void;
@@ -88,7 +92,7 @@ function formatRelativeTime(dateStr: string | null): string {
 }
 
 const DashboardToolbar = React.forwardRef<HTMLDivElement, Props>(
-  ({ inputOpen, onNewAgent, onCancel, onSend, onAddView, onHistoryResume, onAddBrowser, onAddNote, dashboardId, newAgentBounce, onNewAgentBounceEnd }, ref) => {
+  ({ inputOpen, onAddSwarm, onNewAgent, onCancel, onSend, onAddView, onHistoryResume, onAddBrowser, onAddNote, onAddPlans, dashboardId, newAgentBounce, onNewAgentBounceEnd }, ref) => {
     const c = useClaudeTokens();
     const dispatch = useAppDispatch();
     const elementSelection = useElementSelection();
@@ -639,6 +643,31 @@ const DashboardToolbar = React.forwardRef<HTMLDivElement, Props>(
           </div>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+            <WarmTooltip tokens={c} title="Swarm" placement="top" arrow enterDelay={300}>
+              <Box
+                role="button"
+                aria-label="Swarm"
+                tabIndex={0}
+                onClick={onAddSwarm}
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: BTN,
+                  height: BTN,
+                  borderRadius: `${c.radius.lg}px`,
+                  bgcolor: c.accent.primary,
+                  color: '#fff',
+                  cursor: 'pointer',
+                  transition: 'background-color 0.15s',
+                  '&:hover': { bgcolor: c.accent.hover },
+                  '&:active': { bgcolor: c.accent.pressed },
+                }}
+              >
+                <ScienceIcon sx={{ fontSize: 20 }} />
+              </Box>
+            </WarmTooltip>
+
             <WarmTooltip tokens={c} title={`New Agent  ${shortcutLabel}`} placement="top" arrow enterDelay={400}>
               <Box
                 role="button"
@@ -656,12 +685,11 @@ const DashboardToolbar = React.forwardRef<HTMLDivElement, Props>(
                   width: BTN,
                   height: BTN,
                   borderRadius: `${c.radius.lg}px`,
-                  bgcolor: c.accent.primary,
-                  color: '#fff',
+                  bgcolor: 'transparent',
+                  color: c.text.secondary,
                   cursor: 'pointer',
-                  transition: 'background-color 0.15s',
-                  '&:hover': { bgcolor: c.accent.hover },
-                  '&:active': { bgcolor: c.accent.pressed },
+                  transition: 'background-color 0.15s, color 0.15s',
+                  '&:hover': { bgcolor: `${c.text.tertiary}0A`, color: c.accent.primary },
                   ...(newAgentBounce && {
                     animation: 'new-agent-bounce 1.6s ease-out infinite',
                     '@keyframes new-agent-bounce': {
@@ -743,6 +771,41 @@ const DashboardToolbar = React.forwardRef<HTMLDivElement, Props>(
                 }}
               >
                 <LanguageIcon sx={{ fontSize: 22 }} />
+              </Box>
+            </WarmTooltip>
+
+            <WarmTooltip
+              tokens={c}
+              placement="top"
+              arrow
+              enterDelay={200}
+              title={
+                <Box sx={{ textAlign: 'center' }}>
+                  <Box sx={{ fontWeight: 600 }}>Plans</Box>
+                  <Box sx={{ opacity: 0.6, fontSize: '0.7rem', mt: '1px' }}>Persistent execution plans</Box>
+                </Box>
+              }
+            >
+              <Box
+                role="button"
+                aria-label="Plans"
+                tabIndex={0}
+                onClick={onAddPlans}
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: BTN,
+                  height: BTN,
+                  borderRadius: `${c.radius.md}px`,
+                  color: c.text.tertiary,
+                  bgcolor: 'transparent',
+                  cursor: 'pointer',
+                  transition: 'opacity 0.15s, background-color 0.15s',
+                  '&:hover': { opacity: 1, bgcolor: c.bg.secondary, color: c.accent.primary },
+                }}
+              >
+                <ArticleOutlinedIcon sx={{ fontSize: 22 }} />
               </Box>
             </WarmTooltip>
 

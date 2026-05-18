@@ -8,11 +8,13 @@ import time
 from datetime import datetime
 from uuid import uuid4
 from typing import Optional
+from pathlib import Path
 
 from backend.apps.agents.models import (
     AgentConfig, AgentSession, Message, MessageBranch, ApprovalRequest, ToolGroupMeta,
 )
 from backend.apps.agents.ws_manager import ws_manager
+from backend.apps.agents.plans import create_plan_from_text
 from backend.apps.modes.modes import load_mode
 from backend.apps.outputs.outputs import _load_all as load_all_outputs
 from backend.apps.settings.settings import load_settings
@@ -29,6 +31,156 @@ from backend.config.paths import SESSIONS_DIR
 from backend.apps.service.client import sync as _sync
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_visible_final_content(raw_content: str) -> str:
+    text = (raw_content or "").strip()
+    if not text:
+        return ""
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict) and parsed.get("type") == "final":
+            content = parsed.get("content", "")
+            if isinstance(content, str):
+                return content.strip()
+    except Exception:
+        pass
+
+    return text
+
+
+def _extract_plan_phases_from_content(content: str) -> list[dict]:
+    phases: list[dict] = []
+    current: dict | None = None
+    current_key: str | None = None
+
+    def flush_current():
+        nonlocal current
+        if current:
+            for key, value in list(current.items()):
+                if isinstance(value, list):
+                    current[key] = "\n".join(v for v in value if str(v).strip()).strip()
+            phases.append(current)
+            current = None
+
+    for raw_line in (content or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        lower = line.lower()
+
+        is_phase = (
+            lower.startswith("### fase ")
+            or lower.startswith("## fase ")
+            or lower.startswith("fase ")
+            or re.match(r"^\d+[\.)]\s+", line)
+        )
+
+        if is_phase:
+            flush_current()
+            title = re.sub(r"^#+\s*", "", line)
+            title = re.sub(r"^\d+[\.)]\s*", "", title).strip()
+            current = {
+                "title": title[:120] or f"Fase {len(phases) + 1}",
+                "objective": "",
+                "actions": "",
+                "files": "",
+                "validation": "",
+                "expected_result": "",
+            }
+            current_key = None
+            continue
+
+        if current is None:
+            continue
+
+        key_map = {
+            "objetivo": "objective",
+            "acciones": "actions",
+            "archivos": "files",
+            "archivos involucrados": "files",
+            "validación": "validation",
+            "validacion": "validation",
+            "resultado esperado": "expected_result",
+            "rollback": "rollback",
+        }
+
+        matched_key = None
+        for prefix, key in key_map.items():
+            if lower.startswith(prefix + ":") or lower.startswith("- " + prefix + ":"):
+                matched_key = key
+                value = line.split(":", 1)[1].strip()
+                current.setdefault(key, [])
+                if value:
+                    current[key] = [value]
+                else:
+                    current[key] = []
+                current_key = key
+                break
+
+        if matched_key:
+            continue
+
+        if current_key:
+            current.setdefault(current_key, [])
+            if isinstance(current[current_key], list):
+                current[current_key].append(line.lstrip("- ").strip())
+
+    flush_current()
+    return phases
+
+
+def _derive_plan_title_from_content(content: str) -> str:
+    text = re.sub(r"\s+", " ", (content or "").strip())
+    if not text:
+        return "Plan sin título"
+
+    for line in (content or "").splitlines():
+        clean = line.strip().strip("#").strip()
+        if clean and len(clean) >= 4:
+            return clean[:80]
+
+    return text[:80]
+
+
+def _maybe_persist_plan_from_plan_mode(session: AgentSession, final_content: str) -> None:
+    if getattr(session, "mode", None) != "plan":
+        return
+
+    content = _extract_visible_final_content(final_content)
+    if not content:
+        return
+
+    # Evita duplicados si el mismo mensaje se guarda/procesa más de una vez.
+    marker = f"plan_mode_persisted:{getattr(session, 'id', '')}:{hash(content)}"
+    if marker in getattr(session, "active_mcps", []):
+        return
+
+    title = _derive_plan_title_from_content(content)
+
+    try:
+        result = create_plan_from_text(
+            title,
+            content,
+            session_id=getattr(session, "id", None),
+            created_by_session_id=getattr(session, "id", None),
+            dashboard_id=getattr(session, "dashboard_id", None),
+            source_mode="plan",
+        )
+        if result.get("ok"):
+            if marker not in session.active_mcps:
+                session.active_mcps.append(marker)
+            logger.info(
+                "Persisted plan from Plan mode session_id=%s plan_id=%s dashboard_id=%s",
+                getattr(session, "id", None),
+                result.get("plan_id"),
+                getattr(session, "dashboard_id", None),
+            )
+    except Exception:
+        logger.exception("Failed to persist plan from Plan mode session_id=%s", getattr(session, "id", None))
+
 
 os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "3600000")
 
@@ -743,7 +895,7 @@ class AgentManager:
     async def launch_agent(self, config: AgentConfig) -> AgentSession:
         session_id = uuid4().hex
 
-        mode_tools, _, mode_folder = self._resolve_mode(config.mode)
+        mode_tools, mode_prompt, mode_folder = self._resolve_mode(config.mode)
         tools = mode_tools
 
         global_settings = load_settings()
@@ -781,7 +933,7 @@ class AgentManager:
             provider=getattr(config, "provider", "anthropic"),
             model=config.model,
             mode=config.mode,
-            system_prompt=config.system_prompt,
+            system_prompt=config.system_prompt or mode_prompt,
             allowed_tools=tools,
             max_turns=config.max_turns,
             cwd=effective_cwd,
@@ -1823,6 +1975,1770 @@ class AgentManager:
                 "disallowed_tools": effective_disallowed,
                 "include_partial_messages": True,
             }
+            # OLLAMA LOCAL TOOL LOOP
+            # Ruta local para modelos ollama/*.
+            # Evita Claude SDK, 9Router, OpenAI, Anthropic, Gemini y proveedores externos.
+            # Implementa un loop simple de herramientas locales seguras dentro de session.cwd.
+            if isinstance(resolved_model, str) and resolved_model.startswith("ollama/"):
+                import urllib.request
+
+                ollama_model = resolved_model[len("ollama/"):] or session.model[len("ollama/"):]
+                ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/") + "/api/chat"
+
+                if isinstance(prompt_content, str):
+                    user_text = prompt_content
+                elif isinstance(prompt_content, list):
+                    user_text = "\n".join(
+                        str(x.get("text", "")) if isinstance(x, dict) else str(x)
+                        for x in prompt_content
+                    )
+                else:
+                    user_text = str(prompt_content)
+
+                logger.info(f"[OLLAMA] local tool loop route model={ollama_model} url={ollama_url}")
+
+                def _ollama_workspace_base() -> Path:
+                    base = Path(session.cwd or os.getcwd()).resolve()
+                    base.mkdir(parents=True, exist_ok=True)
+                    return base
+
+                def _ollama_safe_workspace_path(relative_path: str | None) -> Path:
+                    base = _ollama_workspace_base()
+                    raw_path = "." if relative_path in (None, "") else str(relative_path)
+
+                    if raw_path.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", raw_path):
+                        raise ValueError("Ruta absoluta denegada. Usá una ruta relativa dentro del workspace.")
+
+                    target = (base / raw_path).resolve()
+
+                    try:
+                        target.relative_to(base)
+                    except ValueError:
+                        raise ValueError("Ruta fuera del workspace denegada.")
+
+                    return target
+
+                def _ollama_tool_list_files(args: dict) -> dict:
+                    target = _ollama_safe_workspace_path(args.get("path", "."))
+                    if not target.exists():
+                        return {"ok": False, "error": f"No existe: {args.get('path', '.')}"}
+                    if target.is_file():
+                        return {
+                            "ok": True,
+                            "path": str(target.relative_to(_ollama_workspace_base())),
+                            "type": "file",
+                        }
+
+                    files: list[str] = []
+                    base = _ollama_workspace_base()
+                    max_items = int(args.get("max_items", 200) or 200)
+
+                    for item in sorted(target.rglob("*")):
+                        if len(files) >= max_items:
+                            files.append("...resultado truncado...")
+                            break
+                        try:
+                            rel = item.relative_to(base)
+                        except ValueError:
+                            continue
+                        suffix = "/" if item.is_dir() else ""
+                        files.append(str(rel).replace("\\", "/") + suffix)
+
+                    return {
+                        "ok": True,
+                        "path": str(target.relative_to(base)).replace("\\", "/") if target != base else ".",
+                        "items": files,
+                    }
+
+                def _ollama_tool_read_file(args: dict) -> dict:
+                    target = _ollama_safe_workspace_path(args.get("path"))
+                    if not target.exists():
+                        return {"ok": False, "error": f"No existe: {args.get('path')}"}
+                    if not target.is_file():
+                        return {"ok": False, "error": f"No es un archivo: {args.get('path')}"}
+
+                    max_chars = int(args.get("max_chars", 120000) or 120000)
+                    content = target.read_text(encoding="utf-8", errors="replace")
+
+                    return {
+                        "ok": True,
+                        "path": str(target.relative_to(_ollama_workspace_base())).replace("\\", "/"),
+                        "content": content[:max_chars],
+                        "truncated": len(content) > max_chars,
+                    }
+
+                def _ollama_tool_write_file(args: dict) -> dict:
+                    target = _ollama_safe_workspace_path(args.get("path"))
+                    content = args.get("content", "")
+
+                    if not isinstance(content, str):
+                        return {"ok": False, "error": "content debe ser texto."}
+
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(content, encoding="utf-8")
+
+                    return {
+                        "ok": True,
+                        "path": str(target.relative_to(_ollama_workspace_base())).replace("\\", "/"),
+                        "bytes": len(content.encode("utf-8")),
+                    }
+
+                def _ollama_tool_edit_file(args: dict) -> dict:
+                    target = _ollama_safe_workspace_path(args.get("path"))
+                    old_text = args.get("old_text", "")
+                    new_text = args.get("new_text", "")
+                    replace_all = bool(args.get("replace_all", False))
+
+                    if not target.exists():
+                        return {"ok": False, "error": f"No existe: {args.get('path')}"}
+
+                    if not target.is_file():
+                        return {"ok": False, "error": f"No es un archivo: {args.get('path')}"}
+
+                    if not isinstance(old_text, str) or old_text == "":
+                        return {"ok": False, "error": "old_text debe ser texto no vacío."}
+
+                    if not isinstance(new_text, str):
+                        return {"ok": False, "error": "new_text debe ser texto."}
+
+                    content = target.read_text(encoding="utf-8", errors="replace")
+                    occurrences = content.count(old_text)
+
+                    if occurrences == 0:
+                        return {
+                            "ok": False,
+                            "error": "No se encontró old_text en el archivo.",
+                            "path": str(target.relative_to(_ollama_workspace_base())).replace("\\", "/"),
+                        }
+
+                    if occurrences > 1 and not replace_all:
+                        return {
+                            "ok": False,
+                            "error": "old_text aparece más de una vez. Usá replace_all=true o un texto más específico.",
+                            "path": str(target.relative_to(_ollama_workspace_base())).replace("\\", "/"),
+                            "occurrences": occurrences,
+                        }
+
+                    if replace_all:
+                        updated = content.replace(old_text, new_text)
+                        replaced = occurrences
+                    else:
+                        updated = content.replace(old_text, new_text, 1)
+                        replaced = 1
+
+                    target.write_text(updated, encoding="utf-8")
+
+                    return {
+                        "ok": True,
+                        "path": str(target.relative_to(_ollama_workspace_base())).replace("\\", "/"),
+                        "replaced": replaced,
+                        "bytes": len(updated.encode("utf-8")),
+                    }
+
+
+                def _ollama_tool_copy_file(args: dict) -> dict:
+                    source = _ollama_safe_workspace_path(args.get("source"))
+                    destination = _ollama_safe_workspace_path(args.get("destination"))
+
+                    if not source.exists():
+                        return {"ok": False, "error": f"No existe source: {args.get('source')}"}
+
+                    if not source.is_file():
+                        return {"ok": False, "error": f"source no es un archivo: {args.get('source')}"}
+
+                    if destination.exists() and destination.is_dir():
+                        return {"ok": False, "error": "destination apunta a una carpeta. Indicá una ruta de archivo."}
+
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    data = source.read_bytes()
+                    destination.write_bytes(data)
+
+                    base = _ollama_workspace_base()
+
+                    return {
+                        "ok": True,
+                        "source": str(source.relative_to(base)).replace("\\", "/"),
+                        "destination": str(destination.relative_to(base)).replace("\\", "/"),
+                        "bytes": len(data),
+                    }
+
+
+                def _ollama_tool_move_file(args: dict) -> dict:
+                    source = _ollama_safe_workspace_path(args.get("source"))
+                    destination = _ollama_safe_workspace_path(args.get("destination"))
+
+                    if not source.exists():
+                        return {"ok": False, "error": f"No existe source: {args.get('source')}"}
+
+                    if not source.is_file():
+                        return {"ok": False, "error": f"source no es un archivo: {args.get('source')}"}
+
+                    if destination.exists() and destination.is_dir():
+                        return {"ok": False, "error": "destination apunta a una carpeta. Indicá una ruta de archivo."}
+
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    source.replace(destination)
+
+                    base = _ollama_workspace_base()
+
+                    return {
+                        "ok": True,
+                        "source": str(source.relative_to(base)).replace("\\", "/"),
+                        "destination": str(destination.relative_to(base)).replace("\\", "/"),
+                    }
+
+
+                def _ollama_tool_delete_file(args: dict) -> dict:
+                    target = _ollama_safe_workspace_path(args.get("path"))
+                    confirm = bool(args.get("confirm", False))
+
+                    if not confirm:
+                        return {
+                            "ok": False,
+                            "error": "delete_file requiere confirm=true para borrar archivos.",
+                        }
+
+                    if not target.exists():
+                        return {"ok": False, "error": f"No existe: {args.get('path')}"}
+
+                    if not target.is_file():
+                        return {"ok": False, "error": f"No es un archivo: {args.get('path')}"}
+
+                    base = _ollama_workspace_base()
+                    rel_path = str(target.relative_to(base)).replace("\\", "/")
+                    size = target.stat().st_size
+                    target.unlink()
+
+                    return {
+                        "ok": True,
+                        "path": rel_path,
+                        "bytes_deleted": size,
+                    }
+
+
+                def _ollama_tool_create_folder(args: dict) -> dict:
+                    target = _ollama_safe_workspace_path(args.get("path"))
+                    target.mkdir(parents=True, exist_ok=True)
+
+                    return {
+                        "ok": True,
+                        "path": str(target.relative_to(_ollama_workspace_base())).replace("\\", "/"),
+                    }
+
+                def _ollama_tool_search_files(args: dict) -> dict:
+                    base_path = args.get("path", ".")
+                    pattern = args.get("pattern", "")
+                    max_results = int(args.get("max_results", 100) or 100)
+
+                    if not isinstance(pattern, str) or not pattern.strip():
+                        return {"ok": False, "error": "pattern debe ser texto no vacío."}
+
+                    target = _ollama_safe_workspace_path(base_path)
+                    if not target.exists():
+                        return {"ok": False, "error": f"No existe: {base_path}"}
+
+                    base = _ollama_workspace_base()
+                    ignored_dirs = {
+                        ".git",
+                        "node_modules",
+                        "dist",
+                        "build",
+                        ".next",
+                        ".venv",
+                        "__pycache__",
+                    }
+
+                    lowered_pattern = pattern.lower()
+                    results: list[dict] = []
+
+                    items = [target] if target.is_file() else sorted(target.rglob("*"))
+
+                    for item in items:
+                        if len(results) >= max_results:
+                            break
+
+                        try:
+                            rel = item.relative_to(base)
+                        except ValueError:
+                            continue
+
+                        if set(rel.parts).intersection(ignored_dirs):
+                            continue
+
+                        rel_text = str(rel).replace("\\", "/")
+                        name_text = item.name
+
+                        if lowered_pattern in rel_text.lower() or lowered_pattern in name_text.lower():
+                            results.append({
+                                "path": rel_text + ("/" if item.is_dir() else ""),
+                                "type": "dir" if item.is_dir() else "file",
+                            })
+
+                    return {
+                        "ok": True,
+                        "path": str(target.relative_to(base)).replace("\\", "/") if target != base else ".",
+                        "pattern": pattern,
+                        "matches": results,
+                        "count": len(results),
+                        "truncated": len(results) >= max_results,
+                    }
+
+
+                def _ollama_tool_search_text(args: dict) -> dict:
+                    base_path = args.get("path", ".")
+                    query = args.get("query", "")
+                    max_results = int(args.get("max_results", 50) or 50)
+                    max_file_chars = int(args.get("max_file_chars", 300000) or 300000)
+
+                    if not isinstance(query, str) or not query.strip():
+                        return {"ok": False, "error": "query debe ser texto no vacío."}
+
+                    target = _ollama_safe_workspace_path(base_path)
+                    if not target.exists():
+                        return {"ok": False, "error": f"No existe: {base_path}"}
+
+                    base = _ollama_workspace_base()
+                    files_to_scan: list[Path] = []
+
+                    if target.is_file():
+                        files_to_scan.append(target)
+                    else:
+                        ignored_dirs = {
+                            ".git",
+                            "node_modules",
+                            "dist",
+                            "build",
+                            ".next",
+                            ".venv",
+                            "__pycache__",
+                        }
+
+                        for item in sorted(target.rglob("*")):
+                            if len(files_to_scan) >= 1000:
+                                break
+                            if not item.is_file():
+                                continue
+                            rel_parts = set(item.relative_to(base).parts)
+                            if rel_parts.intersection(ignored_dirs):
+                                continue
+                            files_to_scan.append(item)
+
+                    results: list[dict] = []
+                    lowered_query = query.lower()
+
+                    for file_path in files_to_scan:
+                        if len(results) >= max_results:
+                            break
+
+                        try:
+                            if file_path.stat().st_size > max_file_chars:
+                                continue
+
+                            content = file_path.read_text(encoding="utf-8", errors="replace")
+                        except Exception:
+                            continue
+
+                        for line_number, line in enumerate(content.splitlines(), start=1):
+                            if lowered_query in line.lower():
+                                results.append({
+                                    "path": str(file_path.relative_to(base)).replace("\\", "/"),
+                                    "line": line_number,
+                                    "text": line.strip()[:500],
+                                })
+
+                                if len(results) >= max_results:
+                                    break
+
+                    return {
+                        "ok": True,
+                        "path": str(target.relative_to(base)).replace("\\", "/") if target != base else ".",
+                        "query": query,
+                        "matches": results,
+                        "count": len(results),
+                        "truncated": len(results) >= max_results,
+                    }
+
+
+                def _ollama_tool_inspect_project(args: dict) -> dict:
+                    base_path = args.get("path", ".")
+                    max_items = int(args.get("max_items", 200) or 200)
+
+                    target = _ollama_safe_workspace_path(base_path)
+                    if not target.exists():
+                        return {"ok": False, "error": f"No existe: {base_path}"}
+
+                    if not target.is_dir():
+                        return {"ok": False, "error": f"No es una carpeta: {base_path}"}
+
+                    base = _ollama_workspace_base()
+                    rel_root = str(target.relative_to(base)).replace("\\", "/") if target != base else "."
+
+                    ignored_dirs = {
+                        ".git",
+                        "node_modules",
+                        "dist",
+                        "build",
+                        ".next",
+                        ".venv",
+                        "__pycache__",
+                    }
+
+                    def _exists(*names: str) -> bool:
+                        return any((target / name).exists() for name in names)
+
+                    def _find_one(*names: str) -> str | None:
+                        for name in names:
+                            candidate = target / name
+                            if candidate.exists():
+                                return str(candidate.relative_to(base)).replace("\\", "/")
+                        return None
+
+                    package_json_path = target / "package.json"
+                    package_json: dict = {}
+                    npm_scripts: dict = {}
+
+                    if package_json_path.exists() and package_json_path.is_file():
+                        try:
+                            package_json = json.loads(package_json_path.read_text(encoding="utf-8", errors="replace"))
+                            raw_scripts = package_json.get("scripts", {})
+                            if isinstance(raw_scripts, dict):
+                                npm_scripts = {str(k): str(v) for k, v in raw_scripts.items()}
+                        except Exception as exc:
+                            package_json = {"error": f"No se pudo leer package.json: {exc}"}
+
+                    indicators = {
+                        "has_package_json": package_json_path.exists(),
+                        "has_vite_config": _exists("vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.cjs"),
+                        "has_next_config": _exists("next.config.js", "next.config.ts", "next.config.mjs"),
+                        "has_src": (target / "src").is_dir(),
+                        "has_frontend": (target / "frontend").is_dir(),
+                        "has_backend": (target / "backend").is_dir(),
+                        "has_requirements_txt": (target / "requirements.txt").is_file(),
+                        "has_pyproject_toml": (target / "pyproject.toml").is_file(),
+                        "has_package_lock": (target / "package-lock.json").is_file(),
+                        "has_pnpm_lock": (target / "pnpm-lock.yaml").is_file(),
+                        "has_yarn_lock": (target / "yarn.lock").is_file(),
+                        "has_node_modules": (target / "node_modules").is_dir(),
+                        "has_git": (target / ".git").exists() or (base / ".git").exists(),
+                    }
+
+                    dependencies = {}
+                    if isinstance(package_json, dict):
+                        for section in ("dependencies", "devDependencies"):
+                            raw = package_json.get(section, {})
+                            if isinstance(raw, dict):
+                                dependencies.update({str(k): str(v) for k, v in raw.items()})
+
+                    framework = "desconocido"
+                    if indicators["has_next_config"] or "next" in dependencies:
+                        framework = "Next.js"
+                    elif indicators["has_vite_config"] or "vite" in dependencies:
+                        if "react" in dependencies:
+                            framework = "Vite + React"
+                        elif "vue" in dependencies:
+                            framework = "Vite + Vue"
+                        elif "svelte" in dependencies:
+                            framework = "Vite + Svelte"
+                        else:
+                            framework = "Vite"
+                    elif "react-scripts" in dependencies:
+                        framework = "Create React App"
+                    elif indicators["has_package_json"]:
+                        framework = "Node.js"
+                    elif indicators["has_pyproject_toml"] or indicators["has_requirements_txt"]:
+                        framework = "Python"
+
+                    safe_commands: list[str] = []
+                    if npm_scripts:
+                        for script_name in ("install",):
+                            safe_commands.append("npm install")
+                        for script_name in ("build", "test", "lint", "dev"):
+                            if script_name in npm_scripts:
+                                safe_commands.append(f"npm run {script_name}")
+
+                    if indicators["has_requirements_txt"]:
+                        safe_commands.append("python -m pip install -r requirements.txt")
+
+                    if indicators["has_pyproject_toml"]:
+                        safe_commands.append("python -m pip install -e .")
+
+                    safe_commands.extend(["git status", "git diff --stat"])
+
+                    main_files: list[str] = []
+                    main_candidates = [
+                        "package.json",
+                        "vite.config.js",
+                        "vite.config.ts",
+                        "next.config.js",
+                        "next.config.ts",
+                        "src/main.jsx",
+                        "src/main.tsx",
+                        "src/App.jsx",
+                        "src/App.tsx",
+                        "backend/main.py",
+                        "main.py",
+                        "app.py",
+                        "requirements.txt",
+                        "pyproject.toml",
+                    ]
+
+                    for candidate in main_candidates:
+                        candidate_path = target / candidate
+                        if candidate_path.exists():
+                            main_files.append(str(candidate_path.relative_to(base)).replace("\\", "/"))
+
+                    top_level_items: list[dict] = []
+                    for item in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+                        if len(top_level_items) >= max_items:
+                            break
+                        if item.name in ignored_dirs:
+                            continue
+                        top_level_items.append({
+                            "path": str(item.relative_to(base)).replace("\\", "/") + ("/" if item.is_dir() else ""),
+                            "type": "dir" if item.is_dir() else "file",
+                        })
+
+                    return {
+                        "ok": True,
+                        "root": rel_root,
+                        "framework": framework,
+                        "indicators": indicators,
+                        "npm_scripts": npm_scripts,
+                        "main_files": main_files,
+                        "top_level_items": top_level_items,
+                        "recommended_safe_commands": safe_commands,
+                    }
+
+
+                def _ollama_tool_run_command(args: dict) -> dict:
+                    import subprocess
+                    import shlex
+
+                    command = args.get("command", "")
+                    timeout_seconds = int(args.get("timeout_seconds", 30) or 30)
+                    max_output_chars = int(args.get("max_output_chars", 20000) or 20000)
+
+                    if not isinstance(command, str) or not command.strip():
+                        return {"ok": False, "error": "command debe ser texto no vacío."}
+
+                    timeout_seconds = max(1, min(timeout_seconds, 120))
+                    max_output_chars = max(1000, min(max_output_chars, 120000))
+
+                    cwd_arg = args.get("cwd", ".")
+                    cwd = _ollama_safe_workspace_path(cwd_arg)
+
+                    if not cwd.exists():
+                        return {
+                            "ok": False,
+                            "error": f"cwd no existe: {cwd_arg}",
+                            "command": command,
+                        }
+
+                    if not cwd.is_dir():
+                        return {
+                            "ok": False,
+                            "error": f"cwd no es una carpeta: {cwd_arg}",
+                            "command": command,
+                        }
+
+                    blocked_fragments = [
+                        "&&",
+                        "||",
+                        "|",
+                        ">",
+                        "<",
+                        ";",
+                        "`",
+                        "$(",
+                        "rm -rf",
+                        "del /s",
+                        "format ",
+                        "shutdown",
+                        "restart-computer",
+                        "remove-item",
+                        "rmdir /s",
+                        "curl ",
+                        "wget ",
+                        "Invoke-WebRequest",
+                        "iwr ",
+                        "powershell ",
+                        "pwsh ",
+                        "cmd /c",
+                    ]
+
+                    lowered_command = command.lower()
+                    for fragment in blocked_fragments:
+                        if fragment.lower() in lowered_command:
+                            return {
+                                "ok": False,
+                                "error": f"Comando bloqueado por seguridad: contiene '{fragment}'.",
+                                "command": command,
+                            }
+
+                    try:
+                        parts = shlex.split(command, posix=False)
+                    except Exception as exc:
+                        return {"ok": False, "error": f"No se pudo parsear command: {exc}", "command": command}
+
+                    if not parts:
+                        return {"ok": False, "error": "command vacío.", "command": command}
+
+                    normalized = " ".join(parts).lower()
+
+                    allowed_exact = {
+                        "npm install",
+                        "npm run build",
+                        "npm run dev",
+                        "npm run test",
+                        "npm run lint",
+                        "git status",
+                        "git status --short",
+                        "git diff --stat",
+                        "git diff",
+                        "git log --oneline",
+                        "python -m py_compile backend/apps/agents/agent_manager.py",
+                    }
+
+                    allowed_prefixes = (
+                        "npm run ",
+                        "python -m py_compile ",
+                        "node --check ",
+                    )
+
+                    is_allowed = normalized in allowed_exact or any(normalized.startswith(prefix) for prefix in allowed_prefixes)
+
+                    if not is_allowed:
+                        return {
+                            "ok": False,
+                            "error": "Comando no permitido por allowlist local.",
+                            "command": command,
+                            "allowed_examples": sorted(allowed_exact),
+                            "allowed_prefixes": list(allowed_prefixes),
+                        }
+
+                    executable_parts = list(parts)
+
+                    if executable_parts:
+                        command_name = executable_parts[0].lower()
+                        if os.name == "nt":
+                            windows_command_map = {
+                                "npm": "npm.cmd",
+                                "npx": "npx.cmd",
+                                "pnpm": "pnpm.cmd",
+                                "yarn": "yarn.cmd",
+                            }
+                            executable_parts[0] = windows_command_map.get(command_name, executable_parts[0])
+
+                    try:
+                        completed = subprocess.run(
+                            executable_parts,
+                            cwd=str(cwd),
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                            timeout=timeout_seconds,
+                            shell=False,
+                        )
+                    except subprocess.TimeoutExpired as exc:
+                        stdout = exc.stdout or ""
+                        stderr = exc.stderr or ""
+                        return {
+                            "ok": False,
+                            "error": f"Timeout después de {timeout_seconds}s.",
+                            "command": command,
+                            "stdout": str(stdout)[-max_output_chars:],
+                            "stderr": str(stderr)[-max_output_chars:],
+                        }
+                    except FileNotFoundError as exc:
+                        return {
+                            "ok": False,
+                            "error": f"Comando no encontrado: {exc}",
+                            "command": command,
+                        }
+                    except Exception as exc:
+                        return {
+                            "ok": False,
+                            "error": f"Error ejecutando comando: {exc}",
+                            "command": command,
+                        }
+
+                    stdout = completed.stdout or ""
+                    stderr = completed.stderr or ""
+
+                    return {
+                        "ok": completed.returncode == 0,
+                        "command": command,
+                        "cwd": str(cwd),
+                        "exit_code": completed.returncode,
+                        "stdout": stdout[-max_output_chars:],
+                        "stderr": stderr[-max_output_chars:],
+                        "stdout_truncated": len(stdout) > max_output_chars,
+                        "stderr_truncated": len(stderr) > max_output_chars,
+                    }
+
+
+                def _ollama_execute_tool(tool_name: str, args: dict) -> dict:
+                    if not isinstance(args, dict):
+                        args = {}
+
+                    tools = {
+                        "list_files": _ollama_tool_list_files,
+                        "inspect_project": _ollama_tool_inspect_project,
+                        "run_command": _ollama_tool_run_command,
+                        "read_file": _ollama_tool_read_file,
+                        "write_file": _ollama_tool_write_file,
+                        "edit_file": _ollama_tool_edit_file,
+                        "copy_file": _ollama_tool_copy_file,
+                        "move_file": _ollama_tool_move_file,
+                        "delete_file": _ollama_tool_delete_file,
+                        "create_folder": _ollama_tool_create_folder,
+                        "search_files": _ollama_tool_search_files,
+                        "search_text": _ollama_tool_search_text,
+                    }
+
+                    fn = tools.get(tool_name)
+                    if fn is None:
+                        return {
+                            "ok": False,
+                            "error": f"Herramienta no disponible: {tool_name}",
+                            "available_tools": sorted(tools.keys()),
+                        }
+
+                    try:
+                        result = fn(args)
+                        return {
+                            "ok": bool(result.get("ok", False)),
+                            "tool": tool_name,
+                            "result": result,
+                        }
+                    except Exception as exc:
+                        return {
+                            "ok": False,
+                            "tool": tool_name,
+                            "error": str(exc),
+                        }
+
+                def _ollama_extract_json(text_value: str) -> dict | None:
+                    raw = (text_value or "").strip()
+                    if not raw:
+                        return None
+
+                    if raw.startswith("```"):
+                        raw = re.sub(r"^```(?:json)?", "", raw, flags=re.IGNORECASE).strip()
+                        raw = re.sub(r"```$", "", raw).strip()
+
+                    try:
+                        parsed = json.loads(raw)
+                        return parsed if isinstance(parsed, dict) else None
+                    except Exception:
+                        pass
+
+                    match = re.search(r"\{[\s\S]*\}", raw)
+                    if match:
+                        try:
+                            parsed = json.loads(match.group(0))
+                            return parsed if isinstance(parsed, dict) else None
+                        except Exception:
+                            return None
+
+                    return None
+
+                def _ollama_extract_json_objects(text_value: str) -> list[dict]:
+                    raw = (text_value or "").strip()
+                    if not raw:
+                        return []
+
+                    objects: list[dict] = []
+
+                    fenced_blocks = re.findall(
+                        r"```(?:json)?\s*([\s\S]*?)\s*```",
+                        raw,
+                        flags=re.IGNORECASE,
+                    )
+
+                    blocks_to_scan = fenced_blocks if fenced_blocks else [raw]
+                    decoder = json.JSONDecoder()
+
+                    for block in blocks_to_scan:
+                        source = (block or "").strip()
+                        index = 0
+
+                        while index < len(source):
+                            while index < len(source) and source[index].isspace():
+                                index += 1
+
+                            if index >= len(source):
+                                break
+
+                            if source[index] != "{":
+                                next_object = source.find("{", index + 1)
+                                if next_object == -1:
+                                    break
+                                index = next_object
+
+                            try:
+                                parsed, end_index = decoder.raw_decode(source, index)
+                            except Exception:
+                                next_object = source.find("{", index + 1)
+                                if next_object == -1:
+                                    break
+                                index = next_object
+                                continue
+
+                            if isinstance(parsed, dict):
+                                objects.append(parsed)
+
+                            index = end_index
+
+                    if objects:
+                        return objects
+
+                    single = _ollama_extract_json(raw)
+                    return [single] if isinstance(single, dict) else []
+
+
+                def _ollama_chat(messages: list[dict], stream: bool = False) -> str:
+                    payload = {
+                        "model": ollama_model,
+                        "messages": messages,
+                        "stream": stream,
+                        "options": {
+                            "temperature": 0.1,
+                        },
+                    }
+
+                    req = urllib.request.Request(
+                        ollama_url,
+                        data=json.dumps(payload).encode("utf-8"),
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+
+                    full_text = ""
+
+                    with urllib.request.urlopen(req, timeout=300) as resp:
+                        if stream:
+                            for raw in resp:
+                                if not raw:
+                                    continue
+                                line = raw.decode("utf-8", errors="ignore").strip()
+                                if not line:
+                                    continue
+                                try:
+                                    data = json.loads(line)
+                                except Exception:
+                                    continue
+                                full_text += data.get("message", {}).get("content", "") or ""
+                                if data.get("done"):
+                                    break
+                        else:
+                            data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+                            full_text = data.get("message", {}).get("content", "") or ""
+
+                    return full_text
+
+                async def _ollama_emit_message(role: str, content: str) -> Message:
+                    msg = Message(
+                        id=uuid4().hex,
+                        role=role,
+                        content=content,
+                        branch_id=session.active_branch_id,
+                    )
+                    session.messages.append(msg)
+                    await ws_manager.send_to_session(session_id, "agent:message", {
+                        "session_id": session_id,
+                        "message": msg.model_dump(mode="json"),
+                    })
+                    return msg
+
+                mode_name = getattr(session, "mode", None) or "agent"
+                workspace = str(_ollama_workspace_base())
+
+                ollama_all_tool_names = {
+                    "list_files",
+                    "read_file",
+                    "write_file",
+                    "edit_file",
+                    "copy_file",
+                    "move_file",
+                    "delete_file",
+                    "create_folder",
+                    "search_files",
+                    "search_text",
+                    "inspect_project",
+                    "run_command",
+                }
+
+                openswarm_to_ollama_tools = {
+                    "Read": {"read_file"},
+                    "Glob": {"list_files", "search_files"},
+                    "Grep": {"search_text"},
+                    "InspectProject": {"inspect_project"},
+                    "Bash": {"run_command"},
+                    "Write": {"write_file", "create_folder"},
+                    "Edit": {"edit_file", "copy_file", "move_file", "delete_file"},
+                }
+
+                session_allowed_tools = set(getattr(session, "allowed_tools", []) or [])
+
+                if mode_name == "agent" or not session_allowed_tools:
+                    mode_allowed_ollama_tool_names = set(ollama_all_tool_names)
+                else:
+                    mode_allowed_ollama_tool_names = set()
+                    for openswarm_tool_name, local_tool_names in openswarm_to_ollama_tools.items():
+                        if openswarm_tool_name in session_allowed_tools:
+                            mode_allowed_ollama_tool_names.update(local_tool_names)
+
+                if mode_name == "plan":
+                    mode_allowed_ollama_tool_names -= {
+                        "write_file",
+                        "edit_file",
+                        "copy_file",
+                        "move_file",
+                        "delete_file",
+                        "create_folder",
+                        "run_command",
+                    }
+
+                mode_instruction = {
+                    "agent": "Sos un agente local de OpenSwarm. Podés crear, leer y modificar archivos dentro del workspace. Cuando el usuario pida construir algo, ejecutá herramientas en vez de dar instrucciones manuales.",
+                    "plan": "Sos Plan local de OpenSwarm. Analizá, leé y buscá información si hace falta, pero no crees, edites, muevas, borres archivos ni ejecutes comandos. Entregá un plan de implementación, no lo ejecutes.",
+                    "ask": "Sos Ask local de OpenSwarm. Respondé en modo lectura. Podés leer y buscar, pero no modificar archivos ni ejecutar comandos. Después de usar herramientas, no devuelvas solo el resultado crudo: interpretalo, explicá qué encontraste, qué no encontraste, qué significa y cerrá con una conclusión útil. Si un archivo existe, resumí su contenido y para qué sirve. Si no existe, explicá la implicancia probable. No muestres razonamiento interno paso a paso; entregá conclusiones razonadas.",
+                    "view-builder": "Sos View Builder local de OpenSwarm. Tu tarea es construir vistas, componentes, HTML, CSS, JavaScript o prototipos visuales dentro del workspace. Creá archivos reales.",
+                    "app-builder": "Sos App Builder local de OpenSwarm. Tu tarea es construir proyectos completos, estructura de carpetas y archivos funcionales dentro del workspace.",
+                }.get(mode_name, "Sos un agente local de OpenSwarm. Operá solo con las herramientas permitidas por el modo actual.")
+
+                tool_prompt_blocks = {
+                    "list_files": """- list_files
+  Args: {"path": ".", "max_items": 200}
+  Uso: lista archivos y carpetas sin modificar nada.""",
+                    "read_file": """- read_file
+  Args: {"path": "ruta/relativa.ext", "max_chars": 120000}
+  Uso: lee contenido de archivos sin modificar nada.""",
+                    "search_files": """- search_files
+  Args: {"path": ".", "pattern": "nombre-o-parte-del-archivo", "max_results": 100}
+  Uso: busca archivos por nombre sin modificar nada.""",
+                    "search_text": """- search_text
+  Args: {"path": ".", "query": "texto a buscar", "max_results": 50}
+  Uso: busca texto dentro de archivos sin modificar nada.""",
+                    "inspect_project": """- inspect_project
+  Args: {"path": ".", "max_items": 200}
+  Uso: inspecciona estructura del proyecto sin modificar archivos. Detecta package.json, scripts npm, framework probable, carpetas principales y comandos seguros recomendados.""",
+                    "write_file": """- write_file
+  Args: {"path": "ruta/relativa.ext", "content": "texto completo del archivo"}
+  Uso: crea o reemplaza archivos.""",
+                    "edit_file": """- edit_file
+  Args: {"path": "ruta/relativa.ext", "old_text": "texto exacto existente", "new_text": "texto nuevo", "replace_all": false}
+  Uso: modifica archivos existentes.""",
+                    "copy_file": """- copy_file
+  Args: {"source": "ruta/origen.ext", "destination": "ruta/destino.ext"}
+  Uso: copia archivos.""",
+                    "move_file": """- move_file
+  Args: {"source": "ruta/origen.ext", "destination": "ruta/destino.ext"}
+  Uso: mueve o renombra archivos.""",
+                    "delete_file": """- delete_file
+  Args: {"path": "ruta/archivo.ext", "confirm": true}
+  Uso: borra archivos.""",
+                    "create_folder": """- create_folder
+  Args: {"path": "ruta/relativa"}
+  Uso: crea carpetas.""",
+                    "run_command": """- run_command
+  Args: {"command": "npm run build", "cwd": ".", "timeout_seconds": 30, "max_output_chars": 20000}
+  Uso: ejecuta comandos locales permitidos dentro del workspace. cwd debe ser una ruta relativa segura. Solo usar comandos seguros. No usar pipes, redirecciones, rutas absolutas ni comandos destructivos.""",
+                }
+
+                available_tools_prompt = "\n\n".join(
+                    tool_prompt_blocks[name]
+                    for name in sorted(mode_allowed_ollama_tool_names)
+                    if name in tool_prompt_blocks
+                )
+
+                forbidden_tools_prompt = ", ".join(
+                    sorted(ollama_all_tool_names - mode_allowed_ollama_tool_names)
+                ) or "ninguna"
+
+                mode_system_prompt = (getattr(session, "system_prompt", None) or "").strip()
+
+                system_prompt = f"""
+Sos OpenSwarm local ejecutándose con Ollama en la computadora del usuario.
+No digas que sos Qwen, Alibaba, Claude, ChatGPT ni un modelo externo.
+Modo actual: {mode_name}
+Workspace absoluto permitido: {workspace}
+
+{mode_instruction}
+
+Prompt específico del modo:
+{mode_system_prompt if mode_system_prompt else "Sin prompt específico adicional."}
+
+Herramientas disponibles para este modo:\n{available_tools_prompt}\n\nHerramientas prohibidas para este modo:\n{forbidden_tools_prompt}\n\nReglas obligatorias:
+- Todas las rutas deben ser relativas al workspace.
+- Nunca uses rutas absolutas.
+- Nunca intentes salir del workspace con ../.
+- Si necesitás crear o modificar archivos y las herramientas de escritura están permitidas, usá herramientas. Si no están permitidas, entregá un plan o explicá el bloqueo.
+- Si creás o modificás archivos de código, validá después de escribirlos usando run_command cuando esté permitido.
+- Para archivos .py, validá con: python -m py_compile ruta/relativa.py
+- Para archivos .js, .mjs o .cjs, validá con: node --check ruta/relativa.js
+- Si run_command está prohibida por el usuario, no la uses; informá en la respuesta final que la validación automática fue omitida por restricción explícita.
+- Respondé exclusivamente en JSON válido.
+- No uses Markdown fuera del JSON.
+- No agregues texto antes ni después del JSON.
+
+Formato para usar herramienta permitida:
+{{
+  "type": "tool_call",
+  "tool": "inspect_project",
+  "args": {{
+    "path": ".",
+    "max_items": 200
+  }}
+}}
+
+Formato para respuesta final:
+{{
+  "type": "final",
+  "content": "Texto final en lenguaje natural. Si el modo pide secciones, escribilas dentro de este string. No devuelvas objetos, diccionarios, arrays ni JSON dentro de content."
+}}
+""".strip()
+
+                def _ollama_trim_text(value: str | None, max_chars: int = 3000) -> str:
+                    text = "" if value is None else str(value)
+                    if len(text) <= max_chars:
+                        return text
+                    return text[:max_chars] + "\n...[contenido recortado por límite de contexto local]"
+
+
+                def _ollama_message_role(message: object) -> str | None:
+                    role = getattr(message, "role", None)
+
+                    if role in ("user", "assistant"):
+                        return role
+
+                    # Los mensajes system internos son actividad visible/debug.
+                    # No se reinyectan al historial para evitar que Ollama los copie en la respuesta final.
+                    return None
+
+
+                def _ollama_message_content(message: object, max_chars: int = 3000) -> str:
+                    content = getattr(message, "content", "") or ""
+                    role = getattr(message, "role", "")
+
+                    if role == "system" and isinstance(content, str):
+                        if content.startswith("Tool ejecutada localmente:"):
+                            return _ollama_trim_text(
+                                "Resultado operativo previo:\n" + content,
+                                max_chars=max_chars,
+                            )
+
+                        if content.startswith("Herramienta ejecutada:"):
+                            return _ollama_trim_text(
+                                "Actividad operativa previa:\n" + content,
+                                max_chars=max_chars,
+                            )
+
+                    return _ollama_trim_text(content, max_chars=max_chars)
+
+
+                def _ollama_build_conversation() -> list[dict]:
+                    conversation_items: list[dict] = [
+                        {"role": "system", "content": system_prompt},
+                    ]
+
+                    source_messages = list(getattr(session, "messages", []) or [])
+
+                    last_stop_index = -1
+                    for index, message in enumerate(source_messages):
+                        raw_content = getattr(message, "content", "") or ""
+                        raw_text = raw_content if isinstance(raw_content, str) else str(raw_content)
+                        raw_text_lower = raw_text.lower()
+
+                        if (
+                            "tarea detenida por el usuario" in raw_text_lower
+                            or "no continuar esta tarea" in raw_text_lower
+                            or "agente detenido" in raw_text_lower
+                            or "ejecución detenida:" in raw_text_lower
+                        ):
+                            last_stop_index = index
+
+                    context_source_messages = source_messages[last_stop_index + 1:]
+
+                    filtered_messages = []
+                    for message in context_source_messages:
+                        role = _ollama_message_role(message)
+                        if not role:
+                            continue
+
+                        raw_content = getattr(message, "content", "") or ""
+                        raw_text = raw_content if isinstance(raw_content, str) else str(raw_content)
+                        raw_text_lower = raw_text.lower()
+
+                        if "tarea detenida por el usuario" in raw_text_lower:
+                            continue
+
+                        if "no continuar esta tarea" in raw_text_lower:
+                            continue
+
+                        if "agente detenido" in raw_text_lower:
+                            continue
+
+                        if "ejecución detenida:" in raw_text_lower:
+                            continue
+
+                        filtered_messages.append(message)
+
+                    recent_messages = filtered_messages[-4:]
+
+                    total_chars = len(system_prompt)
+                    max_total_chars = 18000
+
+                    for message in recent_messages:
+                        role = _ollama_message_role(message)
+                        if not role:
+                            continue
+
+                        content = _ollama_message_content(message, max_chars=1800).strip()
+                        if not content:
+                            continue
+
+                        # Evita duplicar el último mensaje actual si ya fue agregado a session.messages.
+                        if role == "user" and content.strip() == str(user_text).strip():
+                            continue
+
+                        if total_chars + len(content) > max_total_chars:
+                            continue
+
+                        conversation_items.append({
+                            "role": role,
+                            "content": content,
+                        })
+                        total_chars += len(content)
+
+                    conversation_items.append({
+                        "role": "user",
+                        "content": str(user_text),
+                    })
+
+                    return conversation_items
+
+
+                conversation = _ollama_build_conversation()
+
+                try:
+                    final_content = ""
+                    max_steps = 64
+                    executed_any_tool = False
+                    mutation_keywords = (
+                        "crea",
+                        "crear",
+                        "creame",
+                        "modifica",
+                        "modificar",
+                        "modificalo",
+                        "edit",
+                        "edita",
+                        "editar",
+                        "reemplaza",
+                        "reemplazar",
+                        "cambia",
+                        "cambiar",
+                        "agrega",
+                        "agregar",
+                        "escribe",
+                        "escribir",
+                        "write",
+                        "update",
+                        "copia",
+                        "copiar",
+                        "copiá",
+                        "copy",
+                        "duplicate",
+                        "mueve",
+                        "mover",
+                        "mové",
+                        "moverlo",
+                        "renombra",
+                        "renombrá",
+                        "renombrar",
+                        "renombralo",
+                        "renombrarlo",
+                        "rename",
+                        "move",
+                        "borra",
+                        "borrá",
+                        "borrar",
+                        "elimina",
+                        "eliminá",
+                        "eliminar",
+                        "delete",
+                        "remove",
+                    )
+                    user_text_raw = str(user_text)
+                    lowered_user_text = user_text_raw.lower()
+
+                    expected_exact_run_command = None
+                    exact_command_markers = (
+                        "comando exacto:",
+                        "este comando exacto:",
+                        "ejecutá este comando exacto:",
+                        "ejecuta este comando exacto:",
+                    )
+
+                    for marker in exact_command_markers:
+                        marker_index = lowered_user_text.find(marker)
+                        if marker_index >= 0:
+                            command_start = marker_index + len(marker)
+                            command_tail = user_text_raw[command_start:].strip()
+                            command_lines = [
+                                line.strip()
+                                for line in command_tail.splitlines()
+                                if line.strip()
+                            ]
+                            if command_lines:
+                                expected_exact_run_command = (
+                                    command_lines[0]
+                                    .strip()
+                                    .strip('"')
+                                    .strip("'")
+                                    .rstrip(".,;")
+                                    .strip()
+                                )
+                            break
+
+                    available_tool_names = set(mode_allowed_ollama_tool_names)
+
+                    required_tool_names = set()
+                    for tool_name in available_tool_names:
+                        required_patterns = (
+                            f"usá obligatoriamente {tool_name}",
+                            f"usa obligatoriamente {tool_name}",
+                            f"usar obligatoriamente {tool_name}",
+                            f"usá {tool_name} obligatoriamente",
+                            f"usa {tool_name} obligatoriamente",
+                            f"tenés que usar {tool_name}",
+                            f"tienes que usar {tool_name}",
+                            f"debes usar {tool_name}",
+                            f"debés usar {tool_name}",
+                            f"obligatorio usar {tool_name}",
+                            f"obligatoriamente {tool_name}",
+                            f"usá la herramienta {tool_name}",
+                            f"usa la herramienta {tool_name}",
+                            f"ejecutá {tool_name}",
+                            f"ejecuta {tool_name}",
+                            f"ejecutar {tool_name}",
+                        )
+                        if any(pattern in lowered_user_text for pattern in required_patterns):
+                            required_tool_names.add(tool_name)
+
+                    forbidden_tool_names = set()
+                    for tool_name in available_tool_names:
+                        forbidden_patterns = (
+                            f"no uses {tool_name}",
+                            f"no usar {tool_name}",
+                            f"no use {tool_name}",
+                            f"sin {tool_name}",
+                            f"no ejecutes {tool_name}",
+                            f"no ejecutar {tool_name}",
+                        )
+                        if any(pattern in lowered_user_text for pattern in forbidden_patterns):
+                            forbidden_tool_names.add(tool_name)
+
+                    if (
+                        "no uses run_command" in lowered_user_text
+                        or "no uses npm" in lowered_user_text
+                        or "no ejecutes build" in lowered_user_text
+                        or "no ejecutes npm" in lowered_user_text
+                    ):
+                        forbidden_tool_names.add("run_command")
+
+                    conflicting_required_forbidden_tools = required_tool_names & forbidden_tool_names
+                    required_tool_names = required_tool_names - forbidden_tool_names
+
+                    user_requests_hard_tool_execution = (
+                        "no respondas final hasta ejecutar una herramienta real" in lowered_user_text
+                        or "no respondas final hasta ejecutar herramientas reales" in lowered_user_text
+                        or "no respondas final hasta usar una herramienta real" in lowered_user_text
+                        or "no respondas final hasta usar herramientas reales" in lowered_user_text
+                    )
+
+                    if conflicting_required_forbidden_tools:
+                        final_content = (
+                            "Ejecución detenida: la instrucción exige herramientas que también fueron prohibidas: "
+                            + ", ".join(sorted(conflicting_required_forbidden_tools))
+                            + ". No hay una herramienta válida para continuar con esas reglas."
+                        )
+                        await _ollama_emit_message("assistant", final_content)
+                        session.status = "idle"
+                        _save_session(session_id, session.model_dump(mode="json"))
+                        return
+
+                    allowed_tool_names = available_tool_names - forbidden_tool_names
+
+                    if user_requests_hard_tool_execution and not allowed_tool_names:
+                        final_content = (
+                            "Ejecución detenida: no hay herramientas permitidas disponibles "
+                            "para cumplir la instrucción de ejecutar una herramienta real."
+                        )
+                        await _ollama_emit_message("assistant", final_content)
+                        session.status = "idle"
+                        _save_session(session_id, session.model_dump(mode="json"))
+                        return
+
+                    user_requests_mutation = any(
+                        keyword in lowered_user_text
+                        for keyword in mutation_keywords
+                    )
+
+                    user_requests_exact_order = (
+                        "orden exacto" in lowered_user_text
+                        or "seguí este orden" in lowered_user_text
+                        or "sigue este orden" in lowered_user_text
+                        or "en este orden" in lowered_user_text
+                        or "paso 1" in lowered_user_text
+                        or "1." in lowered_user_text
+                    )
+
+                    if user_requests_exact_order:
+                        conversation.append({
+                            "role": "user",
+                            "content": (
+                                "El usuario pidió una secuencia exacta. "
+                                "Debés ejecutar las herramientas estrictamente en el orden indicado. "
+                                "No ejecutes pasos posteriores antes de completar los anteriores. "
+                                "Si faltan pasos, continuá con el próximo tool_call pendiente. "
+                                "No respondas final hasta completar toda la secuencia solicitada."
+                            ),
+                        })
+
+                    cancel_event = getattr(session, "_cancel_event", None)
+                    executed_tool_names = set()
+                    blocked_tool_attempt_counts = {}
+                    blocked_tool_attempt_total = 0
+                    max_repeated_blocked_tool_attempts = 2
+                    max_blocked_tool_attempts_total = 3
+
+                    for step_index in range(max_steps):
+                        if session.status == "stopped" or (cancel_event is not None and cancel_event.is_set()):
+                            final_content = "Ejecución detenida por el usuario."
+                            break
+
+                        raw_response = await asyncio.to_thread(_ollama_chat, conversation, False)
+
+                        if session.status == "stopped" or (cancel_event is not None and cancel_event.is_set()):
+                            final_content = "Ejecución detenida por el usuario."
+                            break
+
+                        parsed_objects = _ollama_extract_json_objects(raw_response)
+
+                        if not parsed_objects:
+                            clean_response = (raw_response or "").strip()
+                            logger.info("[OLLAMA] plain text final response: %s", clean_response[:500])
+
+                            if clean_response:
+                                if mode_name != "plan" and user_requests_mutation and not executed_any_tool:
+                                    conversation.append({
+                                        "role": "assistant",
+                                        "content": clean_response,
+                                    })
+                                    conversation.append({
+                                        "role": "user",
+                                        "content": (
+                                            "El usuario pidió crear, modificar, escribir, editar, copiar, mover o renombrar archivos. "
+                                            "No podés responder texto final sin ejecutar una herramienta real. "
+                                            "Respondé únicamente con JSON tool_call usando write_file, edit_file, copy_file o move_file según corresponda."
+                                        ),
+                                    })
+                                    continue
+
+                                missing_required_tools = required_tool_names - executed_tool_names
+
+                                if missing_required_tools:
+                                    missing_tools_text = ", ".join(sorted(missing_required_tools))
+                                    conversation.append({
+                                        "role": "assistant",
+                                        "content": clean_response,
+                                    })
+                                    conversation.append({
+                                        "role": "user",
+                                        "content": (
+                                            "El usuario pidió usar herramientas específicas y todavía faltan: "
+                                            f"{missing_tools_text}. "
+                                            "No podés responder texto final sin ejecutar esas herramientas reales. "
+                                            "Respondé únicamente con JSON tool_call usando la próxima herramienta requerida pendiente. "
+                                            "No uses herramientas prohibidas por el usuario."
+                                        ),
+                                    })
+                                    continue
+
+                                final_content = clean_response
+                                break
+
+                            conversation.append({
+                                "role": "user",
+                                "content": (
+                                    "La respuesta anterior llegó vacía. "
+                                    "Respondé únicamente con un objeto JSON válido. "
+                                    "No uses Markdown. No expliques."
+                                ),
+                            })
+                            continue
+
+                        saw_tool_call = False
+
+                        for parsed in parsed_objects:
+                            response_type = parsed.get("type")
+
+                            if response_type == "tool_call":
+                                if session.status == "stopped" or (cancel_event is not None and cancel_event.is_set()):
+                                    final_content = "Ejecución detenida por el usuario."
+                                    break
+
+                                saw_tool_call = True
+                                tool_name = str(parsed.get("tool", "")).strip()
+                                args = parsed.get("args", {})
+
+                                if tool_name not in mode_allowed_ollama_tool_names:
+                                    if mode_name == "plan":
+                                        conversation.append({
+                                            "role": "assistant",
+                                            "content": json.dumps(parsed, ensure_ascii=False),
+                                        })
+                                        conversation.append({
+                                            "role": "user",
+                                            "content": (
+                                                f"La herramienta {tool_name} no está permitida en modo Plan. "
+                                                "No intentes escribir, editar, borrar, mover ni crear archivos. "
+                                                "Respondé únicamente con JSON type='final'. En content escribí solo Markdown legible para humanos, sin mostrar JSON. "
+                                                "Usá este formato: título, resumen, fases numeradas con Objetivo/Acciones/Archivos/Validación/Resultado esperado, checklist y siguiente paso para Agent. "
+                                                "Interpretá crear, hacer, construir, desarrollar o implementar como planificar, no ejecutar cambios."
+                                            ),
+                                        })
+                                        saw_tool_call = False
+                                        parsed_objects = []
+                                        continue
+
+                                    tool_result = {
+                                        "ok": False,
+                                        "error": (
+                                            f"Herramienta no permitida por el modo actual ({mode_name}): {tool_name}"
+                                        ),
+                                        "result": {
+                                            "tool": tool_name,
+                                            "blocked": True,
+                                            "reason": "La herramienta no está habilitada para el modo actual.",
+                                            "mode": mode_name,
+                                            "allowed_tools": sorted(mode_allowed_ollama_tool_names),
+                                        },
+                                    }
+                                elif tool_name not in forbidden_tool_names:
+                                    executed_any_tool = True
+                                    executed_tool_names.add(tool_name)
+
+                                blocked_tool_loop_detected = False
+
+                                if tool_name not in mode_allowed_ollama_tool_names:
+                                    pass
+                                elif tool_name in forbidden_tool_names:
+                                    blocked_tool_attempt_total += 1
+                                    blocked_tool_attempt_counts[tool_name] = (
+                                        blocked_tool_attempt_counts.get(tool_name, 0) + 1
+                                    )
+
+                                    repeated_blocked_tool_attempts = blocked_tool_attempt_counts[tool_name]
+
+                                    blocked_tool_loop_detected = (
+                                        repeated_blocked_tool_attempts >= max_repeated_blocked_tool_attempts
+                                        or blocked_tool_attempt_total >= max_blocked_tool_attempts_total
+                                    )
+
+                                    tool_result = {
+                                        "ok": False,
+                                        "error": (
+                                            f"Herramienta bloqueada por instrucción del usuario: {tool_name}"
+                                        ),
+                                        "result": {
+                                            "tool": tool_name,
+                                            "blocked": True,
+                                            "reason": "El usuario prohibió esta herramienta en la instrucción actual.",
+                                            "blocked_attempts_for_tool": repeated_blocked_tool_attempts,
+                                            "blocked_attempts_total": blocked_tool_attempt_total,
+                                            "blocked_loop_detected": blocked_tool_loop_detected,
+                                        },
+                                    }
+                                elif tool_name in mode_allowed_ollama_tool_names:
+                                    if (
+                                        tool_name == "run_command"
+                                        and expected_exact_run_command
+                                        and isinstance(args, dict)
+                                        and str(args.get("command", "")).strip() != expected_exact_run_command
+                                    ):
+                                        tool_result = {
+                                            "ok": False,
+                                            "error": (
+                                                "Comando bloqueado: el agente intentó reemplazar el comando exacto pedido. "
+                                                f"Esperado: {expected_exact_run_command}. "
+                                                f"Recibido: {str(args.get('command', '')).strip()}"
+                                            ),
+                                            "result": {
+                                                "tool": tool_name,
+                                                "blocked": True,
+                                                "reason": "El usuario exigió ejecutar un comando exacto y el agente propuso otro.",
+                                                "expected_command": expected_exact_run_command,
+                                                "received_command": str(args.get("command", "")).strip(),
+                                            },
+                                        }
+                                    else:
+                                        tool_result = _ollama_execute_tool(tool_name, args)
+
+                                result_data = tool_result.get("result", {}) if isinstance(tool_result, dict) else {}
+                                result_path = result_data.get("path") if isinstance(result_data, dict) else None
+                                result_ok = bool(tool_result.get("ok", False)) if isinstance(tool_result, dict) else False
+
+                                activity_lines = [
+                                    f"Herramienta ejecutada: {tool_name}",
+                                    f"Estado: {'OK' if result_ok else 'ERROR'}",
+                                ]
+
+                                if result_path:
+                                    activity_lines.append(f"Ruta: {result_path}")
+
+                                if tool_name == "inspect_project" and isinstance(tool_result, dict) and not result_data.get("blocked"):
+                                    project_payload = result_data if isinstance(result_data, dict) else {}
+
+                                    root_value = project_payload.get("root") or project_payload.get("path") or project_payload.get("cwd")
+                                    framework_value = project_payload.get("framework") or project_payload.get("detected_framework") or "No detectado"
+
+                                    npm_scripts_value = (
+                                        project_payload.get("npm_scripts")
+                                        or project_payload.get("scripts")
+                                        or {}
+                                    )
+
+                                    main_files_value = (
+                                        project_payload.get("main_files")
+                                        or project_payload.get("files")
+                                        or []
+                                    )
+
+                                    recommended_commands_value = (
+                                        project_payload.get("recommended_safe_commands")
+                                        or project_payload.get("recommended_commands")
+                                        or []
+                                    )
+
+                                    if root_value:
+                                        activity_lines.append(f"Root: {root_value}")
+
+                                    activity_lines.append(f"Framework: {framework_value}")
+
+                                    activity_lines.append("Scripts npm:")
+                                    if isinstance(npm_scripts_value, dict) and npm_scripts_value:
+                                        for script_name, script_command in list(npm_scripts_value.items())[:20]:
+                                            activity_lines.append(f"- {script_name}: {script_command}")
+                                    elif isinstance(npm_scripts_value, list) and npm_scripts_value:
+                                        for script_item in npm_scripts_value[:20]:
+                                            activity_lines.append(f"- {script_item}")
+                                    else:
+                                        activity_lines.append("- sin scripts detectados")
+
+                                    activity_lines.append("Archivos principales:")
+                                    if isinstance(main_files_value, list) and main_files_value:
+                                        for file_item in main_files_value[:30]:
+                                            activity_lines.append(f"- {file_item}")
+                                    else:
+                                        activity_lines.append("- sin archivos principales detectados")
+
+                                    activity_lines.append("Comandos recomendados:")
+                                    if isinstance(recommended_commands_value, list) and recommended_commands_value:
+                                        for command_item in recommended_commands_value[:20]:
+                                            activity_lines.append(f"- {command_item}")
+                                    else:
+                                        activity_lines.append("- sin comandos recomendados detectados")
+
+                                if tool_name == "run_command" and isinstance(tool_result, dict) and not result_data.get("blocked"):
+                                    command_payload = result_data if isinstance(result_data, dict) else {}
+                                    command_value = command_payload.get("command")
+                                    exit_code_value = command_payload.get("exit_code")
+                                    stdout_value = str(command_payload.get("stdout") or "").strip()
+                                    stderr_value = str(command_payload.get("stderr") or "").strip()
+
+                                    if command_value:
+                                        activity_lines.append(f"Comando: {command_value}")
+
+                                    if exit_code_value is not None:
+                                        activity_lines.append(f"Exit code: {exit_code_value}")
+
+                                    if stdout_value:
+                                        activity_lines.append("Salida:")
+                                        activity_lines.append(stdout_value[:2000])
+                                    else:
+                                        activity_lines.append("Salida: sin salida")
+
+                                    if stderr_value:
+                                        activity_lines.append("Errores:")
+                                        activity_lines.append(stderr_value[:2000])
+                                    else:
+                                        activity_lines.append("Errores: sin errores")
+
+                                if not result_ok:
+                                    activity_lines.append(
+                                        "Error: "
+                                        + str(tool_result.get("error") or result_data.get("error") or "Error desconocido")
+                                    )
+
+                                await _ollama_emit_message(
+                                    "system",
+                                    "\n".join(activity_lines)
+                                )
+
+                                should_finish_after_blocked_tool = (
+                                    bool(result_data.get("blocked"))
+                                    and not bool(result_data.get("expected_command"))
+                                    and bool(required_tool_names)
+                                    and not (required_tool_names - executed_tool_names)
+                                )
+
+                                if should_finish_after_blocked_tool:
+                                    final_content = (
+                                        "Tarea completada con la herramienta requerida. "
+                                        "Se bloquearon herramientas prohibidas por la instrucción actual."
+                                    )
+                                    saw_tool_call = False
+                                    parsed_objects = []
+                                    break
+
+                                if result_data.get("blocked") and result_data.get("reason") == "La herramienta no está habilitada para el modo actual.":
+                                    final_content = (
+                                        f"Ejecución detenida: la herramienta {tool_name} no está permitida "
+                                        f"en el modo actual ({mode_name}). Cambiá a modo Agent para ejecutar esa acción."
+                                    )
+                                    saw_tool_call = False
+                                    parsed_objects = []
+                                    break
+
+                                if result_data.get("blocked") and result_data.get("blocked_loop_detected"):
+                                    final_content = (
+                                        "Ejecución detenida: el agente intentó repetir herramientas bloqueadas "
+                                        "por la instrucción actual y no hubo progreso operativo real."
+                                    )
+                                    saw_tool_call = False
+                                    parsed_objects = []
+                                    break
+
+                                conversation.append({
+                                    "role": "assistant",
+                                    "content": json.dumps(parsed, ensure_ascii=False),
+                                })
+                                conversation.append({
+                                    "role": "user",
+                                    "content": (
+                                        "Resultado de herramienta:\n"
+                                        + json.dumps(tool_result, ensure_ascii=False, indent=2)
+                                    ),
+                                })
+                                continue
+
+                            if response_type == "final":
+                                if mode_name != "plan" and user_requests_mutation and not executed_any_tool:
+                                    conversation.append({
+                                        "role": "assistant",
+                                        "content": json.dumps(parsed, ensure_ascii=False),
+                                    })
+                                    conversation.append({
+                                        "role": "user",
+                                        "content": (
+                                            "El usuario pidió crear, modificar, escribir, editar o reemplazar archivos. "
+                                            "No podés responder final sin ejecutar una herramienta real. "
+                                            "Usá tool_call con write_file o edit_file según corresponda."
+                                        ),
+                                    })
+                                    continue
+
+                                missing_required_tools = required_tool_names - executed_tool_names
+
+                                if missing_required_tools:
+                                    missing_tools_text = ", ".join(sorted(missing_required_tools))
+                                    conversation.append({
+                                        "role": "assistant",
+                                        "content": json.dumps(parsed, ensure_ascii=False),
+                                    })
+                                    conversation.append({
+                                        "role": "user",
+                                        "content": (
+                                            "El usuario pidió usar herramientas específicas y todavía faltan: "
+                                            f"{missing_tools_text}. "
+                                            "No podés responder final sin ejecutar esas herramientas reales. "
+                                            "Usá tool_call con la próxima herramienta requerida pendiente. "
+                                            "No uses herramientas prohibidas por el usuario."
+                                        ),
+                                    })
+                                    continue
+
+                                final_content = str(parsed.get("content", "")).strip()
+                                if not final_content:
+                                    final_content = "Tarea finalizada."
+                                break
+
+                            conversation.append({
+                                "role": "assistant",
+                                "content": json.dumps(parsed, ensure_ascii=False),
+                            })
+                            conversation.append({
+                                "role": "user",
+                                "content": "type inválido. Usá exclusivamente type='tool_call' o type='final'.",
+                            })
+
+                        if final_content:
+                            break
+
+                        if saw_tool_call:
+                            if user_requests_exact_order:
+                                followup_instruction = (
+                                    "Las herramientas anteriores fueron ejecutadas. "
+                                    "Continuá estrictamente con el próximo paso pendiente de la secuencia original del usuario. "
+                                    "No saltees pasos. No cambies el orden. "
+                                    "Si todavía faltan herramientas, devolvé solo más JSON type='tool_call'. "
+                                    "Respondé JSON type='final' únicamente cuando todos los pasos pedidos estén completos."
+                                )
+                            else:
+                                followup_instruction = (
+                                    "Las herramientas fueron ejecutadas. "
+                                    "Si la tarea terminó, respondé únicamente con JSON type='final'. "
+                                    "Si falta algo, devolvé más tool_call JSON."
+                                )
+
+                            conversation.append({
+                                "role": "user",
+                                "content": followup_instruction,
+                            })
+                            continue
+
+                    if not final_content:
+                        final_content = "No se pudo completar el loop local de herramientas dentro del límite de pasos."
+
+                    visible_final_content = _extract_visible_final_content(final_content)
+                    _maybe_persist_plan_from_plan_mode(session, visible_final_content)
+                    await _ollama_emit_message("assistant", visible_final_content)
+                    session.status = "idle"
+                    _save_session(session_id, session.model_dump(mode="json"))
+                    return
+
+                except Exception as e:
+                    logger.exception("[OLLAMA] local tool loop failed")
+                    err_msg = Message(
+                        id=uuid4().hex,
+                        role="system",
+                        content=f"Ollama local tool loop failed: {e}",
+                        branch_id=session.active_branch_id,
+                    )
+                    session.messages.append(err_msg)
+                    await ws_manager.send_to_session(session_id, "agent:message", {
+                        "session_id": session_id,
+                        "message": err_msg.model_dump(mode="json"),
+                    })
+                    session.status = "error"
+                    _save_session(session_id, session.model_dump(mode="json"))
+                    return
+
             # cc/cx/gc/ag/gemini/openrouter prefixes force 9Router; route="api"
             # bypasses to the provider's host directly; otherwise Pro proxy or key.
             from backend.apps.nine_router import is_running as _9r_running
@@ -2830,6 +4746,7 @@ class AgentManager:
                                     content=_asst_text,
                                     branch_id=session.active_branch_id,
                                 )
+                                _maybe_persist_plan_from_plan_mode(session, _asst_text)
                                 session.messages.append(asst_msg)
                                 await ws_manager.send_to_session(session_id, "agent:message", {
                                     "session_id": session_id,
@@ -3479,6 +5396,7 @@ class AgentManager:
             pass
 
         session.status = "running"
+        session._cancel_event = asyncio.Event()
         await ws_manager.send_to_session(session_id, "agent:status", {
             "session_id": session_id,
             "status": "running",
@@ -3510,6 +5428,26 @@ class AgentManager:
             session.pending_approvals = []
 
             session.status = "stopped"
+            session.pending_continuation = False
+            session.pending_continuation_prompt = None
+
+            try:
+                stop_marker = Message(
+                    role="system",
+                    content=(
+                        "Tarea detenida por el usuario. "
+                        "No continuar esta tarea en mensajes futuros salvo que el usuario lo pida explícitamente."
+                    ),
+                    branch_id=session.active_branch_id,
+                )
+                session.messages.append(stop_marker)
+                await ws_manager.send_to_session(session_id, "agent:message", {
+                    "session_id": session_id,
+                    "message": stop_marker.model_dump(mode="json"),
+                })
+            except Exception:
+                logger.exception("Failed to append local stop marker")
+
             if not session.closed_at:
                 session.closed_at = datetime.now()
             await ws_manager.send_to_session(session_id, "agent:status", {

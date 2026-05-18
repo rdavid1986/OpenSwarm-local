@@ -71,6 +71,9 @@ export interface ToolGroupMeta {
 export interface AgentSession {
   id: string;
   name: string;
+  display_label?: string;
+  mode_label?: string;
+  technical_id?: string;
   status: 'draft' | 'running' | 'waiting_approval' | 'completed' | 'error' | 'stopped';
   provider: string;
   model: string;
@@ -1244,6 +1247,9 @@ const agentsSlice = createSlice({
       })
       .addCase(resumeSession.fulfilled, (state, action) => {
         const session = action.payload;
+        if (!session || !session.id) {
+          return;
+        }
         state.sessions[session.id] = { ...session, streamingMessage: null, tool_group_meta: session.tool_group_meta ?? {} };
         delete state.history[session.id];
         state.activeSessionId = session.id;

@@ -1,0 +1,134 @@
+"""HTTP smoke for experimental Worker -> Reviewer chain with real backend/Ollama."""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+
+BACKEND_URL = os.environ.get("OPENSWARM_SMOKE_BACKEND_URL", "http://127.0.0.1:8324").rstrip("/")
+MODEL = os.environ.get("OPENSWARM_SMOKE_OLLAMA_MODEL", "qwen2.5-coder:14b")
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+
+
+def main() -> int:
+    missing = [
+        name for name in (
+            "OPENSWARM_EXPERIMENTAL_MINI_RUNTIME",
+            "OPENSWARM_EXPERIMENTAL_DAG_TASK_RUNTIME",
+            "OPENSWARM_EXPERIMENTAL_DAG_CHAIN_RUNTIME",
+        )
+        if os.environ.get(name) != "1"
+    ]
+    if missing:
+        return fail("feature_flag_missing", f"Set flags: {', '.join(missing)}")
+
+    workspace = Path(os.environ.get("OPENSWARM_SMOKE_WORKSPACE", tempfile.mkdtemp(prefix="openswarm-worker-review-"))).resolve()
+    workspace.mkdir(parents=True, exist_ok=True)
+    diagnostics: dict[str, Any] = {"backend_url": BACKEND_URL, "model": MODEL, "workspace_path": str(workspace)}
+
+    try:
+        diagnostics["health"] = request_json("GET", "/api/health/check", expect_json=False)
+        swarm = request_json("POST", "/api/swarms/create", {
+            "user_prompt": "Crea un README.md básico en el workspace, revisalo con un agente reviewer y reportá evidencia.",
+            "workspace_path": str(workspace),
+        })
+        swarm_id = swarm["id"]
+        diagnostics["swarm_id"] = swarm_id
+        payload = {
+            "model": MODEL,
+            "base_url": OLLAMA_BASE_URL,
+            "allowed_tools": ["Read", "Write", "Edit", "SearchFiles", "SearchText"],
+            "max_turns": 8,
+            "workspace_path": str(workspace),
+        }
+        result = request_json("POST", f"/api/swarms/{swarm_id}/experimental/run-worker-review", payload, timeout=240)
+        tasks = request_json("GET", f"/api/swarms/{swarm_id}/tasks").get("tasks", [])
+        artifacts = request_json("GET", f"/api/swarms/{swarm_id}/artifacts").get("artifacts", [])
+        messages = request_json("GET", f"/api/swarms/{swarm_id}/messages").get("messages", [])
+    except Exception as exc:
+        return fail("http_smoke_failed", str(exc), diagnostics)
+
+    diagnostics["result_summary"] = {
+        "ok": result.get("ok"),
+        "status": result.get("status"),
+        "worker_status": (result.get("worker") or {}).get("status"),
+        "reviewer_status": (result.get("reviewer") or {}).get("status"),
+        "review_result": result.get("review_result"),
+        "worker_tool_history": [(h.get("tool"), h.get("status"), h.get("ok")) for h in (result.get("worker") or {}).get("tool_history", [])],
+        "reviewer_tool_history": [(h.get("tool"), h.get("status"), h.get("ok")) for h in (result.get("reviewer") or {}).get("tool_history", [])],
+    }
+    diagnostics["tasks"] = [{"title": t.get("title"), "status": t.get("status")} for t in tasks]
+    diagnostics["artifacts"] = artifacts
+    diagnostics["messages"] = [{"type": m.get("type"), "task_id": m.get("task_id"), "artifact_refs": m.get("artifact_refs")} for m in messages]
+    readme = workspace / "README.md"
+    diagnostics["readme_path"] = str(readme)
+    diagnostics["readme_exists"] = readme.exists()
+    if readme.exists():
+        diagnostics["readme_preview"] = readme.read_text(encoding="utf-8", errors="replace")[:500]
+
+    worker = task_by_title(tasks, "Create README.md")
+    reviewer = task_by_title(tasks, "Review README.md")
+    consolidate = task_by_title(tasks, "Consolidate final evidence")
+    reviewer_history = (result.get("reviewer") or {}).get("tool_history", [])
+
+    if result.get("status") != "completed" or not result.get("ok"):
+        return fail("chain_not_completed", "Expected chain completed", diagnostics)
+    if worker.get("status") != "completed" or reviewer.get("status") != "completed":
+        return fail("task_status_invalid", "Expected Worker and Reviewer completed", diagnostics)
+    if consolidate.get("status") != "pending":
+        return fail("consolidate_not_pending", "Expected Consolidate pending", diagnostics)
+    if not readme.exists():
+        return fail("readme_missing", "Expected README.md", diagnostics)
+    if not any(a.get("path") == "README.md" for a in artifacts):
+        return fail("artifact_missing", "Expected README.md artifact", diagnostics)
+    if not any(m.get("type") == "submit_artifact" for m in messages):
+        return fail("submit_artifact_missing", "Expected submit_artifact", diagnostics)
+    if not any(m.get("type") == "request_review" for m in messages):
+        return fail("request_review_missing", "Expected request_review", diagnostics)
+    if (result.get("review_result") or {}).get("status") != "approved":
+        return fail("review_result_invalid", "Expected approved review_result", diagnostics)
+    if not any(h.get("tool") == "Read" and h.get("ok") for h in reviewer_history):
+        return fail("reviewer_read_missing", "Expected Reviewer Read tool_history", diagnostics)
+
+    print(json.dumps({"ok": True, **diagnostics}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def request_json(method: str, path: str, body: dict[str, Any] | None = None, *, timeout: int = 30, expect_json: bool = True) -> Any:
+    data = None if body is None else json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(
+        f"{BACKEND_URL}{path}",
+        data=data,
+        method=method,
+        headers={"Content-Type": "application/json", "Origin": "http://localhost", "x-api-key": "local-dev-token"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            return raw if not expect_json else (json.loads(raw) if raw else {})
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {exc.code} {path}: {raw}") from exc
+
+
+def task_by_title(tasks: list[dict[str, Any]], title: str) -> dict[str, Any]:
+    for task in tasks:
+        if task.get("title") == title:
+            return task
+    raise RuntimeError(f"Task not found: {title}")
+
+
+def fail(kind: str, message: str, diagnostics: dict[str, Any] | None = None) -> int:
+    print(json.dumps({"ok": False, "error": kind, "message": message, "diagnostics": diagnostics or {}}, ensure_ascii=False, indent=2))
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

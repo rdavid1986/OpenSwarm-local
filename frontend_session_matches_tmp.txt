@@ -1,0 +1,20 @@
+./frontend/src/app/components/DynamicIsland.tsx:284:          sessionName: session.name || 'Agent',
+./frontend/src/app/components/DynamicIsland.tsx:302:          return { id, name: session.name, status: session.status, dashboardId: session.dashboard_id };
+./frontend/src/app/components/DynamicIsland.tsx:317:          agents.push({ id: g.sessionId, name: session.name, status: session.status, dashboardId: session.dashboard_id });
+./frontend/src/app/pages/AgentChat/AgentChat.tsx:833:                <Typography noWrap sx={{ color: c.text.primary, fontWeight: 600 }}>{session.name}</Typography>
+./frontend/src/app/pages/AgentChat/ChatInput.tsx:1973:                    let displayLabel = opt.label;
+./frontend/src/app/pages/AgentChat/ChatInput.tsx:1974:                    if (isOR && displayLabel.includes(': ')) {
+./frontend/src/app/pages/AgentChat/ChatInput.tsx:1976:                      const colonIdx = displayLabel.indexOf(': ');
+./frontend/src/app/pages/AgentChat/ChatInput.tsx:1977:                      const labelPrefix = displayLabel.slice(0, colonIdx).toLowerCase();
+./frontend/src/app/pages/AgentChat/ChatInput.tsx:1979:                        displayLabel = displayLabel.slice(colonIdx + 2);
+./frontend/src/app/pages/AgentChat/ChatInput.tsx:2010:                            primary={highlightMatch(displayLabel)}
+./frontend/src/app/pages/Dashboard/AgentCard.tsx:617:      data-select-meta={JSON.stringify({ name: session.name || session.id, status: session.status, model: session.model, mode: session.mode })}
+./frontend/src/app/pages/Dashboard/AgentCard.tsx:897:              {session.name}
+./frontend/src/app/pages/Dashboard/Dashboard.tsx:903:            type, id, name: session.name || id,
+./frontend/src/app/pages/Dashboard/Dashboard.tsx:904:            meta: { name: session.name, status: session.status, model: session.model, mode: session.mode },
+./frontend/src/app/pages/Dashboard/Dashboard.tsx:908:          names.push(session.name || id);
+./frontend/src/app/pages/Dashboard/DashboardHeader.tsx:55:      return { id: card.session_id, name: session.name, status: session.status, model: session.model, card };
+./frontend/src/shared/state/agentsSlice.ts:598:        session.name = action.payload.name;
+./frontend/src/shared/state/agentsSlice.ts:1120:          session.name = action.payload.title;
+./frontend/src/shared/state/agentsSlice.ts:1188:            name: session.name,
+./frontend/src/shared/state/agentsSlice.ts:1211:            name: session.name,
