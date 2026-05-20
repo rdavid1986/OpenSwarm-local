@@ -16,6 +16,7 @@ BUILTIN_TOOLS: list[BuiltinTool] = [
     BuiltinTool(name="Read", description="Read files and directories from the filesystem", category="filesystem"),
     BuiltinTool(name="Edit", description="Make targeted edits to existing files using search and replace", category="filesystem"),
     BuiltinTool(name="Write", description="Create new files or overwrite existing files", category="filesystem"),
+    BuiltinTool(name="Diff", description="Preview a unified diff for proposed file content without modifying files", category="filesystem"),
     BuiltinTool(name="Bash", description="Execute shell commands in a terminal", category="system"),
     BuiltinTool(name="Glob", description="Find files matching glob and wildcard patterns", category="search"),
     BuiltinTool(name="Grep", description="Search file contents using regular expressions", category="search"),

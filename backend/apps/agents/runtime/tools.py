@@ -14,6 +14,7 @@ their current execution paths until they are migrated deliberately.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+import difflib
 import fnmatch
 from pathlib import Path
 from typing import Any, Literal
@@ -373,6 +374,8 @@ class ToolRuntime:
                 result = self._execute_read(call, context, spec.name, started_at)
             elif spec.name == "Edit":
                 result = self._execute_edit(call, context, spec.name, started_at)
+            elif spec.name == "Diff":
+                result = self._execute_diff(call, context, spec.name, started_at)
             elif spec.name == "Glob":
                 result = self._execute_search_files(call, context, spec.name, started_at)
             elif spec.name == "Grep":
@@ -483,6 +486,56 @@ class ToolRuntime:
                 "absolute_path": str(target),
                 "replaced": replaced,
                 "bytes": len(updated.encode("utf-8")),
+            },
+            started_at=started_at,
+            completed_at=_now_iso(),
+            metadata=self._metadata(context),
+        )
+
+    def _execute_diff(
+        self,
+        call: ToolCall,
+        context: ToolExecutionContext,
+        tool_name: str,
+        started_at: str,
+    ) -> ToolResult:
+        relative_path = self._required_str(call.input, "path")
+        proposed_content = call.input.get("proposed_content", call.input.get("content"))
+        if not isinstance(proposed_content, str):
+            raise ValueError("proposed_content must be a string")
+
+        target = self._safe_workspace_path(context.workspace_path, relative_path)
+        if not target.exists():
+            raise FileNotFoundError(f"file not found: {relative_path}")
+        if not target.is_file():
+            raise ValueError(f"not a file: {relative_path}")
+
+        current_content = target.read_text(encoding="utf-8", errors="replace")
+        current_lines = current_content.splitlines(keepends=True)
+        proposed_lines = proposed_content.splitlines(keepends=True)
+        diff_lines = list(difflib.unified_diff(
+            current_lines,
+            proposed_lines,
+            fromfile=f"a/{relative_path}",
+            tofile=f"b/{relative_path}",
+            lineterm="",
+        ))
+
+        additions = sum(1 for line in diff_lines if line.startswith("+") and not line.startswith("+++"))
+        deletions = sum(1 for line in diff_lines if line.startswith("-") and not line.startswith("---"))
+
+        return ToolResult(
+            call_id=call.id,
+            tool_name=tool_name,
+            status="completed",
+            ok=True,
+            result={
+                "path": relative_path,
+                "absolute_path": str(target),
+                "changed": current_content != proposed_content,
+                "additions": additions,
+                "deletions": deletions,
+                "unified_diff": "\n".join(diff_lines),
             },
             started_at=started_at,
             completed_at=_now_iso(),
