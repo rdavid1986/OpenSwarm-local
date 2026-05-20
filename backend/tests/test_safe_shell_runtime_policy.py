@@ -96,3 +96,23 @@ def test_safe_shell_blocks_py_compile_ignored_workspace_path():
     assert result.ok is False
     assert result.status == "failed"
     assert "ignored workspace path" in str(result.error)
+
+
+def test_safe_shell_generates_command_executed_evidence():
+    workspace = Path(tempfile.mkdtemp(prefix="openswarm-safe-shell-")).resolve()
+    target = workspace / "ok.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+
+    result = tool_runtime.execute_tool(
+        ToolCall(name="SafeShell", input={"command": "python -m py_compile ok.py"}),
+        _ctx(workspace),
+        history=[],
+    )
+
+    evidence = tool_runtime._evidence_from_tool_result(result, event_id="test-event")
+
+    assert result.ok is True
+    assert evidence is not None
+    assert evidence.kind == "command_executed"
+    assert evidence.action == "executed"
+    assert evidence.summary == "Executed safe command python -m py_compile ok.py"

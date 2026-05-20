@@ -25,6 +25,8 @@ ExperimentalTaskType = Literal[
     "validation_plan_draft",
     "security_review_draft",
     "safe_shell_draft",
+    "safe_shell_execute",
+    "validation_execute",
 ]
 
 
@@ -225,7 +227,37 @@ TASK_TYPE_REGISTRY: dict[ExperimentalTaskType, ExperimentalTaskTypeSpec] = {
         },
         allow_idempotent_skip=False,
         matcher=None,
+    ),    "safe_shell_execute": ExperimentalTaskTypeSpec(
+        type="safe_shell_execute",
+        title="Execute safe shell command",
+        allowed_tools=["SafeShell"],
+        output_contract={
+            "command_result": {
+                "command": "string",
+                "exit_code": "number",
+                "stdout": "string",
+                "stderr": "string",
+                "evidence": "command_executed",
+            }
+        },
+        allow_idempotent_skip=False,
+        matcher=None,
     ),
+    "validation_execute": ExperimentalTaskTypeSpec(
+        type="validation_execute",
+        title="Execute safe validation checks",
+        allowed_tools=["Read", "SearchFiles", "SearchText", "SafeShell"],
+        output_contract={
+            "validation_result": {
+                "status": "passed|failed",
+                "commands": [],
+                "evidence": ["command_executed"],
+            }
+        },
+        allow_idempotent_skip=False,
+        matcher=None,
+    ),
+
 }
 
 

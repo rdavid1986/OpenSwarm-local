@@ -127,6 +127,29 @@ def _now_iso() -> str:
     return datetime.now().isoformat()
 
 
+def _safe_shell_policy() -> dict[str, Any]:
+    return {
+        "allowed_commands": {
+            "python -m py_compile",
+            "npm --prefix frontend run build",
+            "git diff --check",
+            "git status --short",
+        },
+        "blocked_patterns": {
+            "rm -rf",
+            "del /s",
+            "format",
+            "curl | sh",
+            "Invoke-WebRequest | iex",
+            "sudo",
+            "chmod -R 777",
+        },
+        "timeout_seconds": 30,
+        "stdout_limit": 4000,
+        "stderr_limit": 4000,
+    }
+
+
 class ToolRuntime:
     """Facade over existing OpenSwarm tool definitions and minimal execution."""
 
@@ -504,21 +527,9 @@ class ToolRuntime:
         started_at: str,
     ) -> ToolResult:
         command = str(call.input.get("command", "")).strip()
-        allowed_commands = {
-            "python -m py_compile",
-            "npm --prefix frontend run build",
-            "git diff --check",
-            "git status --short",
-        }
-        blocked_patterns = {
-            "rm -rf",
-            "del /s",
-            "format",
-            "curl | sh",
-            "Invoke-WebRequest | iex",
-            "sudo",
-            "chmod -R 777",
-        }
+        policy = _safe_shell_policy()
+        allowed_commands = policy["allowed_commands"]
+        blocked_patterns = policy["blocked_patterns"]
 
         for pattern in blocked_patterns:
             if pattern.lower() in command.lower():
@@ -541,13 +552,13 @@ class ToolRuntime:
             cwd=str(workspace),
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=policy["timeout_seconds"],
             shell=False,
             check=False,
         )
 
-        stdout = (completed.stdout or "")[:4000]
-        stderr = (completed.stderr or "")[:4000]
+        stdout = (completed.stdout or "")[: policy["stdout_limit"]]
+        stderr = (completed.stderr or "")[: policy["stderr_limit"]]
         ok = completed.returncode == 0
 
         return ToolResult(
@@ -571,9 +582,9 @@ class ToolRuntime:
                 "safe_shell": True,
                 "workspace_required": True,
                 "executed": True,
-                "timeout_seconds": 30,
-                "stdout_truncated": len(completed.stdout or "") > 4000,
-                "stderr_truncated": len(completed.stderr or "") > 4000,
+                "timeout_seconds": policy["timeout_seconds"],
+                "stdout_truncated": len(completed.stdout or "") > policy["stdout_limit"],
+                "stderr_truncated": len(completed.stderr or "") > policy["stderr_limit"],
             },
         )
 
@@ -866,10 +877,13 @@ class ToolRuntime:
             kind = "output"
             action = "output"
             summary = f"{tool_name} returned {data.get('count', 0)} result(s)"
-        elif tool_name == "Bash":
+        elif tool_name in {"Bash", "SafeShell"}:
             kind = "command_executed"
             action = "executed"
-            summary = f"Executed command {command}" if command else "Executed command"
+            if tool_name == "SafeShell":
+                summary = f"Executed safe command {command}" if command else "Executed safe command"
+            else:
+                summary = f"Executed command {command}" if command else "Executed command"
         else:
             return None
 
