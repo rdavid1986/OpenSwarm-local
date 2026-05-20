@@ -60,6 +60,7 @@ def main() -> int:
     diagnostics["rerun_summary"] = summarize(rerun)
     diagnostics["readme_path"] = str(readme)
     diagnostics["readme_exists"] = readme.exists()
+    diagnostics["claim_guard"] = (result.get("final_result") or {}).get("claim_guard") or {}
     if readme.exists():
         diagnostics["readme_preview"] = readme.read_text(encoding="utf-8", errors="replace")[:500]
 
@@ -88,8 +89,12 @@ def validate_result(body: dict[str, Any]) -> tuple[str, str] | None:
             return ("task_not_completed", f"Expected {title} completed")
     if not task_has_evidence(body, "Plan task DAG", "planner_result"):
         return ("planner_evidence_missing", "Expected PlannerAgent evidence")
-    if (body.get("final_result") or {}).get("status") != "completed" or not body.get("final_evidence"):
+    final_result = body.get("final_result") or {}
+    claim_guard = final_result.get("claim_guard") or {}
+    if final_result.get("status") != "completed" or not body.get("final_evidence"):
         return ("final_missing", "Expected final_result/final_evidence")
+    if claim_guard.get("status") != "verified":
+        return ("claim_guard_unverified", "Expected verified final_result claim_guard")
     if not any(a.get("path") == "README.md" for a in body.get("artifacts", [])):
         return ("artifact_missing", "Expected README artifact")
     if not any(m.get("type") == "submit_artifact" for m in body.get("messages", [])):

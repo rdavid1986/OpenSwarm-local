@@ -276,6 +276,7 @@ def summarize(body: dict[str, Any]) -> dict[str, Any]:
         "execution_order": [(i.get("title"), i.get("type"), i.get("action")) for i in body.get("execution_order", [])],
         "tasks": [(t.get("title"), t.get("status")) for t in body.get("tasks", [])],
         "final_result": body.get("final_result"),
+        "claim_guard": (body.get("final_result") or {}).get("claim_guard"),
         "final_evidence_count": len(body.get("final_evidence") or []),
         "tool_history": [(h.get("tool"), h.get("status"), h.get("ok")) for h in body.get("tool_history", [])],
         "artifact_count": len(body.get("artifacts") or []),
@@ -293,8 +294,12 @@ def validate_body(body: dict[str, Any], diagnostics: dict[str, Any]) -> None:
         require(task_status(body, title) == "completed", "task_not_completed", f"Expected {title} completed")
     require(any(item.get("type") == "plan_reused" for item in body.get("execution_order", [])), "plan_missing", "Expected plan_reused")
     require(task_has_evidence(body, "Plan task DAG", "planner_result"), "planner_evidence_missing", "Expected planner_result evidence")
-    require((body.get("final_result") or {}).get("status") == "completed", "final_result_missing", "Expected final_result completed")
+    final_result = body.get("final_result") or {}
+    claim_guard = final_result.get("claim_guard") or {}
+    diagnostics["claim_guard"] = claim_guard
+    require(final_result.get("status") == "completed", "final_result_missing", "Expected final_result completed")
     require(bool(body.get("final_evidence")), "final_evidence_missing", "Expected final_evidence")
+    require(claim_guard.get("status") == "verified", "claim_guard_unverified", "Expected verified final_result claim_guard")
     require(any(a.get("path") == "README.md" for a in body.get("artifacts", [])), "artifact_missing", "Expected README artifact")
     require(any(m.get("type") == "submit_artifact" for m in body.get("messages", [])), "submit_artifact_missing", "Expected submit_artifact")
     require(any(m.get("type") == "request_review" for m in body.get("messages", [])), "request_review_missing", "Expected request_review")

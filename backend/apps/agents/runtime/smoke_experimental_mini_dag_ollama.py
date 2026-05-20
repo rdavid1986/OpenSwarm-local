@@ -66,6 +66,7 @@ def main() -> int:
     diagnostics["message_count"] = len(result.get("messages") or [])
     diagnostics["readme_path"] = str(readme)
     diagnostics["readme_exists"] = readme.exists()
+    diagnostics["claim_guard"] = (result.get("final_result") or {}).get("claim_guard") or {}
     if readme.exists():
         diagnostics["readme_preview"] = readme.read_text(encoding="utf-8", errors="replace")[:500]
 
@@ -82,8 +83,12 @@ def main() -> int:
         return fail("submit_artifact_missing", "Expected submit_artifact", diagnostics)
     if not any(m.get("type") == "request_review" for m in result.get("messages", [])):
         return fail("request_review_missing", "Expected request_review", diagnostics)
-    if (result.get("final_result") or {}).get("status") != "completed" or not result.get("final_evidence"):
+    final_result = result.get("final_result") or {}
+    claim_guard = final_result.get("claim_guard") or {}
+    if final_result.get("status") != "completed" or not result.get("final_evidence"):
         return fail("final_missing", "Expected final_result and final_evidence", diagnostics)
+    if claim_guard.get("status") != "verified":
+        return fail("claim_guard_unverified", "Expected verified final_result claim_guard", diagnostics)
     tools = [(h.get("tool"), h.get("ok")) for h in result.get("tool_history", [])]
     if ("Write", True) not in tools or ("Read", True) not in tools:
         return fail("tool_history_missing", "Expected Write and Read in tool_history", diagnostics)
