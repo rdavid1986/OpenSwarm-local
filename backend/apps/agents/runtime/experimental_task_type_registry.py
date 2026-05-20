@@ -19,6 +19,11 @@ ExperimentalTaskType = Literal[
     "review_readme",
     "consolidate_final",
     "inspect_readme",
+    "architecture_plan_draft",
+    "frontend_plan_draft",
+    "backend_plan_draft",
+    "validation_plan_draft",
+    "security_review_draft",
 ]
 
 
@@ -135,6 +140,72 @@ TASK_TYPE_REGISTRY: dict[ExperimentalTaskType, ExperimentalTaskTypeSpec] = {
             }
         },
         matcher=_matches_inspect_readme,
+    ),
+    "architecture_plan_draft": ExperimentalTaskTypeSpec(
+        type="architecture_plan_draft",
+        title="Draft architecture plan",
+        allowed_tools=[],
+        output_contract={
+            "architecture_plan": {
+                "status": "draft|ready",
+                "summary": "string",
+                "constraints": [],
+            }
+        },
+        allow_idempotent_skip=False,
+        matcher=None,
+    ),
+    "frontend_plan_draft": ExperimentalTaskTypeSpec(
+        type="frontend_plan_draft",
+        title="Draft frontend plan",
+        allowed_tools=[],
+        output_contract={
+            "frontend_plan": {
+                "status": "draft|ready",
+                "summary": "string",
+            }
+        },
+        allow_idempotent_skip=False,
+        matcher=None,
+    ),
+    "backend_plan_draft": ExperimentalTaskTypeSpec(
+        type="backend_plan_draft",
+        title="Draft backend plan",
+        allowed_tools=[],
+        output_contract={
+            "backend_plan": {
+                "status": "draft|ready",
+                "summary": "string",
+            }
+        },
+        allow_idempotent_skip=False,
+        matcher=None,
+    ),
+    "validation_plan_draft": ExperimentalTaskTypeSpec(
+        type="validation_plan_draft",
+        title="Draft validation plan",
+        allowed_tools=[],
+        output_contract={
+            "validation_plan": {
+                "status": "draft|ready",
+                "checks": [],
+            }
+        },
+        allow_idempotent_skip=False,
+        matcher=None,
+    ),
+    "security_review_draft": ExperimentalTaskTypeSpec(
+        type="security_review_draft",
+        title="Draft security review",
+        allowed_tools=[],
+        output_contract={
+            "security_review": {
+                "status": "draft|ready",
+                "risks": [],
+            }
+        },
+        allow_idempotent_skip=False,
+        matcher=None,
     ),
 }
 
