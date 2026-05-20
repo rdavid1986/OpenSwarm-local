@@ -184,6 +184,47 @@ function humanizeArtifact(artifact: any, fallback: string): string {
   return renderText(artifact?.name || artifact?.title || artifact?.path || artifact?.id, fallback);
 }
 
+function humanizeEvidence(evidence: any, fallback: string): string {
+  const kindRaw = renderText(evidence?.kind || evidence?.type, 'evidence').trim();
+  const kind = humanizeStatus(kindRaw, 'Evidence');
+
+  if (kindRaw === 'artifact' && evidence?.artifact) {
+    const artifactPath = renderText(evidence.artifact.path || evidence.artifact.id, 'artifact');
+    const status = humanizeStatus(evidence.artifact.status, 'tracked');
+    return `Artifact: ${artifactPath} · ${status}`;
+  }
+
+  if (kindRaw === 'review_result' && evidence?.review_result) {
+    const artifactPath = renderText(evidence.review_result.artifact_path || evidence.review_result.artifact_id, 'artifact');
+    const status = humanizeStatus(evidence.review_result.status, 'reviewed');
+    return `Review: ${artifactPath} · ${status}`;
+  }
+
+  if (kindRaw === 'task_status' && Array.isArray(evidence?.tasks)) {
+    const completed = evidence.tasks.filter((task: any) => task?.status === 'completed').length;
+    return `Task status: ${completed}/${evidence.tasks.length} completed`;
+  }
+
+  if (kindRaw === 'tool_history_summary' && Array.isArray(evidence?.tools)) {
+    const okTools = evidence.tools.filter((tool: any) => tool?.ok === true).length;
+    return `Tool history: ${okTools}/${evidence.tools.length} successful`;
+  }
+
+  const path = renderText(
+    evidence?.path ||
+      evidence?.file_path ||
+      evidence?.artifact?.path ||
+      evidence?.review_result?.artifact_path ||
+      evidence?.result?.path,
+    '',
+  );
+  const tool = renderText(evidence?.tool || evidence?.tool_name || evidence?.result?.tool, '');
+  if (path && tool) return `${kind}: ${tool} ${path}`;
+  if (path) return `${kind}: ${path}`;
+  if (tool) return `${kind}: ${tool}`;
+  return renderText(evidence?.id || evidence?.summary, kind || fallback);
+}
+
 const HANDLE_DEFS: { dir: ResizeDir; sx: Record<string, any> }[] = [
   { dir: 'n', sx: { top: -EDGE_THICKNESS / 2, left: CORNER_SIZE, right: CORNER_SIZE, height: EDGE_THICKNESS } },
   { dir: 's', sx: { bottom: -EDGE_THICKNESS / 2, left: CORNER_SIZE, right: CORNER_SIZE, height: EDGE_THICKNESS } },
@@ -252,6 +293,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     approvals: false,
     events: false,
     artifacts: false,
+    evidence: false,
     finalResult: true,
   });
 
@@ -261,6 +303,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const approvals = activeSwarmId ? swarmState.approvals.slice(0, 5) : [];
   const tasks = activeSwarm ? (activeSwarm.tasks || []) : [];
   const artifacts = activeSwarm ? (swarmState.artifacts || []) : [];
+  const finalEvidence = activeSwarm && Array.isArray((activeSwarm as any).final_evidence)
+    ? (activeSwarm as any).final_evidence
+    : [];
   const finalResult = activeSwarm ? activeSwarm.final_result : null;
   const chatMessages = activeSwarmId
     ? (swarmState.messages || []).filter((message: any) => getSwarmMessageText(message))
@@ -1042,6 +1087,36 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               <Typography sx={{ color: c.text.muted, fontSize: '0.7rem' }}>
                 {humanizeStatus(artifact.kind || artifact.type, 'artifact')}
               </Typography>
+              {(artifact.evidence_id || artifact.evidence_ref) && (
+                <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', mt: 0.35 }} noWrap>
+                  {artifact.evidence_id ? `evidence: ${artifact.evidence_id}` : `legacy ref: ${artifact.evidence_ref}`}
+                </Typography>
+              )}
+            </Box>
+          )))}
+
+          {renderPanelHeader('evidence', 'Evidence', finalEvidence.length)}
+          {openPanelSections.evidence && (finalEvidence.length === 0 ? (
+            <Typography sx={{ color: c.text.tertiary, fontSize: '0.78rem', mb: 1.5 }}>No final evidence.</Typography>
+          ) : finalEvidence.slice(0, 6).map((evidence: any, idx: number) => (
+            <Box
+              key={evidence.id || evidence.evidence_id || `${evidence.kind || evidence.type || 'evidence'}-${idx}`}
+              sx={{
+                mb: 0.75,
+                p: 1,
+                border: `1px solid ${c.border.subtle}`,
+                borderRadius: 1.25,
+                bgcolor: c.bg.page,
+              }}
+            >
+              <Typography sx={{ color: c.text.primary, fontSize: '0.74rem', fontWeight: 650 }} noWrap>
+                {humanizeEvidence(evidence, `Evidence ${idx + 1}`)}
+              </Typography>
+              {(evidence.id || evidence.task_id || evidence.tool_call_id) && (
+                <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', mt: 0.35 }} noWrap>
+                  {[evidence.id ? `id: ${evidence.id}` : '', evidence.task_id ? `task: ${evidence.task_id}` : '', evidence.tool_call_id ? `tool call: ${evidence.tool_call_id}` : ''].filter(Boolean).join(' · ')}
+                </Typography>
+              )}
             </Box>
           )))}
 

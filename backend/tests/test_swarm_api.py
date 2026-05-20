@@ -72,3 +72,71 @@ def test_swarm_api_create_get_and_state(monkeypatch, tmp_path: Path):
     assert (workspace / "README.md").exists()
     assert run.json()["status"] == "completed"
     assert run.json()["final_evidence"]
+
+def test_orchestration_canvas_enriches_existing_nodes_with_evidence(tmp_path: Path):
+    store = SwarmStore(root=tmp_path / "swarms")
+    orchestrator = SwarmOrchestrator(store=store)
+    swarm = orchestrator.create_swarm(user_prompt="Crear app", dashboard_id="dash-1")
+
+    swarm.orchestration_canvas_state = {
+        "nodes": [
+            {"id": "frontend_agent", "status": "pending", "x": 10, "y": 20, "expanded": True},
+            {"id": "reviewer", "status": "pending", "x": 30, "y": 40},
+            {"id": "test_runner", "status": "pending", "x": 50, "y": 60},
+            {"id": "consolidator", "status": "pending", "x": 70, "y": 80},
+        ],
+        "edges": [],
+    }
+    swarm.artifacts.append({
+        "id": "artifact-1",
+        "path": "README.md",
+        "evidence_id": "evidence-1",
+        "evidence_ref": "call-1",
+    })
+    swarm.final_evidence = [
+        {
+            "kind": "artifact",
+            "artifact": {
+                "id": "artifact-1",
+                "path": "README.md",
+                "evidence_id": "evidence-1",
+                "evidence_ref": "call-1",
+            },
+        },
+        {
+            "kind": "review_result",
+            "review_result": {
+                "artifact_id": "artifact-1",
+                "artifact_path": "README.md",
+                "status": "approved",
+            },
+        },
+        {
+            "kind": "tool_history_summary",
+            "tools": [
+                {"tool": "Write", "ok": True},
+                {"tool": "Read", "ok": True},
+            ],
+        },
+    ]
+    swarm.final_result = {
+        "status": "completed",
+        "claim_guard": {"status": "verified"},
+    }
+
+    swarms_module._enrich_orchestration_canvas_with_evidence(swarm)
+
+    nodes = {node["id"]: node for node in swarm.orchestration_canvas_state["nodes"]}
+
+    assert swarm.orchestration_canvas_state["evidence_linked"] is True
+    assert nodes["frontend_agent"]["artifact_ref"] == "artifact-1"
+    assert nodes["frontend_agent"]["evidence_ref"] == "evidence-1"
+    assert nodes["frontend_agent"]["status"] == "completed"
+    assert nodes["frontend_agent"]["x"] == 10
+    assert nodes["frontend_agent"]["y"] == 20
+    assert nodes["frontend_agent"]["expanded"] is True
+    assert nodes["reviewer"]["artifact_ref"] == "artifact-1"
+    assert nodes["reviewer"]["status"] == "completed"
+    assert nodes["test_runner"]["evidence_ref"] == "2/2 tools ok"
+    assert nodes["consolidator"]["evidence_ref"] == "claim_guard:verified"
+    assert nodes["consolidator"]["status"] == "completed"

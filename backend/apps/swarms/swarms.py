@@ -1214,6 +1214,83 @@ def _build_orchestration_canvas_state(swarm) -> dict[str, Any]:
     }
 
 
+def _enrich_orchestration_canvas_with_evidence(swarm) -> None:
+    state = getattr(swarm, "orchestration_canvas_state", {}) or {}
+    if not isinstance(state, dict):
+        return
+    nodes = state.get("nodes")
+    if not isinstance(nodes, list) or not nodes:
+        return
+
+    artifacts = [artifact for artifact in getattr(swarm, "artifacts", []) or [] if isinstance(artifact, dict)]
+    final_evidence = [item for item in getattr(swarm, "final_evidence", []) or [] if isinstance(item, dict)]
+    final_result = getattr(swarm, "final_result", {}) or {}
+    claim_guard = final_result.get("claim_guard") if isinstance(final_result, dict) else None
+
+    first_artifact = artifacts[0] if artifacts else None
+    artifact_ref = str(first_artifact.get("id") or first_artifact.get("path") or "") if first_artifact else None
+    evidence_ref = None
+    if first_artifact:
+        evidence_ref = str(first_artifact.get("evidence_id") or first_artifact.get("evidence_ref") or "") or None
+    if not evidence_ref:
+        artifact_evidence = next((item for item in final_evidence if item.get("kind") == "artifact"), None)
+        artifact_payload = artifact_evidence.get("artifact") if isinstance(artifact_evidence, dict) else None
+        if isinstance(artifact_payload, dict):
+            evidence_ref = str(artifact_payload.get("evidence_id") or artifact_payload.get("evidence_ref") or "") or None
+
+    review_evidence = next((item for item in final_evidence if item.get("kind") == "review_result"), None)
+    review_payload = review_evidence.get("review_result") if isinstance(review_evidence, dict) else None
+    review_ref = None
+    if isinstance(review_payload, dict):
+        review_ref = str(review_payload.get("artifact_id") or review_payload.get("artifact_path") or "") or None
+
+    tool_evidence = next((item for item in final_evidence if item.get("kind") == "tool_history_summary"), None)
+    tool_ref = None
+    if isinstance(tool_evidence, dict):
+        tools = tool_evidence.get("tools") or []
+        if isinstance(tools, list) and tools:
+            tool_ref = f"{sum(1 for tool in tools if isinstance(tool, dict) and tool.get('ok') is True)}/{len(tools)} tools ok"
+
+    final_status = str(final_result.get("status") or getattr(swarm, "status", "") or "") if isinstance(final_result, dict) else str(getattr(swarm, "status", "") or "")
+    claim_status = str(claim_guard.get("status") or "") if isinstance(claim_guard, dict) else ""
+
+    next_nodes: list[dict[str, Any]] = []
+    changed = False
+    for node in nodes:
+        if not isinstance(node, dict):
+            next_nodes.append(node)
+            continue
+        next_node = dict(node)
+        node_id = str(next_node.get("id") or "")
+
+        if node_id in {"frontend_agent", "backend_agent"} and artifact_ref:
+            next_node["artifact_ref"] = artifact_ref
+            next_node["evidence_ref"] = evidence_ref
+            next_node["status"] = "completed" if first_artifact else next_node.get("status", "pending")
+        elif node_id == "reviewer" and review_ref:
+            next_node["artifact_ref"] = review_ref
+            next_node["evidence_ref"] = review_ref
+            next_node["status"] = "completed"
+        elif node_id == "test_runner" and tool_ref:
+            next_node["evidence_ref"] = tool_ref
+            next_node["status"] = "completed"
+        elif node_id == "consolidator" and final_status:
+            next_node["evidence_ref"] = f"claim_guard:{claim_status or 'unknown'}"
+            next_node["status"] = "completed" if final_status == "completed" and claim_status in {"", "verified"} else final_status
+
+        if next_node != node:
+            changed = True
+        next_nodes.append(next_node)
+
+    if not changed:
+        return
+    next_state = dict(state)
+    next_state["nodes"] = next_nodes
+    next_state["updated_at"] = datetime.now(timezone.utc).isoformat()
+    next_state["evidence_linked"] = True
+    swarm.orchestration_canvas_state = next_state
+
+
 def _ensure_orchestration_canvas_preview(swarm) -> None:
     intake_state = _get_project_intake_state(swarm)
     if intake_state.get("status") != "ready_to_implement":
@@ -1754,6 +1831,9 @@ async def experimental_run_worker_review(swarm_id: str, body: ExperimentalWorker
     _load_or_404(swarm_id)
     try:
         result = await experimental_dag_chain_runner.run_worker_review(swarm_id=swarm_id, body=body)
+        swarm = swarm_orchestrator.store.load(swarm_id)
+        _enrich_orchestration_canvas_with_evidence(swarm)
+        swarm_orchestrator.store.save(swarm)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
@@ -1768,6 +1848,16 @@ async def experimental_consolidate_final(swarm_id: str, body: ExperimentalConsol
     _load_or_404(swarm_id)
     try:
         result = experimental_dag_consolidator.consolidate_final(swarm_id=swarm_id, body=body)
+        swarm = swarm_orchestrator.store.load(swarm_id)
+        _enrich_orchestration_canvas_with_evidence(swarm)
+        swarm = swarm_orchestrator.store.save(swarm)
+        result = result.model_copy(update={
+            "final_result": swarm.final_result,
+            "final_evidence": swarm.final_evidence,
+            "tasks": [task.model_dump(mode="json") for task in swarm.tasks],
+            "artifacts": swarm.artifacts,
+            "messages": [message.model_dump(mode="json") for message in swarm.messages],
+        })
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
@@ -1796,6 +1886,9 @@ async def experimental_run_dag_dependencies(swarm_id: str, body: ExperimentalDAG
     _load_or_404(swarm_id)
     try:
         result = await experimental_dag_dependency_runner.run_dag_dependencies(swarm_id=swarm_id, body=body)
+        swarm = swarm_orchestrator.store.load(swarm_id)
+        _enrich_orchestration_canvas_with_evidence(swarm)
+        swarm_orchestrator.store.save(swarm)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
