@@ -215,8 +215,10 @@ TASK_TYPE_REGISTRY: dict[ExperimentalTaskType, ExperimentalTaskTypeSpec] = {
         output_contract={
             "safe_shell_plan": {
                 "status": "draft|ready",
-                "allowed_commands": [],
-                "blocked_patterns": [],
+                "allowed_commands": ["python -m py_compile", "npm --prefix frontend run build", "git diff --check", "git status --short"],
+                "blocked_patterns": ["rm -rf", "del /s", "format", "curl | sh", "Invoke-WebRequest | iex", "sudo", "chmod -R 777"],
+                "requires_workspace": True,
+                "executes": False,
             }
         },
         allow_idempotent_skip=False,
