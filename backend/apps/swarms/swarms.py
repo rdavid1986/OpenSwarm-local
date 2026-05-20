@@ -1214,6 +1214,118 @@ def _build_orchestration_canvas_state(swarm) -> dict[str, Any]:
     }
 
 
+def _sync_specialized_contract_nodes(swarm) -> None:
+    state = getattr(swarm, "orchestration_canvas_state", {}) or {}
+    if not isinstance(state, dict):
+        return
+
+    nodes = state.get("nodes")
+    if not isinstance(nodes, list):
+        return
+
+    contracts = [
+        contract for contract in getattr(swarm, "contracts", []) or []
+        if getattr(contract, "role", None) in {
+            "ArchitectAgent",
+            "FrontendAgent",
+            "BackendAgent",
+            "TesterAgent",
+            "SecurityAgent",
+        }
+    ]
+    if not contracts:
+        return
+
+    node_specs = {
+        "ArchitectAgent": {
+            "id": "architect_agent_contract",
+            "label": "Architect Agent",
+            "role": "Dormant Architecture Contract",
+            "description": "Contrato especializado disponible. Todavía no ejecuta tareas ni tools.",
+            "x": 520,
+            "y": 420,
+        },
+        "FrontendAgent": {
+            "id": "frontend_agent_contract",
+            "label": "Frontend Agent Contract",
+            "role": "Dormant Frontend Contract",
+            "description": "Contrato frontend disponible. Se activará cuando existan task types frontend seguros.",
+            "x": 760,
+            "y": 420,
+        },
+        "BackendAgent": {
+            "id": "backend_agent_contract",
+            "label": "Backend Agent Contract",
+            "role": "Dormant Backend Contract",
+            "description": "Contrato backend disponible. Se activará cuando existan task types backend seguros.",
+            "x": 760,
+            "y": 560,
+        },
+        "TesterAgent": {
+            "id": "tester_agent_contract",
+            "label": "Tester Agent",
+            "role": "Dormant Validation Contract",
+            "description": "Contrato de validación disponible. No ejecuta shell hasta que exista una shell tool segura.",
+            "x": 1000,
+            "y": 420,
+        },
+        "SecurityAgent": {
+            "id": "security_agent_contract",
+            "label": "Security Agent",
+            "role": "Dormant Security Contract",
+            "description": "Contrato de seguridad disponible para revisar riesgos antes de habilitar operaciones sensibles.",
+            "x": 1000,
+            "y": 560,
+        },
+    }
+
+    existing_nodes_by_id = {
+        str(node.get("id")): node
+        for node in nodes
+        if isinstance(node, dict)
+    }
+    next_nodes = list(nodes)
+    changed = False
+
+    for contract in contracts:
+        spec = node_specs.get(getattr(contract, "role", ""))
+        if not spec:
+            continue
+
+        node_id = spec["id"]
+        existing = existing_nodes_by_id.get(node_id)
+        node_payload = {
+            **spec,
+            "status": "draft",
+            "model": getattr(contract, "model", None),
+            "artifact_ref": None,
+            "evidence_ref": "contract:dormant",
+            "contract_ref": getattr(contract, "id", None),
+            "width": 200,
+            "height": 96,
+        }
+
+        if existing:
+            updated = {**existing, **node_payload}
+            if updated != existing:
+                existing.update(updated)
+                changed = True
+            continue
+
+        next_nodes.append(node_payload)
+        existing_nodes_by_id[node_id] = node_payload
+        changed = True
+
+    if not changed:
+        return
+
+    next_state = dict(state)
+    next_state["nodes"] = next_nodes
+    next_state["specialized_contracts_linked"] = True
+    next_state["updated_at"] = datetime.now(timezone.utc).isoformat()
+    swarm.orchestration_canvas_state = next_state
+
+
 def _enrich_orchestration_canvas_with_evidence(swarm) -> None:
     state = getattr(swarm, "orchestration_canvas_state", {}) or {}
     if not isinstance(state, dict):
@@ -1849,6 +1961,7 @@ async def experimental_consolidate_final(swarm_id: str, body: ExperimentalConsol
     try:
         result = experimental_dag_consolidator.consolidate_final(swarm_id=swarm_id, body=body)
         swarm = swarm_orchestrator.store.load(swarm_id)
+        _sync_specialized_contract_nodes(swarm)
         _enrich_orchestration_canvas_with_evidence(swarm)
         swarm = swarm_orchestrator.store.save(swarm)
         result = result.model_copy(update={
@@ -1915,6 +2028,7 @@ async def experimental_start_implementation(swarm_id: str, body: ExperimentalDAG
         result = await experimental_dag_dependency_runner.run_dag_dependencies(swarm_id=swarm_id, body=body)
 
         swarm = swarm_orchestrator.store.load(swarm_id)
+        _sync_specialized_contract_nodes(swarm)
         _enrich_orchestration_canvas_with_evidence(swarm)
         swarm = swarm_orchestrator.store.save(swarm)
 
