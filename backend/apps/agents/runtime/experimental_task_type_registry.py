@@ -219,6 +219,8 @@ TASK_TYPE_REGISTRY: dict[ExperimentalTaskType, ExperimentalTaskTypeSpec] = {
                 "blocked_patterns": ["rm -rf", "del /s", "format", "curl | sh", "Invoke-WebRequest | iex", "sudo", "chmod -R 777"],
                 "requires_workspace": True,
                 "executes": False,
+                "execution_status": "disabled",
+                "activation_requirement": "Register an executable safe shell task type before allowing Bash.",
             }
         },
         allow_idempotent_skip=False,
