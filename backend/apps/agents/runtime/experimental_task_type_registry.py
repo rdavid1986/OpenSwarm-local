@@ -24,6 +24,7 @@ ExperimentalTaskType = Literal[
     "backend_plan_draft",
     "validation_plan_draft",
     "security_review_draft",
+    "safe_shell_draft",
 ]
 
 
@@ -202,6 +203,20 @@ TASK_TYPE_REGISTRY: dict[ExperimentalTaskType, ExperimentalTaskTypeSpec] = {
             "security_review": {
                 "status": "draft|ready",
                 "risks": [],
+            }
+        },
+        allow_idempotent_skip=False,
+        matcher=None,
+    ),
+    "safe_shell_draft": ExperimentalTaskTypeSpec(
+        type="safe_shell_draft",
+        title="Draft safe shell execution plan",
+        allowed_tools=[],
+        output_contract={
+            "safe_shell_plan": {
+                "status": "draft|ready",
+                "allowed_commands": [],
+                "blocked_patterns": [],
             }
         },
         allow_idempotent_skip=False,
