@@ -239,6 +239,10 @@ function getImplementationStatus(swarm: any): string {
   return normalizeStatusValue(swarm?.implementation?.status || swarm?.status);
 }
 
+function isTerminalImplementationState(status: string): boolean {
+  return status === 'completed' || status === 'failed';
+}
+
 function getImplementationVisualState(params: {
   hasSwarm: boolean;
   isRunning: boolean;
@@ -305,6 +309,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const startImplementationInFlightRef = useRef(false);
+  const implementationPollingIntervalRef = useRef<number | null>(null);
+  const implementationPollingRequestInFlightRef = useRef(false);
 
   const didDrag = useRef(false);
   const collapseClickTimerRef = useRef<number | null>(null);
@@ -395,10 +401,50 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     return (role === 'user' || role === 'human') && getSwarmMessageText(message) === lastSubmittedPrompt;
   });
 
+  const stopImplementationPolling = useCallback(() => {
+    if (implementationPollingIntervalRef.current !== null) {
+      window.clearInterval(implementationPollingIntervalRef.current);
+      implementationPollingIntervalRef.current = null;
+    }
+    implementationPollingRequestInFlightRef.current = false;
+  }, []);
+
+  const pollImplementationSwarm = useCallback(async (swarmIdToPoll: string) => {
+    if (implementationPollingRequestInFlightRef.current) return;
+
+    implementationPollingRequestInFlightRef.current = true;
+    try {
+      await dispatch(fetchExperimentalSwarm(swarmIdToPoll));
+    } finally {
+      implementationPollingRequestInFlightRef.current = false;
+    }
+  }, [dispatch]);
+
+  const startImplementationPolling = useCallback((swarmIdToPoll: string) => {
+    if (implementationPollingIntervalRef.current !== null) return;
+
+    void pollImplementationSwarm(swarmIdToPoll);
+    implementationPollingIntervalRef.current = window.setInterval(() => {
+      void pollImplementationSwarm(swarmIdToPoll);
+    }, 2000);
+  }, [pollImplementationSwarm]);
+
   useEffect(() => {
     if (!activeSwarmId) return;
     dispatch(fetchExperimentalSwarm(activeSwarmId));
   }, [activeSwarmId, dispatch]);
+
+  useEffect(() => {
+    return () => {
+      stopImplementationPolling();
+    };
+  }, [activeSwarmId, stopImplementationPolling]);
+
+  useEffect(() => {
+    if (isTerminalImplementationState(implementationStatus) || swarmState.error) {
+      stopImplementationPolling();
+    }
+  }, [implementationStatus, stopImplementationPolling, swarmState.error]);
 
   useEffect(() => {
     return () => {
@@ -479,16 +525,18 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
     startImplementationInFlightRef.current = true;
     setIsStartingImplementation(true);
+    startImplementationPolling(activeSwarmId);
     try {
       await dispatch(startExperimentalImplementation({ swarmId: activeSwarmId })).unwrap();
       await dispatch(fetchExperimentalSwarm(activeSwarmId));
     } catch {
       // Error state is stored by the slice matcher and rendered in this card.
     } finally {
+      stopImplementationPolling();
       startImplementationInFlightRef.current = false;
       setIsStartingImplementation(false);
     }
-  }, [activeSwarmId, dispatch, swarmState.actionLoading]);
+  }, [activeSwarmId, dispatch, startImplementationPolling, stopImplementationPolling, swarmState.actionLoading]);
 
   const handleApprovalAction = useCallback(async (
     approvalId: string,
