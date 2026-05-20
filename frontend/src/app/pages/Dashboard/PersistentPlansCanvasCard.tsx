@@ -1,5 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
+import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
+import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
+import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import {
   setPlansCardPosition,
   setPlansCardSize,
@@ -8,6 +16,7 @@ import {
 import { useAppDispatch } from '@/shared/hooks';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import PersistentPlansCard from './PersistentPlansCard';
+import { fetchPlans } from '@/shared/state/plansSlice';
 import type { CardType } from './useDashboardSelection';
 
 type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
@@ -60,6 +69,7 @@ interface Props {
   onDragMove?: (dx: number, dy: number, mouseX?: number, mouseY?: number) => void;
   onDragEnd?: (dx: number, dy: number, didDrag: boolean) => void;
   onBringToFront?: (id: string, type: CardType) => void;
+  onDoubleClick?: (id: string, type: CardType) => void;
   onGoToAgent?: (sessionId: string) => void;
 }
 
@@ -84,6 +94,7 @@ const PersistentPlansCanvasCard: React.FC<Props> = ({
   onDragMove,
   onDragEnd,
   onBringToFront,
+  onDoubleClick,
   onGoToAgent,
 }) => {
   const c = useClaudeTokens();
@@ -98,6 +109,8 @@ const PersistentPlansCanvasCard: React.FC<Props> = ({
     startPanY: number;
   } | null>(null);
 
+  const collapseClickTimerRef = useRef<number | null>(null);
+  const suppressNextHeaderClickRef = useRef(false);
   const resizeRef = useRef<{
     dir: ResizeDir;
     startX: number;
@@ -141,6 +154,15 @@ const PersistentPlansCanvasCard: React.FC<Props> = ({
     if (isDragging && didDrag.current) recomputeDragPos();
   }, [panX, panY, isDragging, recomputeDragPos]);
 
+  useEffect(() => {
+    return () => {
+      if (collapseClickTimerRef.current) {
+        clearTimeout(collapseClickTimerRef.current);
+        collapseClickTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     if (e.button !== 0) return;
 
@@ -148,7 +170,6 @@ const PersistentPlansCanvasCard: React.FC<Props> = ({
     if (!target?.closest('.drag-handle')) return;
     if (target.closest('button, [role="button"], input, textarea, .MuiSelect-root')) return;
 
-    e.preventDefault();
     e.stopPropagation();
 
     dragState.current = {
@@ -175,6 +196,7 @@ const PersistentPlansCanvasCard: React.FC<Props> = ({
 
     if (!didDrag.current && Math.sqrt(rawDx * rawDx + rawDy * rawDy) < 3) return;
 
+    e.preventDefault();
     didDrag.current = true;
     lastPointerRef.current = { clientX: e.clientX, clientY: e.clientY };
     recomputeDragPos();
@@ -199,8 +221,7 @@ const PersistentPlansCanvasCard: React.FC<Props> = ({
       }
 
       dispatch(setPlansCardPosition({ plansCardId, x: finalX, y: finalY }));
-    } else {
-      dispatch(togglePlansCardCollapsed(plansCardId));
+      suppressNextHeaderClickRef.current = true;
     }
 
     onDragEnd?.(dx, dy, didDrag.current);
@@ -209,7 +230,7 @@ const PersistentPlansCanvasCard: React.FC<Props> = ({
     didDrag.current = false;
     setLocalDragPos(null);
     setIsDragging(false);
-    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
   }, [dispatch, plansCardId, onDragEnd]);
 
   const handleResizeDown = useCallback((dir: ResizeDir) => (e: React.PointerEvent) => {
@@ -301,7 +322,9 @@ const PersistentPlansCanvasCard: React.FC<Props> = ({
       onClick={(e: React.MouseEvent) => {
         onCardSelect?.(plansCardId, 'plans', e.shiftKey);
       }}
-      onDoubleClick={(e: React.MouseEvent) => e.stopPropagation()}
+      onDoubleClick={(e: React.MouseEvent) => {
+        e.stopPropagation();
+      }}
       sx={{
         position: 'absolute',
         left: displayX,
@@ -309,18 +332,105 @@ const PersistentPlansCanvasCard: React.FC<Props> = ({
         width: displayW,
         height: displayH,
         zIndex: cardZOrder,
-        border: `1px solid ${isSelected ? c.accent.primary : c.border.default}`,
+        border: `1px solid ${isSelected ? c.accent.primary : c.border.subtle}`,
         borderRadius: 1,
         overflow: 'hidden',
         bgcolor: c.bg.surface,
         boxShadow: isHighlighted ? c.shadow.lg : c.shadow.md,
         outline: isSelected ? `1px solid ${c.accent.primary}` : 'none',
+        display: 'flex',
+        flexDirection: 'column',
       }}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
     >
-      <PersistentPlansCard onClose={onClose} collapsed={collapsed} dashboardId={dashboardId} onGoToAgent={onGoToAgent} />
+      <Box
+        className="drag-handle"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onClick={(e: React.MouseEvent) => {
+          e.stopPropagation();
+          if (suppressNextHeaderClickRef.current) {
+            suppressNextHeaderClickRef.current = false;
+            return;
+          }
+          if (collapseClickTimerRef.current) {
+            clearTimeout(collapseClickTimerRef.current);
+            collapseClickTimerRef.current = null;
+          }
+          collapseClickTimerRef.current = window.setTimeout(() => {
+            collapseClickTimerRef.current = null;
+            dispatch(togglePlansCardCollapsed(plansCardId));
+          }, 360);
+        }}
+        onDoubleClick={(e: React.MouseEvent) => {
+          e.stopPropagation();
+          if (collapseClickTimerRef.current) {
+            clearTimeout(collapseClickTimerRef.current);
+            collapseClickTimerRef.current = null;
+          }
+          onDoubleClick?.(plansCardId, 'plans');
+        }}
+        sx={{
+          px: 2,
+          py: 1.25,
+          borderBottom: collapsed ? 'none' : `1px solid ${c.border.subtle}`,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          cursor: isDragging ? 'grabbing' : 'grab',
+          userSelect: 'none',
+          touchAction: 'none',
+        }}
+      >
+        <ArticleOutlinedIcon sx={{ fontSize: 19, color: c.text.secondary, flexShrink: 0 }} />
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography sx={{ fontSize: '0.95rem', fontWeight: 700, lineHeight: 1.2 }}>
+            Planes persistentes
+          </Typography>
+          <Typography sx={{ fontSize: '0.75rem', color: c.text.secondary }}>
+            Ejecutá planes guardados en sesiones Agent
+          </Typography>
+        </Box>
+        {collapsed ? <ChevronRightIcon sx={{ fontSize: 18, color: c.text.secondary }} /> : <ExpandMoreIcon sx={{ fontSize: 18, color: c.text.secondary }} />}
+        <Tooltip title="Refrescar">
+          <IconButton
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              dispatch(fetchPlans({ dashboardId }));
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <RefreshRoundedIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="Cerrar">
+          <IconButton
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <CloseRoundedIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
+      </Box>
+
+      {!collapsed && (
+        <Box sx={{ minHeight: 0, flex: 1 }}>
+          <PersistentPlansCard
+            onClose={onClose}
+            collapsed={collapsed}
+            dashboardId={dashboardId}
+            onGoToAgent={onGoToAgent}
+          />
+        </Box>
+      )}
 
       {!collapsed && HANDLE_DEFS.map(({ dir, sx }) => (
         <Box

@@ -69,7 +69,14 @@ class SwarmMVPExecutor:
             path="README.md",
             content=readme_content,
         )
+        self._merge_persisted_evidence(swarm)
         write_data = write_result.result
+        write_evidence = self._find_tool_evidence(
+            swarm,
+            call_id=write_result.call_id,
+            task_id=write_task.id,
+            path="README.md",
+        )
         artifact = {
             "id": f"artifact-{write_task.id}",
             "kind": "documentation",
@@ -78,6 +85,8 @@ class SwarmMVPExecutor:
             "bytes": write_data["bytes"],
             "created_by_agent_id": worker["id"],
             "created_by_task_id": write_task.id,
+            **({"evidence_id": write_evidence.id} if write_evidence else {}),
+            "evidence_ref": write_result.call_id,
             "created_at": _now_iso(),
         }
         swarm.artifacts.append(artifact)
@@ -106,6 +115,7 @@ class SwarmMVPExecutor:
             workspace=workspace,
             path="README.md",
         )
+        self._merge_persisted_evidence(swarm)
         read_data = read_result.result
         approved = read_result.ok and "OpenSwarm MVP" in read_data.get("content", "")
         review_result = {
@@ -141,10 +151,91 @@ class SwarmMVPExecutor:
             "evidence": final_evidence,
             "provider_bridge": "pending: executor is prepared around contracts/runtime state but does not call OllamaAdapter yet.",
         }
+        swarm.final_result["claim_guard"] = self._build_mvp_claim_guard(
+            final_result=swarm.final_result,
+            final_evidence=final_evidence,
+            review_result=review_result,
+            approved=approved,
+            artifact=artifact,
+            write_task_id=write_task.id,
+            review_task_id=review_task.id,
+        )
+        self._apply_mvp_claim_guard(swarm.final_result)
         self._complete_task(swarm, consolidate_task.id, evidence={"kind": "final_result", **swarm.final_result})
         swarm.status = "completed" if approved else "failed"
         self._event(swarm, "swarm_completed", task_id=consolidate_task.id, agent_id=coordinator["id"], payload=swarm.final_result)
+        self._merge_persisted_evidence(swarm)
         return self.store.save(swarm)
+
+    @staticmethod
+    def _build_mvp_claim_guard(
+        *,
+        final_result: dict[str, Any],
+        final_evidence: list[dict[str, Any]],
+        review_result: dict[str, Any],
+        approved: bool,
+        artifact: dict[str, Any],
+        write_task_id: str,
+        review_task_id: str,
+    ) -> dict[str, Any]:
+        evidence_kinds = {item.get("kind") for item in final_evidence if isinstance(item, dict)}
+        artifact_supported = (
+            "artifact" in evidence_kinds
+            and any(
+                isinstance(item, dict)
+                and item.get("kind") == "artifact"
+                and item.get("path") == artifact.get("path")
+                and item.get("absolute_path") == artifact.get("absolute_path")
+                for item in final_evidence
+            )
+        )
+        review_supported = (
+            approved is True
+            and review_result.get("status") == "approved"
+            and any(
+                isinstance(check, dict)
+                and check.get("name") == "file_exists"
+                and check.get("passed") is True
+                for check in review_result.get("checks") or []
+            )
+            and any(
+                isinstance(check, dict)
+                and check.get("name") == "contains_expected_title"
+                and check.get("passed") is True
+                for check in review_result.get("checks") or []
+            )
+        )
+        workspace_supported = "workspace" in evidence_kinds
+        task_refs_supported = bool(write_task_id and review_task_id)
+
+        checks = {
+            "artifact_supported": artifact_supported,
+            "review_supported": review_supported,
+            "workspace_supported": workspace_supported,
+            "task_refs_supported": task_refs_supported,
+        }
+        return {
+            "status": "verified" if all(checks.values()) else "unverified",
+            "checks": checks,
+            "supported_claims": [
+                "README.md artifact is present in final evidence.",
+                "Reviewer approved README.md after reading expected content.",
+                "Workspace evidence is present.",
+                "Worker and Reviewer task references are present.",
+            ],
+            "unsupported_claims": [] if all(checks.values()) else [name for name, ok in checks.items() if not ok],
+        }
+
+    @staticmethod
+    def _apply_mvp_claim_guard(final_result: dict[str, Any]) -> None:
+        claim_guard = final_result.get("claim_guard") or {}
+        if claim_guard.get("status") == "verified":
+            return
+        final_result["status"] = "evidence_unverified"
+        final_result["summary"] = (
+            "El resultado final no pudo verificarse completamente contra la evidencia registrada. "
+            "Revisá claim_guard.unsupported_claims antes de confiar en las afirmaciones de cierre."
+        )
 
     def _resolve_workspace(self, swarm: SwarmState, *, workspace_path: str | None) -> Path:
         raw = workspace_path or swarm.workspace_path
@@ -224,6 +315,29 @@ Este README fue creado por el MVP vertical del Swarm Orchestrator.
                 task.updated_at = _now_iso()
                 return
         raise RuntimeError(f"Missing task_id: {task_id}")
+
+    def _merge_persisted_evidence(self, swarm: SwarmState) -> None:
+        try:
+            persisted = self.store.load(swarm.id)
+        except Exception:
+            return
+        existing_ids = {item.id for item in swarm.evidence}
+        for item in persisted.evidence:
+            if item.id not in existing_ids:
+                swarm.evidence.append(item)
+                existing_ids.add(item.id)
+
+    @staticmethod
+    def _find_tool_evidence(swarm: SwarmState, *, call_id: str, task_id: str, path: str):
+        normalized_path = str(path or "").replace("\\", "/")
+        for evidence in swarm.evidence:
+            if evidence.tool_call_id != call_id:
+                continue
+            if evidence.task_id != task_id:
+                continue
+            if str(evidence.file_path or "").replace("\\", "/") == normalized_path:
+                return evidence
+        return None
 
     @staticmethod
     def _message(message_type: str, from_agent_id: str, **kwargs):

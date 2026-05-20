@@ -1,6 +1,12 @@
 import React, { useRef, useCallback, useMemo } from 'react';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
-import type { CardPosition, ViewCardPosition, BrowserCardPosition } from '@/shared/state/dashboardLayoutSlice';
+import type {
+  CardPosition,
+  ViewCardPosition,
+  BrowserCardPosition,
+  PlansCardPosition,
+  SwarmCardPosition,
+} from '@/shared/state/dashboardLayoutSlice';
 
 const MINIMAP_W = 200;
 const MINIMAP_H = 140;
@@ -14,6 +20,9 @@ export interface MinimapProps {
   cards: Record<string, CardPosition>;
   viewCards: Record<string, ViewCardPosition>;
   browserCards: Record<string, BrowserCardPosition>;
+  plansCards: Record<string, PlansCardPosition>;
+  swarmCards: Record<string, SwarmCardPosition>;
+  extraRects?: Array<{ x: number; y: number; width: number; height: number; type?: 'orchestration' }>;
   onPan: (panX: number, panY: number) => void;
 }
 
@@ -22,12 +31,12 @@ interface CardRect {
   y: number;
   width: number;
   height: number;
-  type: 'agent' | 'view' | 'browser';
+  type: 'agent' | 'view' | 'browser' | 'plans' | 'swarm' | 'orchestration';
 }
 
 const Minimap: React.FC<MinimapProps> = ({
   panX, panY, zoom, viewportRef,
-  cards, viewCards, browserCards,
+  cards, viewCards, browserCards, plansCards, swarmCards, extraRects = [],
   onPan,
 }) => {
   const c = useClaudeTokens();
@@ -45,8 +54,21 @@ const Minimap: React.FC<MinimapProps> = ({
     for (const bc of Object.values(browserCards)) {
       result.push({ x: bc.x, y: bc.y, width: bc.width, height: bc.height, type: 'browser' });
     }
+    for (const pc of Object.values(plansCards)) {
+      if (!pc.hidden) {
+        result.push({ x: pc.x, y: pc.y, width: pc.width, height: pc.height, type: 'plans' });
+      }
+    }
+    for (const sc of Object.values(swarmCards)) {
+      if (!sc.hidden) {
+        result.push({ x: sc.x, y: sc.y, width: sc.width, height: sc.height, type: 'swarm' });
+      }
+    }
+    for (const rect of extraRects) {
+      result.push({ ...rect, type: rect.type || 'orchestration' });
+    }
     return result;
-  }, [cards, viewCards, browserCards]);
+  }, [cards, viewCards, browserCards, plansCards, swarmCards, extraRects]);
 
   const layout = useMemo(() => {
     const vp = viewportRef.current;
@@ -128,11 +150,14 @@ const Minimap: React.FC<MinimapProps> = ({
     window.addEventListener('mouseup', onUp);
   }, [minimapToCanvas]);
 
-  const typeColor = (type: 'agent' | 'view' | 'browser') => {
+  const typeColor = (type: CardRect['type']) => {
     switch (type) {
       case 'agent': return c.accent.primary;
       case 'view': return c.status.info;
       case 'browser': return c.status.success;
+      case 'plans': return c.status.warning;
+      case 'swarm': return c.status.error;
+      case 'orchestration': return c.accent.hover;
     }
   };
 

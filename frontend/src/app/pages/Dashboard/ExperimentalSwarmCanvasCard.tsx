@@ -16,6 +16,7 @@ import {
   setSwarmCardPosition,
   setSwarmCardSize,
   setSwarmCardSwarmId,
+  toggleSwarmCardCollapsed,
 } from '@/shared/state/dashboardLayoutSlice';
 import {
   allowExperimentalApproval,
@@ -40,6 +41,7 @@ interface Props {
   cardWidth: number;
   cardHeight: number;
   cardZOrder?: number;
+  collapsed?: boolean;
   zoom?: number;
   isSelected?: boolean;
   isHighlighted?: boolean;
@@ -49,6 +51,15 @@ interface Props {
   onDragMove?: (dx: number, dy: number, mouseX?: number, mouseY?: number) => void;
   onDragEnd?: (dx: number, dy: number, didDrag: boolean) => void;
   onBringToFront?: (id: string, type: CardType) => void;
+  onDoubleClick?: (id: string, type: CardType) => void;
+  onSwarmBound?: (patch: {
+    swarmCardId: string;
+    swarmId?: string | null;
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+  }) => void;
   dashboardId?: string;
 }
 
@@ -114,6 +125,29 @@ function getSwarmMessageRole(message: any): string {
   ).toLowerCase();
 }
 
+function getSwarmMessageMetadata(message: any): { route: string; source: string; guard: boolean; reason: string } {
+  const payload = message?.payload || {};
+  const route = renderText(payload.route ?? payload.message?.route ?? payload.response?.route, '').trim();
+  const source = renderText(payload.source ?? payload.message?.source ?? payload.response?.source, '').trim();
+  const guard = Boolean(payload.answer_guard_applied ?? payload.message?.answer_guard_applied ?? payload.response?.answer_guard_applied);
+  const reason = renderText(payload.answer_guard_reason ?? payload.message?.answer_guard_reason ?? payload.response?.answer_guard_reason, '').trim();
+
+  return { route, source, guard, reason };
+}
+
+function getSwarmProjectIntake(message: any): {
+  question: any | null;
+  options: any[];
+  action: any | null;
+} {
+  const payload = message?.payload || {};
+  return {
+    question: payload.project_intake_question || null,
+    options: Array.isArray(payload.project_intake_options) ? payload.project_intake_options : [],
+    action: payload.project_intake_action || null,
+  };
+}
+
 function humanizeStatus(value: any, fallback = 'pending'): string {
   const raw = renderText(value, fallback);
   const normalized = raw.replace(/_/g, ' ').trim();
@@ -169,6 +203,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   cardWidth,
   cardHeight,
   cardZOrder = 0,
+  collapsed = false,
   zoom = 1,
   isSelected = false,
   isHighlighted = false,
@@ -178,6 +213,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   onDragMove,
   onDragEnd,
   onBringToFront,
+  onDoubleClick,
+  onSwarmBound,
   dashboardId,
 }) => {
   const c = useClaudeTokens();
@@ -199,12 +236,16 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   const didDrag = useRef(false);
+  const collapseClickTimerRef = useRef<number | null>(null);
+  const suppressNextHeaderClickRef = useRef(false);
   const [isDragging, setIsDragging] = useState(false);
   const [localPos, setLocalPos] = useState<{ x: number; y: number } | null>(null);
   const [localSize, setLocalSize] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [sideWidth, setSideWidth] = useState(280);
   const [localSideWidth, setLocalSideWidth] = useState<number | null>(null);
   const [prompt, setPrompt] = useState('');
+  const [customIntakeMode, setCustomIntakeMode] = useState(false);
+  const promptInputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const [lastSubmittedPrompt, setLastSubmittedPrompt] = useState('');
   const [openPanelSections, setOpenPanelSections] = useState<Record<string, boolean>>({
     tasks: false,
@@ -214,12 +255,20 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     finalResult: true,
   });
 
-  const activeSwarmId = swarmId || swarmState.selectedSwarmId;
-  const events = swarmState.events.slice(-8).reverse();
-  const approvals = swarmState.approvals.slice(0, 5);
-  const tasks = swarmState.swarm?.tasks || [];
-  const chatMessages = (swarmState.messages || []).filter((message: any) => getSwarmMessageText(message));
-  const lastSubmittedAlreadyPersisted = !!lastSubmittedPrompt && chatMessages.some((message: any) => {
+  const activeSwarmId = swarmId || null;
+  const activeSwarm = activeSwarmId && swarmState.swarm?.id === activeSwarmId ? swarmState.swarm : null;
+  const events = activeSwarmId ? swarmState.events.slice(-8).reverse() : [];
+  const approvals = activeSwarmId ? swarmState.approvals.slice(0, 5) : [];
+  const tasks = activeSwarm ? (activeSwarm.tasks || []) : [];
+  const artifacts = activeSwarm ? (swarmState.artifacts || []) : [];
+  const finalResult = activeSwarm ? activeSwarm.final_result : null;
+  const chatMessages = activeSwarmId
+    ? (swarmState.messages || []).filter((message: any) => getSwarmMessageText(message))
+    : [];
+  const finalRoute = typeof finalResult === 'object' && finalResult ? (finalResult as any).route : null;
+  const finalAnswerGuardApplied = typeof finalResult === 'object' && finalResult ? (finalResult as any).answer_guard_applied : null;
+  const finalResponseSource = finalRoute && finalRoute !== 'normal_chat' ? 'local' : finalRoute === 'normal_chat' ? 'model' : null;
+  const lastSubmittedAlreadyPersisted = !!activeSwarmId && !!lastSubmittedPrompt && chatMessages.some((message: any) => {
     const role = getSwarmMessageRole(message);
     return (role === 'user' || role === 'human') && getSwarmMessageText(message) === lastSubmittedPrompt;
   });
@@ -228,6 +277,15 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     if (!activeSwarmId) return;
     dispatch(fetchExperimentalSwarm(activeSwarmId));
   }, [activeSwarmId, dispatch]);
+
+  useEffect(() => {
+    return () => {
+      if (collapseClickTimerRef.current) {
+        clearTimeout(collapseClickTimerRef.current);
+        collapseClickTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const scrollToBottom = () => {
@@ -244,6 +302,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
   const handleStart = useCallback(async () => {
     const cleanPrompt = prompt.trim();
+    setCustomIntakeMode(false);
     if (!cleanPrompt && !activeSwarmId) return;
 
     if (cleanPrompt) {
@@ -260,6 +319,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
         swarmIdToRun = action.payload.id;
         intent = action.payload.intent || 'task';
         dispatch(setSwarmCardSwarmId({ swarmCardId, swarmId: swarmIdToRun }));
+        window.setTimeout(() => onSwarmBound?.({ swarmCardId, swarmId: swarmIdToRun }), 0);
       }
     }
 
@@ -273,7 +333,24 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
     await dispatch(runExperimentalDag({ swarmId: swarmIdToRun }));
     dispatch(fetchExperimentalSwarm(swarmIdToRun));
-  }, [activeSwarmId, dashboardId, dispatch, lastSubmittedPrompt, prompt, swarmCardId, swarmState.swarm?.intent]);
+  }, [activeSwarmId, dashboardId, dispatch, lastSubmittedPrompt, onSwarmBound, prompt, swarmCardId, swarmState.swarm?.intent]);
+
+  const handleProjectIntakeOption = useCallback(async (option: any) => {
+    const label = renderText(option?.label ?? option?.value, '').trim();
+    const value = renderText(option?.value ?? option?.label, '').trim();
+    if (!label) return;
+    if (value === '__custom__') {
+      setPrompt('');
+      setCustomIntakeMode(true);
+      window.setTimeout(() => promptInputRef.current?.focus(), 0);
+      return;
+    }
+    if (!activeSwarmId || swarmState.actionLoading) return;
+
+    setLastSubmittedPrompt(label);
+    await dispatch(chatExperimentalSwarm({ swarmId: activeSwarmId, message: label }));
+    dispatch(fetchExperimentalSwarm(activeSwarmId));
+  }, [activeSwarmId, dispatch, swarmState.actionLoading]);
 
   const handleApprovalAction = useCallback(async (
     approvalId: string,
@@ -353,7 +430,6 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     if (target.closest('button')) return;
 
     closeOpenDropdowns();
-    e.preventDefault();
     e.stopPropagation();
     dragRef.current = { sx: e.clientX, sy: e.clientY, ox: cardX, oy: cardY };
     didDrag.current = false;
@@ -391,6 +467,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
         const x = Math.round((dragRef.current.ox + dx) / 24) * 24;
         const y = Math.round((dragRef.current.oy + dy) / 24) * 24;
         dispatch(setSwarmCardPosition({ swarmCardId, x, y }));
+        window.setTimeout(() => onSwarmBound?.({ swarmCardId, x, y }), 0);
+        suppressNextHeaderClickRef.current = true;
       }
       onDragEnd?.(dx, dy, didDrag.current);
       dragRef.current = null;
@@ -400,8 +478,13 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     }
 
     if (resizeRef.current && localSize) {
-      dispatch(setSwarmCardPosition({ swarmCardId, x: Math.round(localSize.x), y: Math.round(localSize.y) }));
-      dispatch(setSwarmCardSize({ swarmCardId, width: Math.round(localSize.w), height: Math.round(localSize.h) }));
+      const x = Math.round(localSize.x);
+      const y = Math.round(localSize.y);
+      const width = Math.round(localSize.w);
+      const height = Math.round(localSize.h);
+      dispatch(setSwarmCardPosition({ swarmCardId, x, y }));
+      dispatch(setSwarmCardSize({ swarmCardId, width, height }));
+      window.setTimeout(() => onSwarmBound?.({ swarmCardId, x, y, width, height }), 0);
       resizeRef.current = null;
       setLocalSize(null);
     }
@@ -413,7 +496,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     }
 
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
-  }, [dispatch, localSideWidth, localSize, onDragEnd, swarmCardId, zoom]);
+  }, [dispatch, localSideWidth, localSize, onDragEnd, onSwarmBound, swarmCardId, zoom]);
 
   const handleResizeDown = useCallback((dir: ResizeDir) => (e: React.PointerEvent) => {
     if (e.button !== 0) return;
@@ -444,7 +527,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const displayX = localSize?.x ?? localPos?.x ?? (cardX + mdDx);
   const displayY = localSize?.y ?? localPos?.y ?? (cardY + mdDy);
   const displayW = localSize?.w ?? cardWidth;
-  const displayH = localSize?.h ?? cardHeight;
+  const displayH = collapsed ? 64 : (localSize?.h ?? cardHeight);
   const displaySideW = localSideWidth ?? sideWidth;
 
   const togglePanelSection = useCallback((section: string) => {
@@ -515,6 +598,29 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
       <Box
         className="swarm-drag-handle"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (suppressNextHeaderClickRef.current) {
+            suppressNextHeaderClickRef.current = false;
+            return;
+          }
+          if (collapseClickTimerRef.current) {
+            clearTimeout(collapseClickTimerRef.current);
+            collapseClickTimerRef.current = null;
+          }
+          collapseClickTimerRef.current = window.setTimeout(() => {
+            collapseClickTimerRef.current = null;
+            dispatch(toggleSwarmCardCollapsed(swarmCardId));
+          }, 360);
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          if (collapseClickTimerRef.current) {
+            clearTimeout(collapseClickTimerRef.current);
+            collapseClickTimerRef.current = null;
+          }
+          onDoubleClick?.(swarmCardId, 'swarm');
+        }}
         onPointerDown={handleDragDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -525,7 +631,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
           display: 'flex',
           alignItems: 'center',
           gap: 1,
-          borderBottom: `1px solid ${c.border.subtle}`,
+          borderBottom: collapsed ? 'none' : `1px solid ${c.border.subtle}`,
           cursor: isDragging ? 'grabbing' : 'grab',
           touchAction: 'none',
           userSelect: 'none',
@@ -538,12 +644,28 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
           </Typography>
         </Box>
         <Chip size="small" label={activeSwarmId ? 'Ready' : 'New'} />
-        <IconButton size="small"><MoreHorizIcon fontSize="small" /></IconButton>
-        <IconButton size="small" onClick={() => dispatch(removeSwarmCard(swarmCardId))}>
+        <IconButton
+          size="small"
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          <MoreHorizIcon fontSize="small" />
+        </IconButton>
+        <IconButton
+          size="small"
+          onClick={(e) => {
+            e.stopPropagation();
+            dispatch(removeSwarmCard(swarmCardId));
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
           <CloseIcon fontSize="small" />
         </IconButton>
       </Box>
 
+      {!collapsed && (
       <Box
         sx={{
           flex: 1,
@@ -552,8 +674,12 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
           gridTemplateColumns: `minmax(0, 1fr) 8px ${displaySideW}px`,
         }}
       >
-        <Box sx={{ minWidth: 0, display: 'flex', flexDirection: 'column', bgcolor: c.bg.page }}>
-          <Box ref={chatScrollRef} sx={{ flex: 1, overflow: 'auto', p: 2, minHeight: 0 }}>
+        <Box sx={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', bgcolor: c.bg.page, overflow: 'hidden' }}>
+          <Box
+            ref={chatScrollRef}
+            onWheel={(e) => e.stopPropagation()}
+            sx={{ flex: '1 1 0', height: 0, overflowY: 'auto', overflowX: 'hidden', p: 2, minHeight: 0 }}
+          >
             <Box sx={{ maxWidth: 760, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 1.5 }}>
               {chatMessages.length === 0 && events.length === 0 && (
                 <Box sx={{ alignSelf: 'flex-start', maxWidth: '86%', bgcolor: c.bg.surface, border: `1px solid ${c.border.subtle}`, borderRadius: 1.25, px: 1.5, py: 1.25 }}>
@@ -567,6 +693,19 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 const role = getSwarmMessageRole(message);
                 const isUser = role === 'user' || role === 'human';
                 const body = getSwarmMessageText(message);
+                const metadata = getSwarmMessageMetadata(message);
+                const projectIntake = getSwarmProjectIntake(message);
+                const isLatestChatMessage = idx === chatMessages.length - 1;
+                const nextMessage = chatMessages[idx + 1];
+                const nextRole = getSwarmMessageRole(nextMessage);
+                const intakeAnswer = !isUser && projectIntake.options.length > 0 && (nextRole === 'user' || nextRole === 'human')
+                  ? getSwarmMessageText(nextMessage)
+                  : '';
+                const metadataText = [
+                  metadata.route,
+                  metadata.source,
+                  metadata.guard ? `guard${metadata.reason ? `: ${metadata.reason}` : ''}` : '',
+                ].filter(Boolean).join(' · ');
 
                 return (
                   <Box
@@ -590,6 +729,72 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                     <Typography sx={{ fontSize: '0.88rem', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
                       {body}
                     </Typography>
+                    {!isUser && projectIntake.options.length > 0 && (
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 1 }}>
+                        {projectIntake.options.map((option: any, optionIdx: number) => {
+                          const label = renderText(option?.label ?? option?.value, `Option ${optionIdx + 1}`);
+                          const value = renderText(option?.value ?? option?.label, '').trim();
+                          const isCustom = value === '__custom__';
+                          const isSelected = !!intakeAnswer && !isCustom && (label === intakeAnswer || value === intakeAnswer);
+                          return (
+                            <Button
+                              key={`${message.id || idx}-option-${optionIdx}`}
+                              size="small"
+                              variant={isSelected ? 'contained' : isCustom ? 'outlined' : 'contained'}
+                              disabled={swarmState.actionLoading || !isLatestChatMessage}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleProjectIntakeOption(option);
+                              }}
+                              sx={{
+                                minHeight: 26,
+                                px: 1,
+                                py: 0.25,
+                                fontSize: '0.72rem',
+                                textTransform: 'none',
+                                opacity: !isLatestChatMessage && !isSelected ? 0.45 : 1,
+                                borderWidth: isSelected ? 2 : undefined,
+                              }}
+                            >
+                              {label}
+                            </Button>
+                          );
+                        })}
+                      </Box>
+                    )}
+                    {!isUser && intakeAnswer && (
+                      <Box sx={{ mt: 0.85, px: 1, py: 0.75, borderRadius: 1, bgcolor: c.bg.page, border: `1px solid ${c.border.subtle}` }}>
+                        <Typography sx={{ color: c.text.tertiary, fontSize: '0.68rem', mb: 0.25 }}>
+                          Respuesta elegida
+                        </Typography>
+                        <Typography sx={{ color: c.text.primary, fontSize: '0.78rem', lineHeight: 1.4 }}>
+                          {intakeAnswer}
+                        </Typography>
+                      </Box>
+                    )}
+                    {!isUser && projectIntake.action?.type === 'start_implementation' && (
+                      <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-start' }}>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          disabled={!projectIntake.action.enabled}
+                          onClick={(e) => e.stopPropagation()}
+                          sx={{ minHeight: 28, px: 1.25, py: 0.35, fontSize: '0.74rem', textTransform: 'none' }}
+                        >
+                          {renderText(projectIntake.action.label, 'Start Swarm Implementation')}
+                        </Button>
+                        {!projectIntake.action.enabled && (
+                          <Typography sx={{ color: c.text.tertiary, fontSize: '0.68rem' }}>
+                            Prepared - implementation runner not enabled yet.
+                          </Typography>
+                        )}
+                      </Box>
+                    )}
+                    {!isUser && metadataText && (
+                      <Typography sx={{ color: c.text.tertiary, fontSize: '0.68rem', mt: 0.75 }}>
+                        {metadataText}
+                      </Typography>
+                    )}
                   </Box>
                 );
               })}
@@ -622,7 +827,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             </Box>
           </Box>
 
-          <Box sx={{ p: 1.5, borderTop: `1px solid ${c.border.subtle}`, bgcolor: c.bg.surface }}>
+          <Box sx={{ flexShrink: 0, p: 1.5, borderTop: `1px solid ${c.border.subtle}`, bgcolor: c.bg.surface }}>
             <Box sx={{ maxWidth: 720, mx: 'auto', border: `1px solid ${c.border.subtle}`, borderRadius: 1.25, bgcolor: c.bg.surface, boxShadow: c.shadow.md }}>
               <Box
                 onPointerDown={(e) => e.stopPropagation()}
@@ -634,6 +839,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                   fullWidth
                   minRows={1}
                   maxRows={5}
+                  inputRef={promptInputRef}
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   onKeyDownCapture={(e) => {
@@ -645,7 +851,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                   }}
                   onKeyUpCapture={(e) => e.stopPropagation()}
                   onKeyDown={(e) => e.stopPropagation()}
-                  placeholder="Message Swarm…"
+                  placeholder={customIntakeMode ? 'Escribí tu respuesta personalizada…' : 'Message Swarm…'}
                   sx={{ fontSize: '0.95rem', color: c.text.primary, lineHeight: 1.55 }}
                 />
               </Box>
@@ -816,8 +1022,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             </Box>
           )))}
 
-          {renderPanelHeader('artifacts', 'Artifacts', swarmState.artifacts.length)}
-          {openPanelSections.artifacts && (swarmState.artifacts.length === 0 ? (
+          {renderPanelHeader('artifacts', 'Artifacts', artifacts.length)}
+          {openPanelSections.artifacts && (artifacts.length === 0 ? (
             <Typography sx={{ color: c.text.tertiary, fontSize: '0.78rem', mb: 1.5 }}>No artifacts.</Typography>
           ) : swarmState.artifacts.slice(0, 4).map((artifact: any, idx: number) => (
             <Box
@@ -849,15 +1055,45 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 bgcolor: c.bg.page,
               }}
             >
-              <Typography sx={{ color: swarmState.swarm?.final_result ? c.text.primary : c.text.tertiary, fontSize: '0.78rem', lineHeight: 1.45 }}>
-                {renderText(swarmState.swarm?.final_result?.summary || swarmState.swarm?.final_result, 'Pending')}
+              {finalResult && typeof finalResult === 'object' && (
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
+                  {(finalResult as any).route && (
+                    <Chip size="small" label={`route: ${(finalResult as any).route}`} />
+                  )}
+                  {(finalResult as any).route && (
+                    <Chip
+                      size="small"
+                      label={(finalResult as any).route === 'normal_chat' ? 'source: model' : 'source: local'}
+                    />
+                  )}
+                  {(finalResult as any).answer_guard_applied && (
+                    <Chip size="small" label="guard applied" />
+                  )}
+                  {(finalResult as any).claim_guard?.status && (
+                    <Chip
+                      size="small"
+                      label={`claim guard: ${(finalResult as any).claim_guard.status}`}
+                    />
+                  )}
+                  {Array.isArray((finalResult as any).claim_guard?.unsupported_claims)
+                    && (finalResult as any).claim_guard.unsupported_claims.length > 0 && (
+                    <Chip
+                      size="small"
+                      label={`unsupported: ${(finalResult as any).claim_guard.unsupported_claims.length}`}
+                    />
+                  )}
+                </Box>
+              )}
+              <Typography sx={{ color: finalResult ? c.text.primary : c.text.tertiary, fontSize: '0.78rem', lineHeight: 1.45 }}>
+                {renderText(finalResult?.summary || finalResult, 'Pending')}
               </Typography>
             </Box>
           )}
         </Box>
       </Box>
+      )}
 
-      {HANDLE_DEFS.map(({ dir, sx }) => (
+      {!collapsed && HANDLE_DEFS.map(({ dir, sx }) => (
         <Box
           key={dir}
           onPointerDown={handleResizeDown(dir)}

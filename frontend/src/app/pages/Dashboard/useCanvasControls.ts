@@ -174,6 +174,12 @@ export function useCanvasControls(zoomSensitivity: number = 50, contentBounds?: 
       // Pinch-to-zoom on trackpads sets ctrlKey; plain scroll does not
       const isPinchZoom = e.ctrlKey || e.metaKey;
 
+      // Cards own their wheel behavior. Normal scrolling over a card must never pan the canvas.
+      const wheelTarget = e.target as HTMLElement | null;
+      if (!isPinchZoom && wheelTarget?.closest?.('[data-select-type]')) {
+        return;
+      }
+
       // Let scrollable children handle the event when appropriate,
       // but fall through to canvas pan if the child is at its scroll boundary.
       const dy = e.deltaMode === 1 ? e.deltaY * 40 : e.deltaY;
@@ -443,6 +449,27 @@ export function useCanvasControls(zoomSensitivity: number = 50, contentBounds?: 
     animateTo({ panX: newPanX, panY: newPanY, zoom: newZoom });
   }, [animateTo]);
 
+  const centerOnCard = useCallback((cardRect: { x: number; y: number; width: number; height: number }, animate?: boolean) => {
+    cancelAnimation();
+
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const vRect = viewport.getBoundingClientRect();
+    const cur = stateRef.current;
+    const targetPanX = (vRect.width - cardRect.width * cur.zoom) / 2 - cardRect.x * cur.zoom;
+    const targetPanY = (vRect.height - cardRect.height * cur.zoom) / 2 - cardRect.y * cur.zoom;
+    const target = { panX: targetPanX, panY: targetPanY, zoom: cur.zoom };
+
+    if (animate) {
+      const dPan = Math.abs(cur.panX - target.panX) + Math.abs(cur.panY - target.panY);
+      if (dPan < 5) return;
+      animateTo(target);
+    } else {
+      setState(target);
+    }
+  }, [cancelAnimation, animateTo]);
+
   const fitToCards = useCallback((cardRects: Array<{ x: number; y: number; width: number; height: number }>, maxZoom?: number, animate?: boolean, minZoom?: number) => {
     cancelAnimation();
 
@@ -501,8 +528,8 @@ export function useCanvasControls(zoomSensitivity: number = 50, contentBounds?: 
   }), [handleMouseDown, handleMouseMove, handleMouseUp]);
 
   const actions = useMemo(() => ({
-    zoomIn, zoomOut, resetZoom, fitToView, fitToCards, animateTo, cancelAnimation, setState,
-  }), [zoomIn, zoomOut, resetZoom, fitToView, fitToCards, animateTo, cancelAnimation]);
+    zoomIn, zoomOut, resetZoom, fitToView, fitToCards, centerOnCard, animateTo, cancelAnimation, setState,
+  }), [zoomIn, zoomOut, resetZoom, fitToView, fitToCards, centerOnCard, animateTo, cancelAnimation]);
 
   return {
     ...state,

@@ -60,7 +60,7 @@ const DashboardSelection: React.FC = () => {
 
   const dashboards = useMemo(() => {
     const all = Object.values(items).sort(
-      (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+      (a, b) => new Date(b.created_at || b.updated_at).getTime() - new Date(a.created_at || a.updated_at).getTime(),
     );
     if (!search.trim()) return all;
     const q = search.toLowerCase();
@@ -313,7 +313,7 @@ const DashboardSelection: React.FC = () => {
                     </Typography>
                   )}
                   <Typography sx={{ fontSize: '0.75rem', color: c.text.ghost }}>
-                    Updated {formatRelativeTime(d.updated_at)}
+                    Created {formatRelativeTime(d.created_at || d.updated_at)}
                   </Typography>
                 </Box>
               </Box>

@@ -45,6 +45,7 @@ import {
   removeNote,
   addPlansCard,
   removePlansCard,
+  togglePlansCardCollapsed,
   addSwarmCard,
   removeSwarmCard,
   clearPendingFocusNoteId,
@@ -54,6 +55,7 @@ import {
   GRID_GAP,
 } from '@/shared/state/dashboardLayoutSlice';
 import { fetchOutputs } from '@/shared/state/outputsSlice';
+import { updateOrchestrationNodePosition } from '@/shared/state/experimentalSwarmsSlice';
 import { generateDashboardName, updateDashboardThumbnail } from '@/shared/state/dashboardsSlice';
 import { dashboardWs } from '@/shared/ws/WebSocketManager';
 import { initBrowserCommandHandler } from '@/shared/browserCommandHandler';
@@ -64,6 +66,8 @@ import BrowserCard from './BrowserCard';
 import NoteCard from './NoteCard';
 import PersistentPlansCanvasCard from './PersistentPlansCanvasCard';
 import ExperimentalSwarmCanvasCard from './ExperimentalSwarmCanvasCard';
+import SwarmOrchestrationPreview from './SwarmOrchestrationPreview';
+import type { OrchestrationCanvasState } from './SwarmOrchestrationPreview';
 import CanvasControls from './CanvasControls';
 import CardSearchPalette from './CardSearchPalette';
 import DirectionHints from './DirectionHints';
@@ -118,6 +122,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   const notes = useAppSelector((state) => state.dashboardLayout.notes);
   const plansCards = useAppSelector((state) => state.dashboardLayout.plansCards);
   const swarmCards = useAppSelector((state) => state.dashboardLayout.swarmCards);
+  const viewportState = useAppSelector((state) => state.dashboardLayout.viewportState);
   const pendingFocusNoteId = useAppSelector((state) => state.dashboardLayout.pendingFocusNoteId);
   const layoutInitialized = useAppSelector((state) => state.dashboardLayout.initialized);
   const persistedExpandedSessionIds = useAppSelector((state) => state.dashboardLayout.persistedExpandedSessionIds);
@@ -130,16 +135,44 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   const outputsLoaded = useAppSelector((state) => state.outputs.loaded);
   const glowingAgentCards = useAppSelector((state) => state.dashboardLayout.glowingAgentCards);
   const glowingBrowserCards = useAppSelector((state) => state.dashboardLayout.glowingBrowserCards);
+  const activeExperimentalSwarm = useAppSelector((state) => state.experimentalSwarms.swarm);
   // sessions is the top-level dict; useMemo on its identity so sessionList
   // is stable when sessions hasn't actually changed (RTK only swaps the dict
   // ref when one of its values changes, so this is the right granularity).
   const sessionList = useMemo(() => Object.values(sessions), [sessions]);
+
+  const linkedSwarmIds = useMemo(
+    () => new Set(Object.values(swarmCards).filter((sc) => sc.swarm_id).map((sc) => sc.swarm_id as string)),
+    [swarmCards],
+  );
+
+  const orchestrationCanvasState = useMemo((): OrchestrationCanvasState | null => {
+    if (!activeExperimentalSwarm?.id || !linkedSwarmIds.has(activeExperimentalSwarm.id)) return null;
+    const state = activeExperimentalSwarm.orchestration_canvas_state;
+    if (!state || !Array.isArray(state.nodes) || state.nodes.length === 0) return null;
+    return state as OrchestrationCanvasState;
+  }, [activeExperimentalSwarm, linkedSwarmIds]);
+
+  const orchestrationRects = useMemo(() => {
+    const nodes = Array.isArray(orchestrationCanvasState?.nodes) ? orchestrationCanvasState.nodes : [];
+    return nodes.map((node) => ({
+      x: node.x,
+      y: node.y,
+      width: node.width || 180,
+      height: node.height || 96,
+      type: 'orchestration' as const,
+    }));
+  }, [orchestrationCanvasState]);
 
   const contentBounds = useMemo(() => {
     const allRects = [
       ...Object.values(cards).map((c) => ({ x: c.x, y: c.y, w: c.width, h: c.height })),
       ...Object.values(viewCards).map((c) => ({ x: c.x, y: c.y, w: c.width, h: c.height })),
       ...Object.values(browserCards).map((c) => ({ x: c.x, y: c.y, w: c.width, h: c.height })),
+      ...Object.values(plansCards).filter((c) => !c.hidden).map((c) => ({ x: c.x, y: c.y, w: c.width, h: c.height })),
+      ...Object.values(swarmCards).filter((c) => !c.hidden).map((c) => ({ x: c.x, y: c.y, w: c.width, h: c.height })),
+      ...Object.values(notes).map((c) => ({ x: c.x, y: c.y, w: c.width, h: c.height })),
+      ...orchestrationRects.map((r) => ({ x: r.x, y: r.y, w: r.width, h: r.height })),
     ];
     if (allRects.length === 0) return undefined;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -150,7 +183,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
       maxY = Math.max(maxY, r.y + r.h);
     }
     return { minX, minY, maxX, maxY };
-  }, [cards, viewCards, browserCards]);
+  }, [cards, viewCards, browserCards, plansCards, swarmCards, notes, orchestrationRects]);
 
   const canvas = useCanvasControls(zoomSensitivity, contentBounds, isActive);
   const selection = useDashboardSelection(
@@ -159,6 +192,8 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     viewCards,
     browserCards,
     notes,
+    plansCards,
+    swarmCards,
   );
   const toolbarRef = useRef<HTMLDivElement>(null);
 
@@ -224,8 +259,22 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   }, [cards]);
   const hasFittedRef = useRef(false);
   const restoredExpandedRef = useRef(false);
+  const restoredViewportRef = useRef(false);
   const canvasStateRef = useRef({ panX: canvas.panX, panY: canvas.panY, zoom: canvas.zoom });
   canvasStateRef.current = { panX: canvas.panX, panY: canvas.panY, zoom: canvas.zoom };
+  const orchestrationFocusReturnRef = useRef<{
+    nodeId: string;
+    panX: number;
+    panY: number;
+    zoom: number;
+  } | null>(null);
+  const cardFocusReturnRef = useRef<{
+    id: string;
+    type: string;
+    panX: number;
+    panY: number;
+    zoom: number;
+  } | null>(null);
 
   // ---- Edge panning during card drag ----
   const EDGE_ZONE = 60;
@@ -344,12 +393,21 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
       const n = layoutState.notes[id];
       if (!n) return undefined;
       return { x: n.x, y: n.y, width: n.width, height: n.height };
+    } else if (type === 'plans') {
+      const pc = layoutState.plansCards[id];
+      if (!pc || pc.hidden) return undefined;
+      return { x: pc.x, y: pc.y, width: pc.width, height: pc.height };
+    } else if (type === 'swarm') {
+      const sc = layoutState.swarmCards[id];
+      if (!sc) return undefined;
+      return { x: sc.x, y: sc.y, width: sc.width, height: sc.height };
     }
     return undefined;
   }, []);
 
   // Delay single-click collapse so double-click can override
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cardClickFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Cancela movimientos de foco anteriores entre Plans/Agents.
   const navigationRequestRef = useRef(0);
@@ -364,29 +422,29 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     selection.selectCard(id, type, false);
     dispatch(bringToFront({ id, type: type as any }));
 
-    const alreadyExpanded = type === 'agent' && expandedSessionIds.includes(id);
+    setFocusedCardId(id);
 
-    if (alreadyExpanded) {
-      // Delay single-click collapse so double-click can override.
-      // Double-click handler (handleCardDoubleClick) clears clickTimerRef.
+    if (cardClickFocusTimerRef.current) {
+      clearTimeout(cardClickFocusTimerRef.current);
+      cardClickFocusTimerRef.current = null;
+    }
+
+    if (type === 'agent') {
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+      const alreadyExpanded = expandedSessionIds.includes(id);
       clickTimerRef.current = setTimeout(() => {
         clickTimerRef.current = null;
-        dispatch(collapseSession(id));
-      }, 250);
-      return;
+        if (alreadyExpanded) {
+          dispatch(collapseSession(id));
+        } else {
+          dispatch(expandSession(id));
+        }
+      }, 340);
     }
-
-    // Expand (if not already) + center + zoom + bring to front
-    if (type === 'agent') {
-      dispatch(expandSession(id));
-    }
-    setFocusedCardId(id);
-    setTimeout(() => {
-      const rect = getCardRect(id, type);
-      if (rect) canvas.actions.fitToCards([rect], 1.15, true, type === 'browser' ? 0.8 : undefined);
-      setTimeout(() => (document.activeElement as HTMLElement)?.blur?.(), 150);
-    }, 100);
-  }, [selection, getCardRect, canvas.actions, dispatch, expandedSessionIds]);
+  }, [selection, dispatch, expandedSessionIds]);
 
   const handleBringToFront = useCallback((id: string, type: CardType) => {
     dispatch(bringToFront({ id, type: type as any }));
@@ -449,24 +507,64 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     canvas.actions.fitToView();
   }, [canvas.actions]);
 
-  // Double-click a card → always expand + center + zoom (cancels pending collapse from single-click)
+  // Double-click a card → focus with fixed zoom; second double-click returns to previous view.
   const handleCardDoubleClick = useCallback((id: string, type: CardType) => {
     report('dashboard', 'card_double_clicked', { card_type: type });
     if (clickTimerRef.current) {
       clearTimeout(clickTimerRef.current);
       clickTimerRef.current = null;
     }
-    if (type === 'agent') {
-      dispatch(expandSession(id));
+    if (cardClickFocusTimerRef.current) {
+      clearTimeout(cardClickFocusTimerRef.current);
+      cardClickFocusTimerRef.current = null;
     }
+
+    const previousFocus = cardFocusReturnRef.current;
+    if (previousFocus?.id === id && previousFocus?.type === type) {
+      const returnView = {
+        panX: previousFocus.panX,
+        panY: previousFocus.panY,
+        zoom: previousFocus.zoom,
+      };
+      cardFocusReturnRef.current = null;
+      canvas.actions.setState(returnView);
+      setTimeout(() => {
+        canvas.actions.setState(returnView);
+      }, 0);
+      return;
+    }
+
+    const rect = getCardRect(id, type);
+    const viewport = canvas.viewportRef.current;
+    if (!rect || !viewport) return;
+
+    const currentView = canvasStateRef.current;
+    cardFocusReturnRef.current = {
+      id,
+      type,
+      panX: currentView.panX,
+      panY: currentView.panY,
+      zoom: currentView.zoom,
+    };
+
+    const targetZoom =
+      type === 'plans'
+        ? 1.2
+        : type === 'agent' || type === 'swarm'
+          ? 1.1
+          : 1.15;
+
     dispatch(bringToFront({ id, type: type as any }));
     setFocusedCardId(id);
-    setTimeout(() => {
-      const rect = getCardRect(id, type);
-      if (rect) canvas.actions.fitToCards([rect], 1.15, true);
-      setTimeout(() => (document.activeElement as HTMLElement)?.blur?.(), 150);
-    }, 100);
-  }, [getCardRect, canvas.actions, dispatch]);
+
+    const targetPanX = (viewport.clientWidth - rect.width * targetZoom) / 2 - rect.x * targetZoom;
+    const targetPanY = type === 'agent'
+      ? 72 - rect.y * targetZoom
+      : (viewport.clientHeight - rect.height * targetZoom) / 2 - rect.y * targetZoom;
+
+    canvas.actions.setState({ panX: targetPanX, panY: targetPanY, zoom: targetZoom });
+    setTimeout(() => (document.activeElement as HTMLElement)?.blur?.(), 150);
+  }, [getCardRect, canvas.actions, canvas.viewportRef, dispatch]);
 
   // Track dashboard engagement time
   useEffect(() => {
@@ -485,6 +583,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     if (!dashboardId) return;
     hasFittedRef.current = false;
     restoredExpandedRef.current = false;
+    restoredViewportRef.current = false;
     dispatch(resetLayout());
     dispatch(fetchSessions({ dashboardId }));
     dispatch(fetchHistory({ dashboardId }));
@@ -599,6 +698,19 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
       }
     };
   }, [dashboardId]);
+
+  useEffect(() => {
+    if (!isActive) return;
+    if (!layoutInitialized || restoredViewportRef.current) return;
+    restoredViewportRef.current = true;
+    if (!viewportState) return;
+    hasFittedRef.current = true;
+    canvas.actions.setState({
+      panX: viewportState.panX,
+      panY: viewportState.panY,
+      zoom: viewportState.zoom,
+    });
+  }, [isActive, layoutInitialized, viewportState, canvas.actions]);
 
   useEffect(() => {
     if (!isActive) return;  // Don't auto-fit while dashboard is hidden
@@ -785,15 +897,44 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   const skipInitialSave = useRef(true);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSaveRef = useRef<Parameters<typeof saveLayout>[0] | null>(null);
+  const latestSavePayloadRef = useRef<Parameters<typeof saveLayout>[0] | null>(null);
+
+  const flushLatestLayoutSave = useCallback(() => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+
+    const payload = pendingSaveRef.current ?? latestSavePayloadRef.current;
+    if (payload) {
+      dispatch(saveLayout({
+        ...payload,
+        viewportState: canvasStateRef.current,
+      }));
+    }
+
+    pendingSaveRef.current = null;
+  }, [dispatch]);
 
   useEffect(() => {
     if (!isActive) return;  // Don't persist layout while dashboard is hidden — save buffers in pendingSaveRef and flushes on resume
     if (!layoutInitialized || !dashboardId) return;
+    const payload = {
+      dashboardId,
+      cards,
+      viewCards,
+      browserCards,
+      plansCards,
+      swarmCards,
+      notes,
+      expandedSessionIds,
+      viewportState: { panX: canvas.panX, panY: canvas.panY, zoom: canvas.zoom },
+    };
+    latestSavePayloadRef.current = payload;
     if (skipInitialSave.current) {
       skipInitialSave.current = false;
       return;
     }
-    const payload = { dashboardId, cards, viewCards, browserCards, plansCards, swarmCards, notes, expandedSessionIds };
     pendingSaveRef.current = payload;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
@@ -802,20 +943,17 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
       saveTimerRef.current = null;
       captureNow();
     }, 500);
-  }, [isActive, cards, viewCards, browserCards, plansCards, swarmCards, notes, expandedSessionIds, layoutInitialized, dashboardId, dispatch, captureNow]);
+  }, [isActive, cards, viewCards, browserCards, plansCards, swarmCards, notes, expandedSessionIds, canvas.panX, canvas.panY, canvas.zoom, layoutInitialized, dashboardId, dispatch, captureNow]);
 
   useEffect(() => {
-    return () => {
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-      }
-      if (pendingSaveRef.current) {
-        dispatch(saveLayout(pendingSaveRef.current));
-        pendingSaveRef.current = null;
-      }
-    };
-  }, [dispatch]);
+    if (!isActive) {
+      flushLatestLayoutSave();
+    }
+  }, [isActive, flushLatestLayoutSave]);
+
+  useEffect(() => () => {
+    flushLatestLayoutSave();
+  }, [flushLatestLayoutSave]);
 
   useEffect(() => {
     const parts = newAgentShortcut.toLowerCase().split('+');
@@ -1363,73 +1501,153 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   }, [dispatch, expandedSessionIds, canvas.actions, handleHighlightCard]);
 
 
-  const handleAddSwarm = useCallback(() => {
-    report('dashboard', 'swarm_added');
-    const prevIds = new Set(Object.keys(store.getState().dashboardLayout.swarmCards));
-    dispatch(addSwarmCard({ expandedSessionIds }));
-    setTimeout(() => {
-      const allSwarmCards = store.getState().dashboardLayout.swarmCards;
-      const newId = Object.keys(allSwarmCards).find((id) => !prevIds.has(id)) || 'swarm-main';
-      const card = allSwarmCards[newId];
-      if (card) {
-        canvas.actions.fitToCards([{ x: card.x, y: card.y, width: card.width, height: card.height }], 1.15, true);
-        handleHighlightCard(newId);
+  const persistLayoutNow = useCallback((swarmPatch?: {
+    swarmCardId: string;
+    swarmId?: string | null;
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+  }) => {
+    if (!layoutInitialized || !dashboardId) return;
+    const state = store.getState().dashboardLayout;
+    const swarmCardsSnapshot = { ...state.swarmCards };
+
+    if (swarmPatch) {
+      const current = swarmCardsSnapshot[swarmPatch.swarmCardId];
+      if (current) {
+        swarmCardsSnapshot[swarmPatch.swarmCardId] = {
+          ...current,
+          swarm_id: 'swarmId' in swarmPatch ? swarmPatch.swarmId ?? null : current.swarm_id,
+          x: swarmPatch.x ?? current.x,
+          y: swarmPatch.y ?? current.y,
+          width: swarmPatch.width ?? current.width,
+          height: swarmPatch.height ?? current.height,
+        };
       }
-    }, 200);
-  }, [dispatch, expandedSessionIds, canvas.actions, handleHighlightCard]);
+    }
 
-  const handleAddPlans = useCallback(() => {
-    const requestId = ++navigationRequestRef.current;
-    const existingPlansCards = store.getState().dashboardLayout.plansCards;
-    const existingPlansCard = Object.values(existingPlansCards)[0];
+    const payload = {
+      dashboardId,
+      cards: state.cards,
+      viewCards: state.viewCards,
+      browserCards: state.browserCards,
+      plansCards: state.plansCards,
+      swarmCards: swarmCardsSnapshot,
+      notes: state.notes,
+      expandedSessionIds,
+      viewportState: canvasStateRef.current,
+    };
 
-    if (existingPlansCard) {
-      const id = existingPlansCard.plans_card_id;
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    pendingSaveRef.current = null;
+    dispatch(saveLayout(payload));
+  }, [dashboardId, dispatch, expandedSessionIds, layoutInitialized]);
 
-      dispatch(bringToFront({ id, type: 'plans' }));
-      selection.selectCard(id, 'plans', false);
-      setFocusedCardId(id);
+  const handleAddSwarm = useCallback(() => {
+    report('dashboard', 'swarm_toggled');
+    const existing = store.getState().dashboardLayout.swarmCards['swarm-main'];
 
-      window.setTimeout(() => {
-        if (navigationRequestRef.current !== requestId) return;
+    const focusSwarmCard = () => {
+      const card = store.getState().dashboardLayout.swarmCards['swarm-main'];
+      const viewport = canvas.viewportRef.current;
+      if (!card || card.hidden || !viewport) return;
 
-        const card = store.getState().dashboardLayout.plansCards[id];
-        if (!card) return;
+      const targetZoom = 1.1;
+      const targetPanX = (viewport.clientWidth - card.width * targetZoom) / 2 - card.x * targetZoom;
+      const targetPanY = (viewport.clientHeight - card.height * targetZoom) / 2 - card.y * targetZoom;
 
-        canvas.actions.fitToCards(
-          [{ x: card.x, y: card.y, width: card.width, height: card.height }],
-          1.15,
-          true,
-        );
-        handleHighlightCard(id);
-      }, 120);
+      dispatch(bringToFront({ id: card.swarm_card_id, type: 'swarm' }));
+      selection.selectCard(card.swarm_card_id, 'swarm', false);
+      setFocusedCardId(card.swarm_card_id);
+      canvas.actions.setState({ panX: targetPanX, panY: targetPanY, zoom: targetZoom });
+      handleHighlightCard(card.swarm_card_id);
+    };
 
+    if (existing && !existing.hidden) {
+      const vp = canvas.viewportRef.current;
+      const { panX, panY, zoom } = canvasStateRef.current;
+      const cardLeft = existing.x * zoom + panX;
+      const cardTop = existing.y * zoom + panY;
+      const cardRight = (existing.x + existing.width) * zoom + panX;
+      const cardBottom = (existing.y + existing.height) * zoom + panY;
+      const margin = 80;
+      const isVisible = !!vp
+        && cardRight > margin
+        && cardBottom > margin
+        && cardLeft < vp.clientWidth - margin
+        && cardTop < vp.clientHeight - margin;
+
+      if (isVisible) {
+        dispatch(removeSwarmCard('swarm-main'));
+        return;
+      }
+
+      focusSwarmCard();
       return;
     }
 
-    const prevIds = new Set(Object.keys(store.getState().dashboardLayout.plansCards));
+    dispatch(addSwarmCard({ expandedSessionIds }));
+    setTimeout(focusSwarmCard, 120);
+  }, [dispatch, expandedSessionIds, canvas.actions, canvas.viewportRef, handleHighlightCard, selection]);
+
+  const focusPlansCard = useCallback((plansCardId: string) => {
+    const card = store.getState().dashboardLayout.plansCards[plansCardId];
+    const viewport = canvas.viewportRef.current;
+    if (!card || card.hidden || !viewport) return;
+
+    if (card.collapsed) {
+      dispatch(togglePlansCardCollapsed(plansCardId));
+    }
+
+    const targetZoom = 1.2;
+    const targetPanX = (viewport.clientWidth - card.width * targetZoom) / 2 - card.x * targetZoom;
+    const targetPanY = (viewport.clientHeight - card.height * targetZoom) / 2 - card.y * targetZoom;
+
+    dispatch(bringToFront({ id: card.plans_card_id, type: 'plans' }));
+    selection.selectCard(card.plans_card_id, 'plans', false);
+    setFocusedCardId(card.plans_card_id);
+    canvas.actions.setState({ panX: targetPanX, panY: targetPanY, zoom: targetZoom });
+    handleHighlightCard(card.plans_card_id);
+  }, [canvas.actions, canvas.viewportRef, dispatch, handleHighlightCard, selection]);
+
+  const handleAddPlans = useCallback(() => {
+    const requestId = ++navigationRequestRef.current;
+    const existingPlansCard = store.getState().dashboardLayout.plansCards['plans-main'];
+
+    if (existingPlansCard && !existingPlansCard.hidden) {
+      const vp = canvas.viewportRef.current;
+      const { panX, panY, zoom } = canvasStateRef.current;
+      const cardLeft = existingPlansCard.x * zoom + panX;
+      const cardTop = existingPlansCard.y * zoom + panY;
+      const cardRight = (existingPlansCard.x + existingPlansCard.width) * zoom + panX;
+      const cardBottom = (existingPlansCard.y + existingPlansCard.height) * zoom + panY;
+      const margin = 80;
+      const isVisible = !!vp
+        && cardRight > margin
+        && cardBottom > margin
+        && cardLeft < vp.clientWidth - margin
+        && cardTop < vp.clientHeight - margin;
+
+      if (isVisible) {
+        dispatch(removePlansCard(existingPlansCard.plans_card_id));
+        return;
+      }
+
+      focusPlansCard(existingPlansCard.plans_card_id);
+      return;
+    }
+
     dispatch(addPlansCard({ expandedSessionIds }));
 
     window.setTimeout(() => {
       if (navigationRequestRef.current !== requestId) return;
-
-      const allPlansCards = store.getState().dashboardLayout.plansCards;
-      const created = Object.values(allPlansCards).find((card) => !prevIds.has(card.plans_card_id));
-      if (!created) return;
-
-      dispatch(bringToFront({ id: created.plans_card_id, type: 'plans' }));
-      selection.selectCard(created.plans_card_id, 'plans', false);
-      setFocusedCardId(created.plans_card_id);
-
-      canvas.actions.fitToCards(
-        [{ x: created.x, y: created.y, width: created.width, height: created.height }],
-        1.15,
-        true,
-      );
-      handleHighlightCard(created.plans_card_id);
+      focusPlansCard('plans-main');
     }, 120);
-  }, [dispatch, expandedSessionIds, canvas.actions, handleHighlightCard, selection]);
-
+  }, [canvas.viewportRef, dispatch, expandedSessionIds, focusPlansCard]);
 
   // Auto-clear pendingFocusNoteId after the note has had a chance to mount + autofocus.
   useEffect(() => {
@@ -2039,6 +2257,50 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                 ))}
               </svg>
             )}
+            <SwarmOrchestrationPreview
+              state={orchestrationCanvasState}
+              zoom={canvas.zoom}
+              onNodeMoveEnd={(nodeId, x, y) => {
+                const swarmId = activeExperimentalSwarm?.id;
+                if (!swarmId) return;
+                dispatch(updateOrchestrationNodePosition({ swarmId, nodeId, x, y }));
+              }}
+              onNodeExpandedChange={(nodeId, expanded) => {
+                const swarmId = activeExperimentalSwarm?.id;
+                if (!swarmId) return;
+                dispatch(updateOrchestrationNodePosition({ swarmId, nodeId, expanded }));
+              }}
+              onNodeDoubleClick={(node) => {
+                const viewport = canvas.viewportRef.current;
+                if (!viewport) return;
+
+                const previousFocus = orchestrationFocusReturnRef.current;
+                if (previousFocus?.nodeId === node.id) {
+                  canvas.actions.setState({
+                    panX: previousFocus.panX,
+                    panY: previousFocus.panY,
+                    zoom: previousFocus.zoom,
+                  });
+                  orchestrationFocusReturnRef.current = null;
+                  return;
+                }
+
+                const currentView = canvasStateRef.current;
+                orchestrationFocusReturnRef.current = {
+                  nodeId: node.id,
+                  panX: currentView.panX,
+                  panY: currentView.panY,
+                  zoom: currentView.zoom,
+                };
+
+                const targetZoom = 1.8;
+                const width = node.width || 180;
+                const height = node.expanded ? 172 : (node.height || 96);
+                const targetPanX = (viewport.clientWidth - width * targetZoom) / 2 - node.x * targetZoom;
+                const targetPanY = (viewport.clientHeight - height * targetZoom) / 2 - node.y * targetZoom;
+                canvas.actions.setState({ panX: targetPanX, panY: targetPanY, zoom: targetZoom });
+              }}
+            />
             <AnimatePresence>
             {Object.values(cards).map((card) => {
               const session = sessions[card.session_id];
@@ -2180,7 +2442,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                 onBringToFront={handleBringToFront}
               />
             ))}
-            {Object.values(swarmCards).map((sc) => (
+            {Object.values(swarmCards).filter((sc) => !sc.hidden).map((sc) => (
               <ExperimentalSwarmCanvasCard
                 key={`swarm-${sc.swarm_card_id}`}
                 swarmCardId={sc.swarm_card_id}
@@ -2190,6 +2452,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                 cardWidth={sc.width}
                 cardHeight={sc.height}
                 cardZOrder={sc.zOrder ?? 0}
+                collapsed={!!sc.collapsed}
                 zoom={canvas.zoom}
                 isSelected={selection.isSelected(sc.swarm_card_id)}
                 isHighlighted={highlightedCardId === sc.swarm_card_id}
@@ -2199,11 +2462,13 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                 onDragMove={handleCardDragMove}
                 onDragEnd={handleCardDragEnd}
                 onBringToFront={handleBringToFront}
+                onDoubleClick={handleCardDoubleClick}
+                onSwarmBound={persistLayoutNow}
                 dashboardId={dashboardId}
               />
             ))}
 
-            {Object.values(plansCards).map((pc) => (
+            {Object.values(plansCards).filter((pc) => !pc.hidden).map((pc) => (
               <PersistentPlansCanvasCard
                 key={`plans-${pc.plans_card_id}`}
                 plansCardId={pc.plans_card_id}
@@ -2226,6 +2491,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                 onDragMove={handleCardDragMove}
                 onDragEnd={handleCardDragEnd}
                 onBringToFront={handleBringToFront}
+                onDoubleClick={handleCardDoubleClick}
                 onGoToAgent={handleGoToAgentFromPlans}
               />
             ))}
@@ -2323,6 +2589,9 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
             cards,
             viewCards,
             browserCards,
+            plansCards,
+            swarmCards,
+            extraRects: orchestrationRects,
           }}
           onMinimapPan={(px, py) => canvas.actions.setState({ panX: px, panY: py, zoom: canvas.zoom })}
         />

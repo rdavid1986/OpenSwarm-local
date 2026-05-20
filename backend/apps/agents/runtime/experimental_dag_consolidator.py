@@ -81,6 +81,15 @@ class ExperimentalDAGConsolidator:
             "completed_tasks": [worker.id, reviewer.id, consolidate.id],
             "created_at": _now_iso(),
         }
+        final_result["claim_guard"] = self._build_claim_guard(
+            final_result=final_result,
+            final_evidence=final_evidence,
+            artifact=artifact,
+            review_result=review_result,
+            worker=worker,
+            reviewer=reviewer,
+        )
+        self._apply_claim_guard(final_result)
 
         self._upsert_final_evidence(swarm, final_evidence)
         swarm.final_result = final_result
@@ -156,6 +165,85 @@ class ExperimentalDAGConsolidator:
     def _upsert_final_evidence(swarm: SwarmState, evidence: list[dict[str, Any]]) -> None:
         swarm.final_evidence = [item for item in swarm.final_evidence if item.get("kind") not in {"artifact", "review_result", "task_status", "tool_history_summary"}]
         swarm.final_evidence.extend(evidence)
+
+    @staticmethod
+    def _build_claim_guard(
+        *,
+        final_result: dict[str, Any],
+        final_evidence: list[dict[str, Any]],
+        artifact: dict[str, Any],
+        review_result: dict[str, Any],
+        worker: TaskNode,
+        reviewer: TaskNode,
+    ) -> dict[str, Any]:
+        artifact_refs = set(final_result.get("artifact_refs") or [])
+        evidence_by_kind = {item.get("kind"): item for item in final_evidence if isinstance(item, dict)}
+        tool_summary = evidence_by_kind.get("tool_history_summary") or {}
+        tool_rows = tool_summary.get("tools") or []
+
+        artifact_supported = (
+            bool(artifact.get("id"))
+            and artifact.get("id") in artifact_refs
+            and bool(evidence_by_kind.get("artifact"))
+            and (evidence_by_kind.get("artifact") or {}).get("artifact", {}).get("id") == artifact.get("id")
+        )
+        review_supported = (
+            review_result.get("status") == "approved"
+            and bool(evidence_by_kind.get("review_result"))
+            and (evidence_by_kind.get("review_result") or {}).get("review_result", {}).get("status") == "approved"
+            and (evidence_by_kind.get("review_result") or {}).get("review_result", {}).get("artifact_id") == artifact.get("id")
+        )
+        tasks_supported = False
+        task_status = evidence_by_kind.get("task_status") or {}
+        task_rows = task_status.get("tasks") or []
+        statuses = {row.get("id"): row.get("status") for row in task_rows if isinstance(row, dict)}
+        if statuses.get(worker.id) == "completed" and statuses.get(reviewer.id) == "completed":
+            tasks_supported = True
+
+        tool_history_supported = any(
+            isinstance(row, dict)
+            and row.get("task_id") == worker.id
+            and row.get("tool") in {"Write", "Edit"}
+            and row.get("ok") is True
+            and str(row.get("path") or "").replace("\\", "/").lower() == "readme.md"
+            for row in tool_rows
+        ) and any(
+            isinstance(row, dict)
+            and row.get("task_id") == reviewer.id
+            and row.get("tool") == "Read"
+            and row.get("ok") is True
+            and str(row.get("path") or "").replace("\\", "/").lower() == "readme.md"
+            for row in tool_rows
+        )
+
+        checks = {
+            "artifact_supported": artifact_supported,
+            "review_supported": review_supported,
+            "tasks_supported": tasks_supported,
+            "tool_history_supported": tool_history_supported,
+        }
+        return {
+            "status": "verified" if all(checks.values()) else "unverified",
+            "checks": checks,
+            "supported_claims": [
+                "README.md artifact exists and is referenced by final_result.",
+                "Reviewer approved the referenced README.md artifact.",
+                "Worker and Reviewer tasks completed.",
+                "Write/Edit and Read tool history supports the create-review claim.",
+            ],
+            "unsupported_claims": [] if all(checks.values()) else [name for name, ok in checks.items() if not ok],
+        }
+
+    @staticmethod
+    def _apply_claim_guard(final_result: dict[str, Any]) -> None:
+        claim_guard = final_result.get("claim_guard") or {}
+        if claim_guard.get("status") == "verified":
+            return
+        final_result["status"] = "evidence_unverified"
+        final_result["summary"] = (
+            "Final result could not be fully verified against recorded evidence. "
+            "See claim_guard.unsupported_claims before trusting completion claims."
+        )
 
     def _append_consolidation_message_once(self, swarm: SwarmState, consolidate: TaskNode, final_result: dict[str, Any]) -> None:
         from_agent_id = consolidate.assigned_contract_id or swarm.coordinator_contract_id or "CoordinatorAgent"

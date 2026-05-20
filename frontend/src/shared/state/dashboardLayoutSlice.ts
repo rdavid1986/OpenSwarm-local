@@ -52,6 +52,7 @@ export interface PlansCardPosition {
   height: number;
   zOrder: number;
   collapsed?: boolean;
+  hidden?: boolean;
 }
 
 export interface SwarmCardPosition {
@@ -62,6 +63,8 @@ export interface SwarmCardPosition {
   width: number;
   height: number;
   zOrder: number;
+  collapsed?: boolean;
+  hidden?: boolean;
 }
 
 export interface BrowserCardPosition {
@@ -96,6 +99,12 @@ export interface NotePosition {
 export const DEFAULT_NOTE_W = 240;
 export const DEFAULT_NOTE_H = 200;
 
+export interface ViewportState {
+  panX: number;
+  panY: number;
+  zoom: number;
+}
+
 export interface DashboardLayoutState {
   cards: Record<string, CardPosition>;
   viewCards: Record<string, ViewCardPosition>;
@@ -103,6 +112,7 @@ export interface DashboardLayoutState {
   plansCards: Record<string, PlansCardPosition>;
   swarmCards: Record<string, SwarmCardPosition>;
   notes: Record<string, NotePosition>;
+  viewportState: ViewportState | null;
   closedCardPositions: Record<string, CardPosition>;
   glowingBrowserCards: Record<string, { sourceId: string; fading: boolean; label?: string }>;
   glowingAgentCards: Record<string, { sourceId: string; fading: boolean; sourceYRatio?: number; label?: string }>;
@@ -125,6 +135,7 @@ const initialState: DashboardLayoutState = {
   plansCards: {},
   swarmCards: {},
   notes: {},
+  viewportState: null,
   closedCardPositions: {},
   glowingBrowserCards: {},
   glowingAgentCards: {},
@@ -144,6 +155,7 @@ interface LayoutPayload {
   swarmCards: Record<string, SwarmCardPosition>;
   notes: Record<string, NotePosition>;
   expandedSessionIds: string[];
+  viewportState?: ViewportState | null;
 }
 
 function generateTabId(): string {
@@ -157,6 +169,17 @@ export const fetchLayout = createAsyncThunk(
     const data = await res.json();
     const layout = data.layout ?? {};
     const browserCards = (layout.browser_cards ?? {}) as Record<string, any>;
+    const rawViewportState = layout.viewport_state;
+    const viewportState = rawViewportState
+      && Number.isFinite(Number(rawViewportState.panX))
+      && Number.isFinite(Number(rawViewportState.panY))
+      && Number.isFinite(Number(rawViewportState.zoom))
+      ? {
+          panX: Number(rawViewportState.panX),
+          panY: Number(rawViewportState.panY),
+          zoom: Number(rawViewportState.zoom),
+        }
+      : null;
 
     for (const card of Object.values(browserCards)) {
       if (!card.tabs || card.tabs.length === 0) {
@@ -178,6 +201,7 @@ export const fetchLayout = createAsyncThunk(
       swarmCards: (layout.swarm_cards ?? {}) as Record<string, SwarmCardPosition>,
       notes: (layout.notes ?? {}) as Record<string, NotePosition>,
       expandedSessionIds: (layout.expanded_session_ids ?? []) as string[],
+      viewportState,
     } satisfies LayoutPayload;
   },
 );
@@ -201,6 +225,7 @@ export const saveLayout = createAsyncThunk(
           swarm_cards: payload.swarmCards,
           notes: payload.notes,
           expanded_session_ids: payload.expandedSessionIds,
+          viewport_state: payload.viewportState ?? null,
         },
       }),
     });
@@ -340,7 +365,11 @@ const dashboardLayoutSlice = createSlice({
 
     addPlansCard(state, action: PayloadAction<{ expandedSessionIds?: string[] } | undefined>) {
       const id = 'plans-main';
-      if (state.plansCards[id]) return;
+      if (state.plansCards[id]) {
+        state.plansCards[id].hidden = false;
+        state.plansCards[id].zOrder = state.nextZOrder++;
+        return;
+      }
       const rects = collectOccupiedRects(state, action.payload?.expandedSessionIds);
       const pos = findOpenGridCell(rects, DEFAULT_PLANS_CARD_W, DEFAULT_PLANS_CARD_H);
       state.plansCards[id] = {
@@ -351,6 +380,7 @@ const dashboardLayoutSlice = createSlice({
         height: DEFAULT_PLANS_CARD_H,
         zOrder: state.nextZOrder++,
         collapsed: false,
+        hidden: false,
       };
     },
 
@@ -379,12 +409,19 @@ const dashboardLayoutSlice = createSlice({
     },
 
     removePlansCard(state, action: PayloadAction<string>) {
-      delete state.plansCards[action.payload];
+      const card = state.plansCards[action.payload];
+      if (card) {
+        card.hidden = true;
+      }
     },
 
     addSwarmCard(state, action: PayloadAction<{ expandedSessionIds?: string[]; swarmId?: string | null } | undefined>) {
       const id = 'swarm-main';
-      if (state.swarmCards[id]) return;
+      if (state.swarmCards[id]) {
+        state.swarmCards[id].hidden = false;
+        state.swarmCards[id].zOrder = state.nextZOrder++;
+        return;
+      }
       const rects = collectOccupiedRects(state, action.payload?.expandedSessionIds);
       const pos = findOpenGridCell(rects, DEFAULT_SWARM_CARD_W, DEFAULT_SWARM_CARD_H);
       state.swarmCards[id] = {
@@ -395,6 +432,8 @@ const dashboardLayoutSlice = createSlice({
         width: DEFAULT_SWARM_CARD_W,
         height: DEFAULT_SWARM_CARD_H,
         zOrder: state.nextZOrder++,
+        collapsed: false,
+        hidden: false,
       };
     },
 
@@ -434,7 +473,17 @@ const dashboardLayoutSlice = createSlice({
     },
 
     removeSwarmCard(state, action: PayloadAction<string>) {
-      delete state.swarmCards[action.payload];
+      const card = state.swarmCards[action.payload];
+      if (card) {
+        card.hidden = true;
+      }
+    },
+
+    toggleSwarmCardCollapsed(state, action: PayloadAction<string>) {
+      const card = state.swarmCards[action.payload];
+      if (card) {
+        card.collapsed = !card.collapsed;
+      }
     },
 
     togglePlansCardCollapsed(state, action: PayloadAction<string>) {
@@ -986,7 +1035,9 @@ const dashboardLayoutSlice = createSlice({
       state.viewCards = {};
       state.browserCards = {};
       state.plansCards = {};
+      state.swarmCards = {};
       state.notes = {};
+      state.viewportState = null;
       state.closedCardPositions = {};
       state.glowingBrowserCards = {};
       state.glowingAgentCards = {};
@@ -1006,7 +1057,9 @@ const dashboardLayoutSlice = createSlice({
         state.viewCards = {};
         state.browserCards = {};
         state.plansCards = {};
+        state.swarmCards = {};
         state.notes = {};
+        state.viewportState = null;
         state.persistedExpandedSessionIds = [];
       })
       .addCase(fetchLayout.fulfilled, (state, action) => {
@@ -1016,7 +1069,9 @@ const dashboardLayoutSlice = createSlice({
         state.viewCards = action.payload.viewCards;
         state.browserCards = action.payload.browserCards;
         state.plansCards = action.payload.plansCards || {};
+        state.swarmCards = action.payload.swarmCards || {};
         state.notes = action.payload.notes || {};
+        state.viewportState = action.payload.viewportState ?? null;
         state.persistedExpandedSessionIds = action.payload.expandedSessionIds;
 
         // Ensure all cards have a zOrder and compute nextZOrder from persisted data
@@ -1033,6 +1088,14 @@ const dashboardLayoutSlice = createSlice({
           if (!c.zOrder) c.zOrder = 0;
           if (c.zOrder > maxZ) maxZ = c.zOrder;
         }
+        for (const c of Object.values(state.plansCards)) {
+          if (!c.zOrder) c.zOrder = 0;
+          if (c.zOrder > maxZ) maxZ = c.zOrder;
+        }
+        for (const c of Object.values(state.swarmCards)) {
+          if (!c.zOrder) c.zOrder = 0;
+          if (c.zOrder > maxZ) maxZ = c.zOrder;
+        }
         for (const n of Object.values(state.notes)) {
           if (!n.zOrder) n.zOrder = 0;
           if (n.zOrder > maxZ) maxZ = n.zOrder;
@@ -1042,6 +1105,7 @@ const dashboardLayoutSlice = createSlice({
       .addCase(fetchLayout.rejected, (state) => {
         state.loading = false;
         state.initialized = true;
+        state.viewportState = null;
       })
       .addCase(launchAndSendFirstMessage.fulfilled, (state, action) => {
         const { draftId, session } = action.payload;
@@ -1068,6 +1132,7 @@ export const {
   setSwarmCardSize,
   setSwarmCardSwarmId,
   removeSwarmCard,
+  toggleSwarmCardCollapsed,
   togglePlansCardCollapsed,
   bringToFront,
   ensureAgentCard,

@@ -121,6 +121,18 @@ export const resumeExperimentalApproval = createAsyncThunk(
   },
 );
 
+export const updateOrchestrationNodePosition = createAsyncThunk(
+  'experimentalSwarms/updateOrchestrationNodePosition',
+  async ({ swarmId, nodeId, x, y, expanded }: { swarmId: string; nodeId: string; x?: number; y?: number; expanded?: boolean }) => {
+    const res = await fetch(`${SWARMS_API}/${swarmId}/orchestration-canvas/nodes/position`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ node_id: nodeId, x, y, expanded }),
+    });
+    return await readJson(res);
+  },
+);
+
 const experimentalSwarmsSlice = createSlice({
   name: 'experimentalSwarms',
   initialState,
@@ -173,6 +185,10 @@ const experimentalSwarmsSlice = createSlice({
         state.messages = action.payload.messages || [];
         state.approvals = action.payload.experimental_approvals || [];
         state.pendingCount = (action.payload.experimental_approvals || []).filter((approval: any) => approval.status === 'pending').length;
+      })
+      .addCase(updateOrchestrationNodePosition.fulfilled, (state, action) => {
+        state.swarm = action.payload;
+        state.error = null;
       })
       .addCase(fetchExperimentalSwarm.rejected, (state, action) => {
         state.loading = false;

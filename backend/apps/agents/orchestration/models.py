@@ -39,6 +39,18 @@ MessageType = Literal[
     "chat_message",
 ]
 
+EvidenceAction = Literal[
+    "read",
+    "created",
+    "modified",
+    "executed",
+    "validated",
+    "generated",
+    "output",
+]
+
+EvidenceStatus = Literal["pending", "completed", "failed", "skipped"]
+
 
 def _now_iso() -> str:
     return datetime.now().isoformat()
@@ -55,6 +67,27 @@ class AgentContract(BaseModel):
     output_contract: dict[str, Any] = Field(default_factory=dict)
 
 
+class EvidenceRecord(BaseModel):
+    id: str = Field(default_factory=lambda: uuid4().hex)
+    kind: str
+    swarm_id: str | None = None
+    task_id: str | None = None
+    agent_id: str | None = None
+    session_id: str | None = None
+    tool_call_id: str | None = None
+    tool_name: str | None = None
+    event_id: str | None = None
+    artifact_id: str | None = None
+    file_path: str | None = None
+    absolute_path: str | None = None
+    command: str | None = None
+    action: EvidenceAction | None = None
+    status: EvidenceStatus = "completed"
+    summary: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=_now_iso)
+
+
 class TaskNode(BaseModel):
     id: str = Field(default_factory=lambda: uuid4().hex)
     title: str
@@ -63,7 +96,7 @@ class TaskNode(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     status: TaskStatus = "pending"
     artifacts: list[dict[str, Any]] = Field(default_factory=list)
-    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    evidence: list[dict[str, Any] | EvidenceRecord] = Field(default_factory=list)
     errors: list[dict[str, Any]] = Field(default_factory=list)
     validations: list[dict[str, Any]] = Field(default_factory=list)
     touched_files: list[str] = Field(default_factory=list)
@@ -100,7 +133,10 @@ class SwarmState(BaseModel):
     tool_history: list[dict[str, Any]] = Field(default_factory=list)
     events: list[dict[str, Any]] = Field(default_factory=list)
     experimental_approvals: list[dict[str, Any]] = Field(default_factory=list)
-    final_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    project_intake_state: dict[str, Any] = Field(default_factory=dict)
+    orchestration_canvas_state: dict[str, Any] = Field(default_factory=dict)
+    evidence: list[EvidenceRecord] = Field(default_factory=list)
+    final_evidence: list[dict[str, Any] | EvidenceRecord] = Field(default_factory=list)
     final_result: dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)

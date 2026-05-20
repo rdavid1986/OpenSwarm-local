@@ -155,40 +155,6 @@ const PersistentPlansCard: React.FC<Props> = ({ onClose, collapsed = false, dash
         borderRadius: 1,
       }}
     >
-      <Box
-        className="drag-handle"
-        sx={{
-          px: 2,
-          py: 1.35,
-          borderBottom: `1px solid ${c.border.default}`,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 1,
-          cursor: 'grab',
-          '&:active': { cursor: 'grabbing' },
-        }}
-      >
-        <ArticleOutlinedIcon sx={{ fontSize: 19, color: c.text.secondary, flexShrink: 0 }} />
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography sx={{ fontSize: '0.95rem', fontWeight: 700, lineHeight: 1.2 }}>
-            Planes persistentes
-          </Typography>
-          <Typography sx={{ fontSize: '0.75rem', color: c.text.secondary }}>
-            Ejecutá planes guardados en sesiones Agent
-          </Typography>
-        </Box>
-        <Tooltip title="Refrescar">
-          <IconButton size="small" onClick={handleRefresh}>
-            <RefreshRoundedIcon sx={{ fontSize: 18 }} />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="Cerrar">
-          <IconButton size="small" onClick={onClose}>
-            <CloseRoundedIcon sx={{ fontSize: 18 }} />
-          </IconButton>
-        </Tooltip>
-      </Box>
-
       {!collapsed && error && (
         <Box sx={{ px: 2, py: 1, bgcolor: 'rgba(239, 68, 68, 0.08)', color: '#b91c1c' }}>
           <Typography sx={{ fontSize: '0.78rem' }}>{error}</Typography>
@@ -202,7 +168,7 @@ const PersistentPlansCard: React.FC<Props> = ({ onClose, collapsed = false, dash
             width: 240,
             height: '100%',
             overflowY: 'auto',
-            borderRight: `1px solid ${c.border.default}`,
+            borderRight: `1px solid ${c.border.subtle}`,
             p: 1,
           }}
         >
@@ -233,9 +199,9 @@ const PersistentPlansCard: React.FC<Props> = ({ onClose, collapsed = false, dash
                   mb: 0.75,
                   borderRadius: 1,
                   cursor: 'pointer',
-                  bgcolor: active ? c.bg.subtle : 'transparent',
-                  border: `1px solid ${active ? c.border.default : 'transparent'}`,
-                  '&:hover': { bgcolor: c.bg.subtle },
+                  bgcolor: active ? c.bg.secondary : 'transparent',
+                  border: `1px solid ${active ? c.border.subtle : 'transparent'}`,
+                  '&:hover': { bgcolor: c.bg.secondary },
                 }}
               >
                 <Typography
@@ -329,8 +295,8 @@ const PersistentPlansCard: React.FC<Props> = ({ onClose, collapsed = false, dash
                     <Box
                       sx={{
                         p: 1,
-                        bgcolor: c.bg.subtle,
-                        border: `1px solid ${c.border.default}`,
+                        bgcolor: c.bg.secondary,
+                        border: `1px solid ${c.border.subtle}`,
                         borderRadius: 1,
                       }}
                     >
@@ -447,8 +413,8 @@ const PersistentPlansCard: React.FC<Props> = ({ onClose, collapsed = false, dash
                             p: 1,
                             mb: 0.75,
                             borderRadius: 1,
-                            border: `1px solid ${current ? c.accent.primary : c.border.default}`,
-                            bgcolor: current ? c.bg.subtle : 'transparent',
+                            border: `1px solid ${current ? c.accent.primary : c.border.subtle}`,
+                            bgcolor: current ? c.bg.secondary : 'transparent',
                           }}
                         >
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>

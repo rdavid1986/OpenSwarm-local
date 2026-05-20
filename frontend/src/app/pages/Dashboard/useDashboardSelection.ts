@@ -1,5 +1,12 @@
 import { useState, useCallback, useRef, useEffect, RefObject } from 'react';
-import type { CardPosition, ViewCardPosition, BrowserCardPosition, NotePosition, PlansCardPosition } from '@/shared/state/dashboardLayoutSlice';
+import type {
+  CardPosition,
+  ViewCardPosition,
+  BrowserCardPosition,
+  NotePosition,
+  PlansCardPosition,
+  SwarmCardPosition,
+} from '@/shared/state/dashboardLayoutSlice';
 
 export type CardType = 'agent' | 'view' | 'browser' | 'note' | 'plans' | 'swarm';
 
@@ -43,6 +50,7 @@ export function useDashboardSelection(
   browserCards: Record<string, BrowserCardPosition> = {},
   notes: Record<string, NotePosition> = {},
   plansCards: Record<string, PlansCardPosition> = {},
+  swarmCards: Record<string, SwarmCardPosition> = {},
 ) {
   const [selectedIds, setSelectedIds] = useState<Map<string, CardType>>(new Map());
   const [marquee, setMarquee] = useState<MarqueeRect | null>(null);
@@ -151,6 +159,7 @@ export function useDashboardSelection(
       }
 
       for (const pc of Object.values(plansCards)) {
+        if (pc.hidden) continue;
         if (
           rectsIntersect(rect, {
             x: pc.x,
@@ -160,6 +169,20 @@ export function useDashboardSelection(
           })
         ) {
           intersecting.set(pc.plans_card_id, 'plans');
+        }
+      }
+
+      for (const sc of Object.values(swarmCards)) {
+        if (sc.hidden) continue;
+        if (
+          rectsIntersect(rect, {
+            x: sc.x,
+            y: sc.y,
+            width: sc.width,
+            height: sc.height,
+          })
+        ) {
+          intersecting.set(sc.swarm_card_id, 'swarm');
         }
       }
 
@@ -178,7 +201,7 @@ export function useDashboardSelection(
 
       return intersecting;
     },
-    [cards, viewCards, browserCards, notes, plansCards],
+    [cards, viewCards, browserCards, notes, plansCards, swarmCards],
   );
 
   const handleCanvasMouseDown = useCallback(

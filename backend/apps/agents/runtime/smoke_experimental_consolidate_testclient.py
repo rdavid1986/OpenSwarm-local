@@ -89,8 +89,18 @@ def main() -> int:
         return fail("consolidate_not_completed", "Expected Consolidate completed", diagnostics)
     if not body.get("final_evidence"):
         return fail("final_evidence_missing", "Expected final_evidence", diagnostics)
-    if (body.get("final_result") or {}).get("status") != "completed":
+    final_result = body.get("final_result") or {}
+    claim_guard = final_result.get("claim_guard") or {}
+    claim_checks = claim_guard.get("checks") or {}
+    diagnostics["claim_guard"] = claim_guard
+
+    if final_result.get("status") != "completed":
         return fail("final_result_missing", "Expected final_result completed", diagnostics)
+    if claim_guard.get("status") != "verified":
+        return fail("claim_guard_unverified", "Expected verified final_result claim_guard", diagnostics)
+    for check_name in ("artifact_supported", "review_supported", "tasks_supported", "tool_history_supported"):
+        if claim_checks.get(check_name) is not True:
+            return fail("claim_guard_check_failed", f"Expected claim guard check true: {check_name}", diagnostics)
     if not diagnostics["readme_exists"]:
         return fail("readme_missing", "Expected README.md", diagnostics)
     if not body.get("artifacts") or not final_state.get("tool_history"):

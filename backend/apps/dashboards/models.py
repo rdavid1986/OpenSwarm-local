@@ -52,12 +52,43 @@ class NotePosition(BaseModel):
     color: str = "yellow"
 
 
+class PlansCardPosition(BaseModel):
+    plans_card_id: str
+    x: float = 0
+    y: float = 0
+    width: float = 720
+    height: float = 560
+    zOrder: int = 0
+    collapsed: bool = False
+    hidden: bool = False
+
+
+class SwarmCardPosition(BaseModel):
+    swarm_card_id: str
+    swarm_id: Optional[str] = None
+    x: float = 0
+    y: float = 0
+    width: float = 760
+    height: float = 620
+    zOrder: int = 0
+    hidden: bool = False
+
+
+class ViewportState(BaseModel):
+    panX: float = 0
+    panY: float = 0
+    zoom: float = 1
+
+
 class DashboardLayout(BaseModel):
     cards: dict[str, CardPosition] = Field(default_factory=dict)
     view_cards: dict[str, ViewCardPosition] = Field(default_factory=dict)
     browser_cards: dict[str, BrowserCardPosition] = Field(default_factory=dict)
+    plans_cards: dict[str, PlansCardPosition] = Field(default_factory=dict)
+    swarm_cards: dict[str, SwarmCardPosition] = Field(default_factory=dict)
     notes: dict[str, NotePosition] = Field(default_factory=dict)
     expanded_session_ids: list[str] = Field(default_factory=list)
+    viewport_state: Optional[ViewportState] = None
 
 
 class Dashboard(BaseModel):

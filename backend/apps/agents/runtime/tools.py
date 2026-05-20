@@ -28,6 +28,7 @@ from backend.apps.tools_lib.tools_lib import (
 from backend.apps.agents.runtime.events import EventTraceRuntime, event_trace_runtime
 from backend.apps.agents.runtime.policies import PolicyRuntime, policy_runtime
 from backend.apps.agents.runtime.approvals import ApprovalRuntime, approval_runtime
+from backend.apps.agents.orchestration.models import EvidenceRecord
 
 
 ToolKind = Literal["builtin", "mcp"]
@@ -421,6 +422,7 @@ class ToolRuntime:
             raise ValueError("content must be a string")
 
         target = self._safe_workspace_path(context.workspace_path, relative_path)
+        existed_before = target.exists()
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         return ToolResult(
@@ -432,6 +434,7 @@ class ToolRuntime:
                 "path": relative_path,
                 "absolute_path": str(target),
                 "bytes": len(content.encode("utf-8")),
+                "existed_before": existed_before,
             },
             started_at=started_at,
             completed_at=_now_iso(),
@@ -655,10 +658,107 @@ class ToolRuntime:
         else:
             event_type = "tool_failed"
 
-        self._event(event_type, self._context_from_metadata(result.metadata), result.to_history_entry())
+        event = self._event(event_type, self._context_from_metadata(result.metadata), result.to_history_entry())
+        if result.status == "completed":
+            self._persist_evidence_from_tool_result(result, event_id=event.id)
         if history is not None:
             history.append(result.to_history_entry())
         return result
+
+    def _persist_evidence_from_tool_result(self, result: ToolResult, *, event_id: str) -> None:
+        swarm_id = result.metadata.get("swarm_id")
+        if not swarm_id:
+            return
+
+        evidence = self._evidence_from_tool_result(result, event_id=event_id)
+        if evidence is None:
+            return
+
+        try:
+            from backend.apps.agents.orchestration.store import swarm_store
+
+            swarm = swarm_store.load(str(swarm_id))
+            dedupe_key = (evidence.tool_call_id, evidence.kind, evidence.task_id)
+            if any((item.tool_call_id, item.kind, item.task_id) == dedupe_key for item in swarm.evidence):
+                return
+
+            swarm.evidence.append(evidence)
+            if evidence.task_id:
+                evidence_dict = evidence.model_dump(mode="json")
+                for task in swarm.tasks:
+                    if task.id == evidence.task_id:
+                        if not any(
+                            isinstance(item, dict)
+                            and item.get("tool_call_id") == evidence.tool_call_id
+                            and item.get("kind") == evidence.kind
+                            and item.get("task_id") == evidence.task_id
+                            for item in task.evidence
+                        ):
+                            task.evidence.append(evidence_dict)
+                        break
+            swarm_store.save(swarm)
+        except FileNotFoundError:
+            return
+        except Exception:
+            return
+
+    @staticmethod
+    def _evidence_from_tool_result(result: ToolResult, *, event_id: str) -> EvidenceRecord | None:
+        data = result.result or {}
+        metadata = result.metadata or {}
+        tool_name = result.tool_name
+        file_path = data.get("path")
+        absolute_path = data.get("absolute_path")
+        command = data.get("command") or metadata.get("command")
+
+        if tool_name == "Read":
+            kind = "file_read"
+            action = "read"
+            summary = f"Read file {file_path}" if file_path else "Read file"
+        elif tool_name == "Write":
+            was_update = bool(data.get("existed_before"))
+            kind = "file_modified" if was_update else "file_created"
+            action = "modified" if was_update else "created"
+            summary = f"{'Modified' if was_update else 'Created'} file {file_path}" if file_path else "Wrote file"
+        elif tool_name == "Edit":
+            kind = "file_modified"
+            action = "modified"
+            summary = f"Modified file {file_path}" if file_path else "Modified file"
+        elif tool_name in {"SearchFiles", "SearchText", "Glob", "Grep"}:
+            kind = "output"
+            action = "output"
+            summary = f"{tool_name} returned {data.get('count', 0)} result(s)"
+        elif tool_name == "Bash":
+            kind = "command_executed"
+            action = "executed"
+            summary = f"Executed command {command}" if command else "Executed command"
+        else:
+            return None
+
+        return EvidenceRecord(
+            kind=kind,
+            swarm_id=metadata.get("swarm_id"),
+            task_id=metadata.get("task_id"),
+            agent_id=metadata.get("agent_id"),
+            session_id=metadata.get("session_id"),
+            tool_call_id=result.call_id,
+            tool_name=tool_name,
+            event_id=event_id,
+            file_path=str(file_path) if file_path is not None else None,
+            absolute_path=str(absolute_path) if absolute_path is not None else None,
+            command=str(command) if command is not None else None,
+            action=action,
+            status="completed",
+            summary=summary,
+            metadata={
+                "bytes": data.get("bytes"),
+                "count": data.get("count"),
+                "truncated": data.get("truncated"),
+                "started_at": result.started_at,
+                "completed_at": result.completed_at,
+            },
+            created_at=result.completed_at or _now_iso(),
+        )
 
     @staticmethod
     def _required_str(data: dict[str, Any], key: str) -> str:
@@ -731,8 +831,8 @@ class ToolRuntime:
             task_id=metadata.get("task_id"),
         )
 
-    def _event(self, event_type: str, context: ToolExecutionContext, payload: dict[str, Any]) -> None:
-        self.events.create(
+    def _event(self, event_type: str, context: ToolExecutionContext, payload: dict[str, Any]):
+        return self.events.create(
             event_type,
             session_id=context.session_id,
             swarm_id=context.swarm_id,

@@ -168,7 +168,13 @@ class ExperimentalDAGTaskRunner:
     ) -> None:
         swarm = self.store.load(swarm_id)
         task = self._find_task(swarm.tasks, task_id)
-        artifacts = self._dedupe_artifacts(self._artifacts_from_tool_history(task_id=task_id, contract=contract, result=result, workspace=workspace))
+        artifacts = self._dedupe_artifacts(self._artifacts_from_tool_history(
+            task_id=task_id,
+            contract=contract,
+            result=result,
+            workspace=workspace,
+            evidence_records=swarm.evidence,
+        ))
         if not artifacts:
             self.store.save(swarm)
             return
@@ -220,6 +226,7 @@ class ExperimentalDAGTaskRunner:
         contract: AgentContract,
         result: MiniAgentRuntimeResult,
         workspace: Path,
+        evidence_records: list[Any] | None = None,
     ) -> list[dict[str, Any]]:
         artifacts: list[dict[str, Any]] = []
         for entry in result.tool_history:
@@ -231,6 +238,12 @@ class ExperimentalDAGTaskRunner:
                 continue
             normalized_path = str(path).replace("\\", "/")
             suffix = Path(str(path)).suffix.lower().lstrip(".")
+            evidence = ExperimentalDAGTaskRunner._matching_evidence(
+                evidence_records or [],
+                call_id=entry.get("call_id"),
+                task_id=task_id,
+                path=normalized_path,
+            )
             artifacts.append(
                 {
                     "id": f"artifact-{task_id}-{normalized_path.replace('/', '__')}",
@@ -239,15 +252,38 @@ class ExperimentalDAGTaskRunner:
                     "path": normalized_path,
                     "absolute_path": data.get("absolute_path") or str((workspace / str(path)).resolve()),
                     "bytes": data.get("bytes"),
-                    "status": "created" if entry.get("tool") == "Write" else "updated",
+                    "status": "created" if (
+                        getattr(evidence, "action", None) == "created"
+                        or (evidence is None and entry.get("tool") == "Write")
+                    ) else "updated",
                     "task_id": task_id,
                     "agent_id": contract.id,
                     "agent_role": contract.role,
+                    **({"evidence_id": evidence.id} if evidence else {}),
                     "evidence_ref": entry.get("call_id"),
                     "created_at": _now_iso(),
                 }
             )
         return artifacts
+
+    @staticmethod
+    def _matching_evidence(
+        evidence_records: list[Any],
+        *,
+        call_id: Any,
+        task_id: str,
+        path: str,
+    ):
+        normalized_path = str(path or "").replace("\\", "/")
+        for evidence in evidence_records:
+            if getattr(evidence, "tool_call_id", None) != call_id:
+                continue
+            if getattr(evidence, "task_id", None) != task_id:
+                continue
+            evidence_path = str(getattr(evidence, "file_path", "") or "").replace("\\", "/")
+            if evidence_path == normalized_path:
+                return evidence
+        return None
 
     @staticmethod
     def _upsert_artifact(swarm: SwarmState, task: TaskNode, artifact: dict[str, Any]) -> None:

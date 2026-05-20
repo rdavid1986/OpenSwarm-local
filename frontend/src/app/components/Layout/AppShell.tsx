@@ -152,7 +152,7 @@ const AppShell: React.FC = () => {
 
   const dashboardItems = useAppSelector((state) => state.dashboards.items);
   const dashboardList = Object.values(dashboardItems).sort(
-    (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+    (a, b) => new Date(b.created_at || b.updated_at).getTime() - new Date(a.created_at || a.updated_at).getTime(),
   );
 
   const outputItems = useAppSelector((state) => state.outputs.items);
@@ -326,6 +326,7 @@ const AppShell: React.FC = () => {
 
   const handleDashboardItemClick = (dashboardId: string) => {
     if (renamingDashboardId === dashboardId) return;
+    setLastDashboardId(dashboardId);
     navigate(`/dashboard/${dashboardId}`);
   };
 
@@ -347,6 +348,7 @@ const AppShell: React.FC = () => {
     e.stopPropagation();
     const result = await dispatch(createDashboard('Untitled Dashboard'));
     if (createDashboard.fulfilled.match(result)) {
+      setLastDashboardId(result.payload.id);
       navigate(`/dashboard/${result.payload.id}`);
     }
   };
@@ -1069,9 +1071,13 @@ const AppShell: React.FC = () => {
             route navigation. The Dashboard component reads its dashboardId from the
             sticky lastDashboardId hook so its dashboardId useEffect doesn't re-fire on
             incidental URL changes. */}
-        {lastDashboardId && (
+        {(activeDashboardId || lastDashboardId) && (
           <DashboardHost visible={isDashboardViewActive}>
-            <Dashboard dashboardId={lastDashboardId} isActive={isDashboardViewActive} />
+            <Dashboard
+              key={activeDashboardId || lastDashboardId}
+              dashboardId={(activeDashboardId || lastDashboardId)!}
+              isActive={isDashboardViewActive}
+            />
           </DashboardHost>
         )}
       </Box>
