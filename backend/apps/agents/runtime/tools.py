@@ -770,10 +770,16 @@ class ToolRuntime:
     @staticmethod
     def _safe_workspace_path(workspace_path: str, relative_path: str) -> Path:
         workspace = Path(workspace_path).expanduser().resolve()
-        if Path(relative_path).is_absolute():
+        input_path = Path(relative_path)
+        if input_path.is_absolute():
             raise ValueError("absolute paths are not allowed")
         target = (workspace / relative_path).resolve()
-        target.relative_to(workspace)
+        try:
+            resolved_relative = target.relative_to(workspace)
+        except ValueError:
+            raise ValueError("path escapes workspace") from None
+        if ToolRuntime._is_ignored(resolved_relative):
+            raise ValueError(f"ignored workspace path is not allowed: {relative_path}")
         return target
 
     @staticmethod
