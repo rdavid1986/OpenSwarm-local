@@ -75,6 +75,18 @@ export const runExperimentalDag = createAsyncThunk(
   },
 );
 
+export const startExperimentalImplementation = createAsyncThunk(
+  'experimentalSwarms/startImplementation',
+  async ({ swarmId, workspacePath }: { swarmId: string; workspacePath?: string }) => {
+    const res = await fetch(`${SWARMS_API}/${swarmId}/experimental/start-implementation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace_path: workspacePath }),
+    });
+    return await readJson(res);
+  },
+);
+
 export const chatExperimentalSwarm = createAsyncThunk(
   'experimentalSwarms/chat',
   async ({ swarmId, message }: { swarmId: string; message: string }) => {

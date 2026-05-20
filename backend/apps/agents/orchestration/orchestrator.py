@@ -140,6 +140,69 @@ class SwarmOrchestrator:
         )
         return self.store.save(swarm)
 
+    def ensure_readme_dag(self, *, swarm_id: str) -> SwarmState:
+        swarm = self.store.load(swarm_id)
+        if swarm.tasks:
+            return swarm
+
+        create_spec = get_experimental_task_spec("create_readme")
+        review_spec = get_experimental_task_spec("review_readme")
+        consolidate_spec = get_experimental_task_spec("consolidate_final")
+
+        coordinator = AgentContract(
+            role="CoordinatorAgent",
+            objective="Coordinate the swarm, maintain task state, request reviews, and consolidate evidence.",
+            allowed_tools=list(consolidate_spec.allowed_tools),
+            acceptance_criteria=["Every completed task has evidence.", "Final result cites artifacts."],
+            output_contract=dict(consolidate_spec.output_contract),
+        )
+        worker = AgentContract(
+            role="DocumentationAgent",
+            objective="Create or update documentation artifacts using real filesystem tools.",
+            allowed_tools=list(create_spec.allowed_tools),
+            acceptance_criteria=["README.md exists in the workspace.", "Artifact path is submitted."],
+            output_contract=dict(create_spec.output_contract),
+        )
+        reviewer = AgentContract(
+            role="ReviewerAgent",
+            objective="Validate submitted artifacts by reading them with real tools and reporting evidence.",
+            allowed_tools=list(review_spec.allowed_tools),
+            acceptance_criteria=["Reviewer reads README.md.", "Reviewer returns approval or rejection with evidence."],
+            output_contract=dict(review_spec.output_contract),
+        )
+
+        write_task = TaskNode(
+            title=create_spec.title,
+            objective="Create a basic README.md in the workspace using a real write tool.",
+            assigned_contract_id=worker.id,
+        )
+        review_task = TaskNode(
+            title=review_spec.title,
+            objective="Read README.md with a real read tool and validate the artifact.",
+            assigned_contract_id=reviewer.id,
+            depends_on=[write_task.id],
+        )
+        consolidate_task = TaskNode(
+            title=consolidate_spec.title,
+            objective="Summarize work, artifacts, reviewer result, and evidence for the user.",
+            assigned_contract_id=coordinator.id,
+            depends_on=[review_task.id],
+        )
+
+        swarm.intent = "task"
+        swarm.coordinator_contract_id = coordinator.id
+        swarm.contracts.extend([coordinator, worker, reviewer])
+        swarm.tasks.extend([write_task, review_task, consolidate_task])
+        swarm.messages.append(
+            AgentToAgentMessage(
+                type="broadcast_to_swarm",
+                from_agent_id=coordinator.id,
+                payload={"message": "implementation_dag_created", "source": "start_implementation"},
+                requires_response=False,
+            )
+        )
+        return self.store.save(swarm)
+
     def submit_artifact(
         self,
         *,

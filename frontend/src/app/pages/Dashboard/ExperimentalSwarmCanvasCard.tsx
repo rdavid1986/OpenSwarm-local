@@ -26,6 +26,7 @@ import {
   fetchExperimentalSwarm,
   resumeExperimentalApproval,
   runExperimentalDag,
+  startExperimentalImplementation,
 } from '@/shared/state/experimentalSwarmsSlice';
 import { useAppDispatch, useAppSelector } from '@/shared/hooks';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
@@ -394,6 +395,13 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
     setLastSubmittedPrompt(label);
     await dispatch(chatExperimentalSwarm({ swarmId: activeSwarmId, message: label }));
+    dispatch(fetchExperimentalSwarm(activeSwarmId));
+  }, [activeSwarmId, dispatch, swarmState.actionLoading]);
+
+  const handleStartImplementation = useCallback(async () => {
+    if (!activeSwarmId || swarmState.actionLoading) return;
+
+    await dispatch(startExperimentalImplementation({ swarmId: activeSwarmId }));
     dispatch(fetchExperimentalSwarm(activeSwarmId));
   }, [activeSwarmId, dispatch, swarmState.actionLoading]);
 
@@ -822,15 +830,18 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         <Button
                           size="small"
                           variant="contained"
-                          disabled={!projectIntake.action.enabled}
-                          onClick={(e) => e.stopPropagation()}
+                          disabled={!projectIntake.action.enabled || swarmState.actionLoading || !activeSwarmId}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleStartImplementation();
+                          }}
                           sx={{ minHeight: 28, px: 1.25, py: 0.35, fontSize: '0.74rem', textTransform: 'none' }}
                         >
                           {renderText(projectIntake.action.label, 'Start Swarm Implementation')}
                         </Button>
                         {!projectIntake.action.enabled && (
                           <Typography sx={{ color: c.text.tertiary, fontSize: '0.68rem' }}>
-                            Prepared - implementation runner not enabled yet.
+                            La implementación se habilita cuando el intake queda listo.
                           </Typography>
                         )}
                       </Box>

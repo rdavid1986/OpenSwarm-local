@@ -1896,6 +1896,40 @@ async def experimental_run_dag_dependencies(swarm_id: str, body: ExperimentalDAG
     return result.model_dump(mode="json")
 
 
+@swarms.router.post("/{swarm_id}/experimental/start-implementation")
+async def experimental_start_implementation(swarm_id: str, body: ExperimentalDAGDependencyRunRequest):
+    if not experimental_dag_dependency_runner_enabled():
+        raise HTTPException(status_code=404, detail="Experimental DAG dependency runner is disabled")
+    swarm = _load_or_404(swarm_id)
+    intake_state = _get_project_intake_state(swarm)
+    if intake_state.get("status") != "ready_to_implement":
+        raise HTTPException(status_code=400, detail="Project intake is not ready to implement")
+
+    try:
+        _ensure_orchestration_canvas_preview(swarm)
+        swarm = swarm_orchestrator.store.save(swarm)
+        swarm_orchestrator.ensure_readme_dag(swarm_id=swarm_id)
+
+        result = await experimental_dag_dependency_runner.run_dag_dependencies(swarm_id=swarm_id, body=body)
+
+        swarm = swarm_orchestrator.store.load(swarm_id)
+        _enrich_orchestration_canvas_with_evidence(swarm)
+        swarm = swarm_orchestrator.store.save(swarm)
+
+        return {
+            "ok": result.ok,
+            "status": result.status,
+            "enabled": True,
+            "swarm_id": swarm_id,
+            "implementation": result.model_dump(mode="json"),
+            **_dump(swarm),
+        }
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @swarms.router.post("/{swarm_id}/pause")
 async def pause_swarm(swarm_id: str):
     try:
