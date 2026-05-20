@@ -4,11 +4,23 @@ import Chip from '@mui/material/Chip';
 import Typography from '@mui/material/Typography';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 
+type OrchestrationNodeStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'skipped'
+  | 'waiting_approval'
+  | 'draft'
+  | 'verified'
+  | 'unverified'
+  | string;
+
 export interface OrchestrationCanvasNode {
   id: string;
   label: string;
   role?: string | null;
-  status?: 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'waiting_approval' | string;
+  status?: OrchestrationNodeStatus;
   description?: string | null;
   model?: string | null;
   artifact_ref?: string | null;
@@ -130,16 +142,31 @@ const SwarmOrchestrationPreview: React.FC<Props> = ({ state, zoom = 1, onNodeMov
 
   if (nodes.length === 0) return null;
 
-  const statusColor = (status?: string) => {
+  const getStatusMeta = (status?: string) => {
     switch (status) {
-      case 'running': return c.status.info;
-      case 'completed': return c.status.success;
-      case 'failed': return c.status.error;
-      case 'skipped': return c.text.muted;
-      case 'waiting_approval': return c.status.warning;
+      case 'running':
+        return { label: 'Ejecutando', color: c.status.info, description: 'Nodo en ejecución. La tarea o tool asociada está corriendo.' };
+      case 'completed':
+        return { label: 'Completado', color: c.status.success, description: 'Nodo completado correctamente.' };
+      case 'failed':
+        return { label: 'Falló', color: c.status.error, description: 'Nodo fallido. Revisá la actividad reciente para ver el detalle.' };
+      case 'skipped':
+        return { label: 'Omitido', color: c.text.muted, description: 'Nodo omitido por el flujo de orquestación.' };
+      case 'waiting_approval':
+        return { label: 'Esperando aprobación', color: c.status.warning, description: 'Nodo pausado hasta recibir aprobación.' };
+      case 'draft':
+        return { label: 'Borrador', color: c.text.tertiary, description: 'Nodo planificado como borrador; todavía no fue ejecutado.' };
+      case 'verified':
+        return { label: 'Verificado', color: c.status.success, description: 'Nodo verificado con evidencia asociada.' };
+      case 'unverified':
+        return { label: 'No verificado', color: c.status.warning, description: 'Nodo completado o evaluado, pero la evidencia no quedó verificada.' };
       case 'pending':
       default:
-        return c.text.tertiary;
+        return {
+          label: status && status !== 'pending' ? status : 'Pendiente',
+          color: c.text.tertiary,
+          description: 'Esperando inicio de ejecución. No se ejecutaron tools ni DAG.',
+        };
     }
   };
 
@@ -184,6 +211,7 @@ const SwarmOrchestrationPreview: React.FC<Props> = ({ state, zoom = 1, onNodeMov
         const width = node.width || NODE_W;
         const height = node.expanded ? NODE_EXPANDED_H : (node.height || NODE_H);
         const status = node.status || 'pending';
+        const statusMeta = getStatusMeta(status);
         return (
           <Box
             key={node.id}
@@ -204,7 +232,7 @@ const SwarmOrchestrationPreview: React.FC<Props> = ({ state, zoom = 1, onNodeMov
               p: 1.25,
               borderRadius: 2,
               bgcolor: c.bg.surface,
-              border: `1px solid ${statusColor(status)}`,
+              border: `1px solid ${statusMeta.color}`,
               boxShadow: c.shadow.lg,
               opacity: 0.96,
               pointerEvents: 'auto',
@@ -231,12 +259,12 @@ const SwarmOrchestrationPreview: React.FC<Props> = ({ state, zoom = 1, onNodeMov
               </Typography>
               <Chip
                 size="small"
-                label={status}
+                label={statusMeta.label}
                 sx={{
                   height: 18,
                   fontSize: 10,
-                  color: statusColor(status),
-                  bgcolor: `${statusColor(status)}22`,
+                  color: statusMeta.color,
+                  bgcolor: `${statusMeta.color}22`,
                 }}
               />
             </Box>
@@ -256,9 +284,7 @@ const SwarmOrchestrationPreview: React.FC<Props> = ({ state, zoom = 1, onNodeMov
                   Estado operativo
                 </Typography>
                 <Typography sx={{ color: c.text.secondary, fontSize: 11, lineHeight: 1.35 }}>
-                  {status === 'pending'
-                    ? 'Esperando inicio de ejecución. No se ejecutaron tools ni DAG.'
-                    : `Estado actual: ${status}.`}
+                  {statusMeta.description}
                 </Typography>
               </Box>
             )}

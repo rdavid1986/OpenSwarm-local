@@ -198,6 +198,25 @@ const experimentalSwarmsSlice = createSlice({
         state.approvals = action.payload.experimental_approvals || [];
         state.pendingCount = (action.payload.experimental_approvals || []).filter((approval: any) => approval.status === 'pending').length;
       })
+      .addCase(startExperimentalImplementation.fulfilled, (state, action) => {
+        const payload = action.payload || {};
+        state.actionLoading = false;
+        state.error = null;
+
+        if (!state.swarm) {
+          state.swarm = payload;
+          return;
+        }
+
+        state.swarm = {
+          ...state.swarm,
+          ...(payload.id ? payload : {}),
+          implementation: payload.implementation ?? state.swarm.implementation,
+          final_result: payload.final_result ?? state.swarm.final_result,
+          final_evidence: payload.final_evidence ?? state.swarm.final_evidence,
+          orchestration_canvas_state: payload.orchestration_canvas_state ?? state.swarm.orchestration_canvas_state,
+        };
+      })
       .addCase(updateOrchestrationNodePosition.fulfilled, (state, action) => {
         state.swarm = action.payload;
         state.error = null;

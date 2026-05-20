@@ -33,6 +33,7 @@ import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import type { CardType } from './useDashboardSelection';
 
 type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+type ImplementationVisualState = 'idle' | 'running' | 'completed' | 'failed' | 'verified' | 'unverified';
 
 interface Props {
   swarmCardId: string;
@@ -226,6 +227,33 @@ function humanizeEvidence(evidence: any, fallback: string): string {
   return renderText(evidence?.id || evidence?.summary, kind || fallback);
 }
 
+function normalizeStatusValue(value: any): string {
+  return renderText(value, '').trim().toLowerCase();
+}
+
+function getClaimGuardStatus(finalResult: any): string {
+  return normalizeStatusValue(finalResult?.claim_guard?.status);
+}
+
+function getImplementationStatus(swarm: any): string {
+  return normalizeStatusValue(swarm?.implementation?.status || swarm?.status);
+}
+
+function getImplementationVisualState(params: {
+  hasSwarm: boolean;
+  isRunning: boolean;
+  implementationStatus: string;
+  claimGuardStatus: string;
+  hasError: boolean;
+}): ImplementationVisualState {
+  if (params.isRunning) return 'running';
+  if (params.hasError || params.implementationStatus === 'failed') return 'failed';
+  if (params.implementationStatus === 'completed') {
+    return params.claimGuardStatus === 'verified' ? 'verified' : 'unverified';
+  }
+  return params.hasSwarm ? 'idle' : 'idle';
+}
+
 const HANDLE_DEFS: { dir: ResizeDir; sx: Record<string, any> }[] = [
   { dir: 'n', sx: { top: -EDGE_THICKNESS / 2, left: CORNER_SIZE, right: CORNER_SIZE, height: EDGE_THICKNESS } },
   { dir: 's', sx: { bottom: -EDGE_THICKNESS / 2, left: CORNER_SIZE, right: CORNER_SIZE, height: EDGE_THICKNESS } },
@@ -276,6 +304,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const sideResizeRef = useRef<{ sx: number; ow: number } | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const startImplementationInFlightRef = useRef(false);
 
   const didDrag = useRef(false);
   const collapseClickTimerRef = useRef<number | null>(null);
@@ -289,6 +318,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const [customIntakeMode, setCustomIntakeMode] = useState(false);
   const promptInputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const [lastSubmittedPrompt, setLastSubmittedPrompt] = useState('');
+  const [isStartingImplementation, setIsStartingImplementation] = useState(false);
   const [openPanelSections, setOpenPanelSections] = useState<Record<string, boolean>>({
     tasks: false,
     approvals: false,
@@ -308,6 +338,52 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     ? (activeSwarm as any).final_evidence
     : [];
   const finalResult = activeSwarm ? activeSwarm.final_result : null;
+  const implementationStatus = getImplementationStatus(activeSwarm);
+  const claimGuardStatus = getClaimGuardStatus(finalResult);
+  const evidenceLinked = Boolean((activeSwarm as any)?.orchestration_canvas_state?.evidence_linked);
+  const implementationVisualState = getImplementationVisualState({
+    hasSwarm: Boolean(activeSwarmId),
+    isRunning: isStartingImplementation,
+    implementationStatus,
+    claimGuardStatus,
+    hasError: Boolean(swarmState.error),
+  });
+  const implementationStateMeta: Record<ImplementationVisualState, { label: string; color: string; message: string }> = {
+    idle: {
+      label: activeSwarmId ? 'Listo' : 'Nuevo',
+      color: c.text.tertiary,
+      message: activeSwarmId ? 'Listo para iniciar implementación.' : 'Creá o vinculá un swarm para implementar.',
+    },
+    running: {
+      label: 'Ejecutando',
+      color: c.status.info,
+      message: 'Implementación en ejecución. El botón queda bloqueado para evitar doble ejecución.',
+    },
+    completed: {
+      label: 'Completado',
+      color: c.status.success,
+      message: 'Implementación completada.',
+    },
+    failed: {
+      label: 'Falló',
+      color: c.status.error,
+      message: 'La implementación falló. Revisá el error visible y la actividad reciente.',
+    },
+    verified: {
+      label: 'Verificado',
+      color: c.status.success,
+      message: 'Implementación completada y evidencia verificada.',
+    },
+    unverified: {
+      label: 'No verificado',
+      color: c.status.warning,
+      message: evidenceLinked
+        ? 'Implementación completada, pero la evidencia no quedó verificada por claim guard.'
+        : 'Implementación completada con evidencia no verificada o no vinculada.',
+    },
+  };
+  const implementationMeta = implementationStateMeta[implementationVisualState];
+  const isImplementationActionRunning = isStartingImplementation || (swarmState.actionLoading && startImplementationInFlightRef.current);
   const chatMessages = activeSwarmId
     ? (swarmState.messages || []).filter((message: any) => getSwarmMessageText(message))
     : [];
@@ -399,10 +475,19 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   }, [activeSwarmId, dispatch, swarmState.actionLoading]);
 
   const handleStartImplementation = useCallback(async () => {
-    if (!activeSwarmId || swarmState.actionLoading) return;
+    if (!activeSwarmId || swarmState.actionLoading || startImplementationInFlightRef.current) return;
 
-    await dispatch(startExperimentalImplementation({ swarmId: activeSwarmId }));
-    dispatch(fetchExperimentalSwarm(activeSwarmId));
+    startImplementationInFlightRef.current = true;
+    setIsStartingImplementation(true);
+    try {
+      await dispatch(startExperimentalImplementation({ swarmId: activeSwarmId })).unwrap();
+      await dispatch(fetchExperimentalSwarm(activeSwarmId));
+    } catch {
+      // Error state is stored by the slice matcher and rendered in this card.
+    } finally {
+      startImplementationInFlightRef.current = false;
+      setIsStartingImplementation(false);
+    }
   }, [activeSwarmId, dispatch, swarmState.actionLoading]);
 
   const handleApprovalAction = useCallback(async (
@@ -696,7 +781,16 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             Local-first experimental swarm runtime
           </Typography>
         </Box>
-        <Chip size="small" label={activeSwarmId ? 'Ready' : 'New'} />
+        <Chip
+          size="small"
+          label={implementationMeta.label}
+          sx={{
+            color: implementationMeta.color,
+            bgcolor: `${implementationMeta.color}18`,
+            border: `1px solid ${implementationMeta.color}55`,
+            fontWeight: 650,
+          }}
+        />
         <IconButton
           size="small"
           onClick={(e) => e.stopPropagation()}
@@ -830,15 +924,35 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         <Button
                           size="small"
                           variant="contained"
-                          disabled={!projectIntake.action.enabled || swarmState.actionLoading || !activeSwarmId}
+                          disabled={!projectIntake.action.enabled || swarmState.actionLoading || isImplementationActionRunning || !activeSwarmId}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleStartImplementation();
                           }}
                           sx={{ minHeight: 28, px: 1.25, py: 0.35, fontSize: '0.74rem', textTransform: 'none' }}
                         >
-                          {renderText(projectIntake.action.label, 'Start Swarm Implementation')}
+                          {isImplementationActionRunning ? 'Ejecutando implementación…' : renderText(projectIntake.action.label, 'Start Swarm Implementation')}
                         </Button>
+                        {(isImplementationActionRunning || implementationStatus || claimGuardStatus || swarmState.error) && (
+                          <Chip
+                            size="small"
+                            label={implementationMeta.message}
+                            sx={{
+                              height: 'auto',
+                              maxWidth: '100%',
+                              color: implementationMeta.color,
+                              bgcolor: `${implementationMeta.color}14`,
+                              border: `1px solid ${implementationMeta.color}44`,
+                              '& .MuiChip-label': {
+                                display: 'block',
+                                whiteSpace: 'normal',
+                                py: 0.35,
+                                fontSize: '0.68rem',
+                                lineHeight: 1.35,
+                              },
+                            }}
+                          />
+                        )}
                         {!projectIntake.action.enabled && (
                           <Typography sx={{ color: c.text.tertiary, fontSize: '0.68rem' }}>
                             La implementación se habilita cuando el intake queda listo.
@@ -875,6 +989,17 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 <Box sx={{ alignSelf: 'flex-start', maxWidth: '86%', bgcolor: c.bg.surface, border: `1px solid ${c.border.subtle}`, borderRadius: 1.25, px: 1.5, py: 1 }}>
                   <Typography sx={{ fontSize: '0.78rem', color: c.text.muted }}>
                     Swarm is working…
+                  </Typography>
+                </Box>
+              )}
+
+              {swarmState.error && (
+                <Box sx={{ alignSelf: 'flex-start', maxWidth: '86%', bgcolor: `${c.status.error}12`, border: `1px solid ${c.status.error}66`, borderRadius: 1.25, px: 1.5, py: 1 }}>
+                  <Typography sx={{ fontSize: '0.78rem', color: c.status.error, fontWeight: 650 }}>
+                    Error de implementación
+                  </Typography>
+                  <Typography sx={{ fontSize: '0.74rem', color: c.text.secondary, mt: 0.35, lineHeight: 1.4 }}>
+                    {swarmState.error}
                   </Typography>
                 </Box>
               )}
@@ -1141,6 +1266,32 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 bgcolor: c.bg.page,
               }}
             >
+              {(implementationStatus === 'completed' || implementationStatus === 'failed' || claimGuardStatus) && (
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
+                  {implementationStatus === 'failed' ? (
+                    <Chip
+                      size="small"
+                      label="Implementación fallida"
+                      sx={{ color: c.status.error, bgcolor: `${c.status.error}18`, border: `1px solid ${c.status.error}55`, fontWeight: 650 }}
+                    />
+                  ) : implementationStatus === 'completed' && claimGuardStatus === 'verified' ? (
+                    <Chip
+                      size="small"
+                      label="Implementación completada · Verificada"
+                      sx={{ color: c.status.success, bgcolor: `${c.status.success}18`, border: `1px solid ${c.status.success}55`, fontWeight: 650 }}
+                    />
+                  ) : implementationStatus === 'completed' ? (
+                    <Chip
+                      size="small"
+                      label="Completada · Evidencia no verificada"
+                      sx={{ color: c.status.warning, bgcolor: `${c.status.warning}18`, border: `1px solid ${c.status.warning}55`, fontWeight: 650 }}
+                    />
+                  ) : null}
+                  {evidenceLinked && (
+                    <Chip size="small" label="evidencia vinculada" />
+                  )}
+                </Box>
+              )}
               {finalResult && typeof finalResult === 'object' && (
                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
                   {(finalResult as any).route && (
