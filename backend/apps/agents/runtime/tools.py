@@ -16,6 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 import difflib
 import fnmatch
+import shlex
+import subprocess
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -376,6 +378,8 @@ class ToolRuntime:
                 result = self._execute_edit(call, context, spec.name, started_at)
             elif spec.name == "Diff":
                 result = self._execute_diff(call, context, spec.name, started_at)
+            elif spec.name == "SafeShell":
+                result = self._execute_safe_shell(call, context, spec.name, started_at)
             elif spec.name == "Glob":
                 result = self._execute_search_files(call, context, spec.name, started_at)
             elif spec.name == "Grep":
@@ -490,6 +494,87 @@ class ToolRuntime:
             started_at=started_at,
             completed_at=_now_iso(),
             metadata=self._metadata(context),
+        )
+
+    def _execute_safe_shell(
+        self,
+        call: ToolCall,
+        context: ToolExecutionContext,
+        tool_name: str,
+        started_at: str,
+    ) -> ToolResult:
+        command = str(call.input.get("command", "")).strip()
+        allowed_commands = {
+            "python -m py_compile",
+            "npm --prefix frontend run build",
+            "git diff --check",
+            "git status --short",
+        }
+        blocked_patterns = {
+            "rm -rf",
+            "del /s",
+            "format",
+            "curl | sh",
+            "Invoke-WebRequest | iex",
+            "sudo",
+            "chmod -R 777",
+        }
+
+        for pattern in blocked_patterns:
+            if pattern.lower() in command.lower():
+                raise ValueError(f"blocked command pattern: {pattern}")
+
+        allowed = command in allowed_commands or command.startswith("python -m py_compile ")
+        if not allowed:
+            raise ValueError(f"command is not allowlisted: {command}")
+
+        workspace = Path(context.workspace_path).expanduser().resolve()
+        if not workspace.exists() or not workspace.is_dir():
+            raise ValueError("safe shell requires an existing workspace directory")
+
+        args = shlex.split(command)
+        if args[:3] == ["python", "-m", "py_compile"]:
+            for target in args[3:]:
+                self._safe_workspace_path(str(workspace), target)
+        completed = subprocess.run(
+            args,
+            cwd=str(workspace),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            shell=False,
+            check=False,
+        )
+
+        stdout = (completed.stdout or "")[:4000]
+        stderr = (completed.stderr or "")[:4000]
+        ok = completed.returncode == 0
+
+        return ToolResult(
+            call_id=call.id,
+            tool_name=tool_name,
+            status="completed" if ok else "failed",
+            ok=ok,
+            result={
+                "command": command,
+                "allowed": True,
+                "execution_status": "executed",
+                "stdout": stdout,
+                "stderr": stderr,
+                "exit_code": completed.returncode,
+            },
+            error=None if ok else (stderr or f"command failed with exit code {completed.returncode}"),
+            started_at=started_at,
+            completed_at=_now_iso(),
+            metadata={
+                **self._metadata(context),
+                "safe_shell": True,
+                "workspace_required": True,
+                "executed": True,
+                "timeout_seconds": 30,
+                "stdout_truncated": len(completed.stdout or "") > 4000,
+                "stderr_truncated": len(completed.stderr or "") > 4000,
+            },
         )
 
     def _execute_diff(
