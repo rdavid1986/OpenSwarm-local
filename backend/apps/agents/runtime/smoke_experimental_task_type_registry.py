@@ -104,6 +104,46 @@ def main() -> int:
     except ExperimentalTaskContractValidationError as exc:
         contract_validation_rejected.append(exc.code == "output_contract_mismatch")
 
+    verified_final_swarm = SwarmState(title="Verified final", user_prompt="registry smoke")
+    verified_final_swarm.final_result = {"status": "completed", "claim_guard": {"status": "verified"}}
+    verified_final_swarm.final_evidence = [{"kind": "artifact"}]
+    unverified_final_swarm = SwarmState(title="Unverified final", user_prompt="registry smoke")
+    unverified_final_swarm.final_result = {"status": "completed", "claim_guard": {"status": "unverified"}}
+    unverified_final_swarm.final_evidence = [{"kind": "artifact"}]
+    legacy_final_swarm = SwarmState(title="Legacy final", user_prompt="registry smoke")
+    legacy_final_swarm.final_result = {"status": "completed"}
+    legacy_final_swarm.final_evidence = [{"kind": "artifact"}]
+
+    consolidate_claim_guard_ok = [
+        validate_experimental_task_completion(
+            swarm=verified_final_swarm,
+            task=tasks[3],
+            task_type="consolidate_final",
+            planner_agent_runtime_enabled=True,
+            readme_artifact_finder=lambda swarm, source_task_id: None,
+            task_finder=lambda swarm, task_type: tasks[1],
+            approved_review_finder=lambda reviewer, artifact: None,
+        ),
+        not validate_experimental_task_completion(
+            swarm=unverified_final_swarm,
+            task=tasks[3],
+            task_type="consolidate_final",
+            planner_agent_runtime_enabled=True,
+            readme_artifact_finder=lambda swarm, source_task_id: None,
+            task_finder=lambda swarm, task_type: tasks[1],
+            approved_review_finder=lambda reviewer, artifact: None,
+        ),
+        validate_experimental_task_completion(
+            swarm=legacy_final_swarm,
+            task=tasks[3],
+            task_type="consolidate_final",
+            planner_agent_runtime_enabled=True,
+            readme_artifact_finder=lambda swarm, source_task_id: None,
+            task_finder=lambda swarm, task_type: tasks[1],
+            approved_review_finder=lambda reviewer, artifact: None,
+        ),
+    ]
+
     result = {
         "ok": (
             classified == expected
@@ -112,6 +152,7 @@ def main() -> int:
             and not any(validation_false_for_empty)
             and all(contract_validation_ok)
             and contract_validation_rejected == [True, True, True]
+            and consolidate_claim_guard_ok == [True, True, True]
         ),
         "classified": classified,
         "expected": expected,
@@ -120,6 +161,7 @@ def main() -> int:
         "validation_false_for_empty": validation_false_for_empty,
         "contract_validation_ok": contract_validation_ok,
         "contract_validation_rejected": contract_validation_rejected,
+        "consolidate_claim_guard_ok": consolidate_claim_guard_ok,
         "specs": specs,
     }
 

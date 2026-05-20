@@ -250,7 +250,12 @@ def validate_experimental_task_completion(
         return bool(artifact and approved_review_finder(task, artifact))
 
     if task_type == "consolidate_final":
-        return swarm.final_result.get("status") == "completed" and bool(swarm.final_evidence)
+        if swarm.final_result.get("status") != "completed" or not swarm.final_evidence:
+            return False
+        claim_guard = swarm.final_result.get("claim_guard")
+        if isinstance(claim_guard, dict):
+            return claim_guard.get("status") == "verified"
+        return True
 
     if task_type == "inspect_readme":
         return any(item.get("kind") == "readme_inspection" and item.get("path") == "README.md" for item in task.evidence)
