@@ -227,6 +227,132 @@ class SwarmOrchestrator:
         )
         return self.store.save(swarm)
 
+    def ensure_specialized_agent_contracts(self, *, swarm_id: str, generated_plan: dict | None = None) -> SwarmState:
+        swarm = self.store.load(swarm_id)
+        plan = generated_plan if isinstance(generated_plan, dict) else {}
+
+        existing_roles = {contract.role for contract in swarm.contracts}
+        frontend = str(plan.get("frontend") or "the selected frontend")
+        backend = str(plan.get("backend") or "the selected backend")
+        database = str(plan.get("database") or "the selected database")
+        app_type = str(plan.get("app_type") or "the requested app")
+        main_goal = str(plan.get("main_goal") or "the requested goal")
+
+        contract_specs = [
+            {
+                "role": "ArchitectAgent",
+                "objective": (
+                    f"Translate the project intake into a safe implementation architecture for {app_type}. "
+                    f"Main goal: {main_goal}."
+                ),
+                "allowed_tools": [],
+                "acceptance_criteria": [
+                    "Architecture decisions stay within the project intake scope.",
+                    "No files are modified by this contract until executable task types exist.",
+                ],
+                "output_contract": {
+                    "architecture_plan": {
+                        "status": "draft|ready",
+                        "summary": "string",
+                        "constraints": [],
+                    }
+                },
+            },
+            {
+                "role": "FrontendAgent",
+                "objective": f"Prepare frontend implementation work for {frontend} without executing unsupported task types yet.",
+                "allowed_tools": [],
+                "acceptance_criteria": [
+                    "Frontend scope reflects the generated plan.",
+                    "No frontend files are modified until frontend task types are registered.",
+                ],
+                "output_contract": {
+                    "frontend_plan": {
+                        "status": "draft|ready",
+                        "summary": "string",
+                    }
+                },
+            },
+            {
+                "role": "BackendAgent",
+                "objective": f"Prepare backend implementation work for {backend} with {database} without executing unsupported task types yet.",
+                "allowed_tools": [],
+                "acceptance_criteria": [
+                    "Backend scope reflects the generated plan.",
+                    "No backend files are modified until backend task types are registered.",
+                ],
+                "output_contract": {
+                    "backend_plan": {
+                        "status": "draft|ready",
+                        "summary": "string",
+                    }
+                },
+            },
+            {
+                "role": "TesterAgent",
+                "objective": "Prepare validation strategy for the generated project without running unsupported shell commands yet.",
+                "allowed_tools": [],
+                "acceptance_criteria": [
+                    "Validation plan is explicit.",
+                    "No commands are executed until a safe shell task type exists.",
+                ],
+                "output_contract": {
+                    "validation_plan": {
+                        "status": "draft|ready",
+                        "checks": [],
+                    }
+                },
+            },
+            {
+                "role": "SecurityAgent",
+                "objective": "Review implementation scope for local-first safety, path safety, secrets, and risky operations.",
+                "allowed_tools": [],
+                "acceptance_criteria": [
+                    "Security review remains evidence-oriented.",
+                    "No file or shell operation is executed by this dormant contract.",
+                ],
+                "output_contract": {
+                    "security_review": {
+                        "status": "draft|ready",
+                        "risks": [],
+                    }
+                },
+            },
+        ]
+
+        added_roles = []
+        for spec in contract_specs:
+            role = spec["role"]
+            if role in existing_roles:
+                continue
+            swarm.contracts.append(
+                AgentContract(
+                    role=role,
+                    objective=spec["objective"],
+                    allowed_tools=list(spec["allowed_tools"]),
+                    acceptance_criteria=list(spec["acceptance_criteria"]),
+                    output_contract=dict(spec["output_contract"]),
+                )
+            )
+            existing_roles.add(role)
+            added_roles.append(role)
+
+        if added_roles:
+            swarm.messages.append(
+                AgentToAgentMessage(
+                    type="broadcast_to_swarm",
+                    from_agent_id=swarm.coordinator_contract_id or swarm.contracts[0].id,
+                    payload={
+                        "message": "specialized_agent_contracts_created",
+                        "source": "start_implementation",
+                        "roles": added_roles,
+                    },
+                    requires_response=False,
+                )
+            )
+
+        return self.store.save(swarm)
+
     def submit_artifact(
         self,
         *,

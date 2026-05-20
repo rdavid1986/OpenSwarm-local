@@ -1910,6 +1910,7 @@ async def experimental_start_implementation(swarm_id: str, body: ExperimentalDAG
         swarm = swarm_orchestrator.store.save(swarm)
         generated_plan = intake_state.get("generated_plan") if isinstance(intake_state, dict) else None
         swarm_orchestrator.ensure_readme_dag(swarm_id=swarm_id, generated_plan=generated_plan)
+        swarm_orchestrator.ensure_specialized_agent_contracts(swarm_id=swarm_id, generated_plan=generated_plan)
 
         result = await experimental_dag_dependency_runner.run_dag_dependencies(swarm_id=swarm_id, body=body)
 
