@@ -1908,7 +1908,8 @@ async def experimental_start_implementation(swarm_id: str, body: ExperimentalDAG
     try:
         _ensure_orchestration_canvas_preview(swarm)
         swarm = swarm_orchestrator.store.save(swarm)
-        swarm_orchestrator.ensure_readme_dag(swarm_id=swarm_id)
+        generated_plan = intake_state.get("generated_plan") if isinstance(intake_state, dict) else None
+        swarm_orchestrator.ensure_readme_dag(swarm_id=swarm_id, generated_plan=generated_plan)
 
         result = await experimental_dag_dependency_runner.run_dag_dependencies(swarm_id=swarm_id, body=body)
 

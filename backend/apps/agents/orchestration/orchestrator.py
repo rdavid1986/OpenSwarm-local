@@ -140,10 +140,20 @@ class SwarmOrchestrator:
         )
         return self.store.save(swarm)
 
-    def ensure_readme_dag(self, *, swarm_id: str) -> SwarmState:
+    def ensure_readme_dag(self, *, swarm_id: str, generated_plan: dict | None = None) -> SwarmState:
         swarm = self.store.load(swarm_id)
         if swarm.tasks:
             return swarm
+
+        plan = generated_plan if isinstance(generated_plan, dict) else {}
+        plan_summary = str(plan.get("summary") or "Plan generated from project intake.")
+        app_type = str(plan.get("app_type") or "app")
+        main_goal = str(plan.get("main_goal") or "document the requested MVP")
+        frontend = str(plan.get("frontend") or "frontend not defined")
+        backend = str(plan.get("backend") or "backend not defined")
+        database = str(plan.get("database") or "database not defined")
+        mvp_priority = str(plan.get("mvp_priority") or "MVP priority not defined")
+        out_of_scope = str(plan.get("out_of_scope") or "out of scope not defined")
 
         create_spec = get_experimental_task_spec("create_readme")
         review_spec = get_experimental_task_spec("review_readme")
@@ -173,18 +183,27 @@ class SwarmOrchestrator:
 
         write_task = TaskNode(
             title=create_spec.title,
-            objective="Create a basic README.md in the workspace using a real write tool.",
+            objective=(
+                "Create a README.md in the workspace using a real write tool. "
+                f"Use the project intake plan as source context: {plan_summary} "
+                f"App type: {app_type}. Main goal: {main_goal}. "
+                f"Stack: {frontend} + {backend} + {database}. "
+                f"MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
+            ),
             assigned_contract_id=worker.id,
         )
         review_task = TaskNode(
             title=review_spec.title,
-            objective="Read README.md with a real read tool and validate the artifact.",
+            objective=(
+                "Read README.md with a real read tool and validate that it reflects the project intake plan, "
+                "including stack, MVP priority, and out-of-scope constraints."
+            ),
             assigned_contract_id=reviewer.id,
             depends_on=[write_task.id],
         )
         consolidate_task = TaskNode(
             title=consolidate_spec.title,
-            objective="Summarize work, artifacts, reviewer result, and evidence for the user.",
+            objective="Summarize work, artifacts, reviewer result, evidence, and claim guard status for the user.",
             assigned_contract_id=coordinator.id,
             depends_on=[review_task.id],
         )
@@ -197,7 +216,12 @@ class SwarmOrchestrator:
             AgentToAgentMessage(
                 type="broadcast_to_swarm",
                 from_agent_id=coordinator.id,
-                payload={"message": "implementation_dag_created", "source": "start_implementation"},
+                payload={
+                    "message": "implementation_dag_created",
+                    "source": "start_implementation",
+                    "generated_plan_used": bool(plan),
+                    "generated_plan_summary": plan_summary,
+                },
                 requires_response=False,
             )
         )
