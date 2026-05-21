@@ -6,6 +6,9 @@ for the mandatory README-review MVP shape. It does not launch sessions yet.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 from backend.apps.agents.orchestration.models import (
     AgentContract,
     AgentToAgentMessage,
@@ -20,6 +23,35 @@ from backend.apps.agents.runtime.experimental_task_type_registry import get_expe
 class SwarmOrchestrator:
     def __init__(self, store: SwarmStore | None = None) -> None:
         self.store = store or swarm_store
+
+    @staticmethod
+    def _slugify_workspace_title(title: str) -> str:
+        normalized = (title or "openswarm-project").strip().lower()
+        replacements = {
+            "á": "a",
+            "é": "e",
+            "í": "i",
+            "ó": "o",
+            "ú": "u",
+            "ü": "u",
+            "ñ": "n",
+        }
+        for source, target in replacements.items():
+            normalized = normalized.replace(source, target)
+        normalized = re.sub(r"[^a-z0-9]+", "-", normalized).strip("-")
+        return (normalized or "openswarm-project")[:72].strip("-") or "openswarm-project"
+
+    def _default_workspace_path(self, swarm: SwarmState) -> str:
+        slug = self._slugify_workspace_title(swarm.title)
+        folder_name = f"{slug}-{swarm.id[:8]}"
+        workspace = Path.home() / ".openswarm" / "workspaces" / folder_name
+        workspace.mkdir(parents=True, exist_ok=True)
+        return str(workspace)
+
+    def _ensure_workspace_path(self, swarm: SwarmState) -> SwarmState:
+        if not swarm.workspace_path:
+            swarm.workspace_path = self._default_workspace_path(swarm)
+        return swarm
 
     def create_swarm(
         self,
@@ -64,6 +96,7 @@ class SwarmOrchestrator:
                     )
                 ],
             )
+            self._ensure_workspace_path(swarm)
             return self.store.save(swarm)
 
         plan_summary = f"Initial task request: {prompt}"
@@ -131,14 +164,14 @@ class SwarmOrchestrator:
             role="DocumentationAgent",
             objective="Create or update documentation artifacts using real filesystem tools.",
             allowed_tools=list(create_spec.allowed_tools),
-            acceptance_criteria=["README.md exists in the workspace.", "Artifact path is submitted."],
+            acceptance_criteria=["Implementation brief README.md exists in the workspace.", "Artifact path is submitted."],
             output_contract=dict(create_spec.output_contract),
         )
         reviewer = AgentContract(
             role="ReviewerAgent",
             objective="Validate submitted artifacts by reading them with real tools and reporting evidence.",
             allowed_tools=list(review_spec.allowed_tools),
-            acceptance_criteria=["Reviewer reads README.md.", "Reviewer returns approval or rejection with evidence."],
+            acceptance_criteria=["Reviewer reads the implementation brief README.md.", "Reviewer returns approval or rejection with evidence."],
             output_contract=dict(review_spec.output_contract),
         )
         tester = AgentContract(
@@ -249,12 +282,14 @@ class SwarmOrchestrator:
                 )
             ],
         )
+        self._ensure_workspace_path(swarm)
         return self.store.save(swarm)
 
     def ensure_readme_dag(self, *, swarm_id: str, generated_plan: dict | None = None) -> SwarmState:
         swarm = self.store.load(swarm_id)
+        self._ensure_workspace_path(swarm)
         if swarm.tasks:
-            return swarm
+            return self.store.save(swarm)
 
         plan = generated_plan if isinstance(generated_plan, dict) else {}
         plan_summary = str(plan.get("summary") or "Plan generated from project intake.")
@@ -314,14 +349,14 @@ class SwarmOrchestrator:
             role="DocumentationAgent",
             objective="Create or update documentation artifacts using real filesystem tools.",
             allowed_tools=list(create_spec.allowed_tools),
-            acceptance_criteria=["README.md exists in the workspace.", "Artifact path is submitted."],
+            acceptance_criteria=["Implementation brief README.md exists in the workspace.", "Artifact path is submitted."],
             output_contract=dict(create_spec.output_contract),
         )
         reviewer = AgentContract(
             role="ReviewerAgent",
             objective="Validate submitted artifacts by reading them with real tools and reporting evidence.",
             allowed_tools=list(review_spec.allowed_tools),
-            acceptance_criteria=["Reviewer reads README.md.", "Reviewer returns approval or rejection with evidence."],
+            acceptance_criteria=["Reviewer reads the implementation brief README.md.", "Reviewer returns approval or rejection with evidence."],
             output_contract=dict(review_spec.output_contract),
         )
         tester = AgentContract(
@@ -376,7 +411,7 @@ class SwarmOrchestrator:
         write_task = TaskNode(
             title=create_spec.title,
             objective=(
-                "Create a README.md in the workspace using a real write tool. "
+                "Create an implementation brief README.md in the workspace using a real write tool. This is documentation only; do not claim that frontend/backend app files were implemented. "
                 f"Use the project intake plan as source context: {plan_summary} "
                 f"App type: {app_type}. Main goal: {main_goal}. "
                 f"Stack: {frontend} + {backend} + {database}. "
@@ -388,7 +423,7 @@ class SwarmOrchestrator:
         review_task = TaskNode(
             title=review_spec.title,
             objective=(
-                "Read README.md with a real read tool and validate that it reflects the project intake plan, "
+                "Read the implementation brief README.md with a real read tool and validate that it reflects the project intake plan, "
                 "including stack, MVP priority, and out-of-scope constraints."
             ),
             assigned_contract_id=reviewer.id,

@@ -155,14 +155,14 @@ TASK_TYPE_REGISTRY: dict[ExperimentalTaskType, ExperimentalTaskTypeSpec] = {
     ),
     "create_readme": ExperimentalTaskTypeSpec(
         type="create_readme",
-        title="Create README.md",
+        title="Create implementation brief README.md",
         allowed_tools=["Read", "Write", "Edit", "Diff", "SearchFiles", "SearchText"],
         output_contract={"submit_artifact": {"path": "README.md", "kind": "documentation"}},
         matcher=_matches_create_readme,
     ),
     "review_readme": ExperimentalTaskTypeSpec(
         type="review_readme",
-        title="Review README.md",
+        title="Review implementation brief README.md",
         allowed_tools=["Read", "SearchFiles", "SearchText"],
         output_contract={"review_result": {"status": "approved|rejected", "artifact_path": "README.md", "evidence": []}},
         matcher=_matches_review_readme,

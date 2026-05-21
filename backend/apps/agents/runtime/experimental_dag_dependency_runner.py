@@ -7,6 +7,7 @@ only executes the known safe README DAG task types.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -262,6 +263,44 @@ class ExperimentalDAGDependencyRunner:
             task=task,
             task_type="validation_execute",
         )
+
+        workspace = Path(workspace_path).expanduser().resolve()
+        if not (workspace / ".git").exists():
+            readme = workspace / "README.md"
+            readme_exists = readme.exists() and readme.is_file()
+            readme_bytes = readme.stat().st_size if readme_exists else 0
+            passed = readme_exists and readme_bytes > 0
+            validation_result = {
+                "status": "passed" if passed else "failed",
+                "commands": [],
+                "checks": [
+                    {
+                        "kind": "workspace_artifact_exists",
+                        "path": "README.md",
+                        "ok": readme_exists,
+                        "bytes": readme_bytes,
+                    }
+                ],
+                "evidence": ["workspace_artifact_validated"] if passed else [],
+                "note": "Workspace is not a Git repository; validation used artifact existence/content checks instead of git diff --check.",
+            }
+            task.validations.append(validation_result)
+            if passed:
+                task.evidence.append({
+                    "kind": "workspace_artifact_validated",
+                    "path": "README.md",
+                    "status": "passed",
+                    "created_at": _now_iso(),
+                })
+            else:
+                task.errors.append({
+                    "error": "workspace_artifact_validation_failed",
+                    "path": "README.md",
+                    "workspace_path": str(workspace),
+                })
+            task.status = "completed" if passed else "failed"
+            task.updated_at = _now_iso()
+            return validation_result
 
         history: list[dict[str, Any]] = []
         command = "git diff --check"

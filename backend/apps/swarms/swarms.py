@@ -168,6 +168,35 @@ def _normalize_question_text(user_message: str) -> str:
 def _classify_chat_question(user_message: str) -> str:
     normalized = _normalize_question_text(user_message)
 
+    implementation_phrases = (
+        "haceme una app",
+        "hacer una app",
+        "hagamos una app",
+        "armemos una app",
+        "crear una app",
+        "crea una app",
+        "crea un app",
+        "creá una app",
+        "creá un app",
+        "crear un proyecto",
+        "crea un proyecto",
+        "creá un proyecto",
+        "haceme una web",
+        "hacer una web",
+        "hagamos una web",
+        "armemos una web",
+        "crear una web",
+        "crea una web",
+        "creá una web",
+        "implementa",
+        "implementá",
+        "empeza a construir",
+        "empezá a construir",
+    )
+
+    if any(phrase in normalized for phrase in implementation_phrases):
+        return "implementation_request"
+
     if _is_app_question(user_message):
         return "app_identity"
 
@@ -1332,6 +1361,27 @@ def _enrich_orchestration_canvas_with_evidence(swarm) -> None:
     final_status = str(final_result.get("status") or getattr(swarm, "status", "") or "") if isinstance(final_result, dict) else str(getattr(swarm, "status", "") or "")
     claim_status = str(claim_guard.get("status") or "") if isinstance(claim_guard, dict) else ""
 
+    task_status_by_canvas_node: dict[str, str] = {}
+    task_title_to_canvas_node = {
+        "Execute architecture plan": "architecture",
+        "Execute frontend plan": "frontend_plan",
+        "Execute backend plan": "backend_plan",
+        "Execute security review": "security_review",
+        "Create implementation brief README.md": "create_worker",
+        "Create README.md": "create_worker",
+        "Review implementation brief README.md": "reviewer",
+        "Review README.md": "reviewer",
+        "Execute safe validation checks": "validation",
+        "Consolidate final evidence": "consolidator",
+    }
+    for task in getattr(swarm, "tasks", []) or []:
+        task_title = str(getattr(task, "title", "") or "")
+        canvas_node_id = task_title_to_canvas_node.get(task_title)
+        if canvas_node_id:
+            task_status_by_canvas_node[canvas_node_id] = str(getattr(task, "status", "") or "")
+    if getattr(swarm, "tasks", None):
+        task_status_by_canvas_node["plan"] = "completed"
+
     next_nodes: list[dict[str, Any]] = []
     changed = False
     for node in nodes:
@@ -1340,6 +1390,10 @@ def _enrich_orchestration_canvas_with_evidence(swarm) -> None:
             continue
         next_node = dict(node)
         node_id = str(next_node.get("id") or "")
+
+        task_status = task_status_by_canvas_node.get(node_id)
+        if task_status:
+            next_node["status"] = task_status
 
         if node_id == "create_worker" and artifact_ref:
             next_node["artifact_ref"] = artifact_ref

@@ -86,7 +86,7 @@ class ExperimentalDAGConsolidator:
         validation_result = validation.validations[-1] if validation.validations else {}
         final_result = {
             "status": "completed",
-            "summary": "Architecture plan was generated, README.md was created by the Worker, approved by the Reviewer, and validated with SafeShell evidence.",
+            "summary": "Se generaron planes de arquitectura, frontend, backend y seguridad. Se creó un README de implementación preliminar y fue revisado/validado con evidencia. No se crearon archivos reales de frontend/backend todavía.",
             "artifact_refs": [artifact.get("id")],
             "architecture_plan_result": {
                 "status": architecture_result.get("status"),
@@ -326,10 +326,10 @@ class ExperimentalDAGConsolidator:
             "status": "verified" if all(checks.values()) else "unverified",
             "checks": checks,
             "supported_claims": [
-                "README.md artifact exists and is referenced by final_result.",
-                "Reviewer approved the referenced README.md artifact.",
-                "Worker and Reviewer tasks completed.",
-                "Write/Edit and Read tool history supports the create-review claim.",
+                "Implementation brief README.md artifact exists and is referenced by final_result.",
+                "Reviewer approved the referenced implementation brief artifact.",
+                "Documentation and Reviewer tasks completed.",
+                "Write/Edit and Read tool history supports the implementation brief create-review claim.",
             ],
             "unsupported_claims": [] if all(checks.values()) else [name for name, ok in checks.items() if not ok],
         }
