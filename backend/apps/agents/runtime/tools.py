@@ -314,14 +314,21 @@ class ToolRuntime:
 
         started_at = _now_iso()
         resolution = self.resolve_tool(call.name, active_mcps=context.active_mcps)
+        effective_context = replace(
+            context,
+            metadata={
+                **(context.metadata or {}),
+                "tool_path": (call.input or {}).get("path"),
+            },
+        )
         decision = self.policies.evaluate_tool_call(
             resolution=resolution,
-            context=context,
+            context=effective_context,
             requested_tool_name=call.name,
         )
-        decision_metadata = self._policy_metadata(context, decision)
+        decision_metadata = self._policy_metadata(effective_context, decision)
         if not decision.allowed:
-            metadata = {**self._metadata(context), **decision_metadata}
+            metadata = {**self._metadata(effective_context), **decision_metadata}
             if decision.requires_approval:
                 approval_request = self.approvals.create_request(
                     tool_name=decision.tool_name or call.name,

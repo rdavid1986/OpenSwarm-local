@@ -83,6 +83,21 @@ class PolicyRuntime:
                 tool_name=spec_name,
             )
 
+        path_scope = metadata.get("path_scope") or {}
+        if spec_name in {"Write", "Edit", "Diff"} and path_scope:
+            relative_path = metadata.get("tool_path")
+            if not self._is_path_allowed_by_scope(
+                relative_path,
+                allowed_paths=path_scope.get("allowed_paths"),
+                forbidden_paths=path_scope.get("forbidden_paths"),
+            ):
+                return PolicyDecision(
+                    status="denied",
+                    allowed=False,
+                    reason=f"tool path is outside allowed scope for {task_type or 'unknown task'}: {relative_path}",
+                    tool_name=spec_name,
+                )
+
         if getattr(spec, "policy", None) == "deny":
             return PolicyDecision(
                 status="denied",
@@ -132,6 +147,48 @@ class PolicyRuntime:
             return True
         allowed = set(allowed_tools or [])
         return bool(spec_name in allowed or (spec_raw_name or spec_name) in allowed)
+
+    @staticmethod
+    def _is_path_allowed_by_scope(relative_path: Any, *, allowed_paths: Any = None, forbidden_paths: Any = None) -> bool:
+        if not isinstance(relative_path, str) or not relative_path.strip():
+            return False
+
+        raw_path = relative_path.replace("\\", "/").strip()
+        if (
+            raw_path.startswith("/")
+            or raw_path.startswith("../")
+            or "/../" in raw_path
+            or raw_path == ".."
+            or (len(raw_path) >= 3 and raw_path[1:3] == ":/")
+        ):
+            return False
+
+        normalized_path = str(Path(raw_path).as_posix()).strip("./")
+        if not normalized_path:
+            return False
+
+        normalized_allowed = [
+            str(Path(str(path).replace("\\", "/")).as_posix()).strip("./")
+            for path in (allowed_paths or [])
+            if str(path).strip()
+        ]
+        normalized_forbidden = [
+            str(Path(str(path).replace("\\", "/")).as_posix()).strip("./")
+            for path in (forbidden_paths or [])
+            if str(path).strip()
+        ]
+
+        for forbidden in normalized_forbidden:
+            if normalized_path == forbidden or normalized_path.startswith(f"{forbidden}/"):
+                return False
+
+        if not normalized_allowed:
+            return True
+
+        return any(
+            normalized_path == allowed or normalized_path.startswith(f"{allowed}/")
+            for allowed in normalized_allowed
+        )
 
     def _validate_resume_approval(self, *, context: Any, spec_name: str | None, spec_raw_name: str | None) -> str | None:
         metadata = getattr(context, "metadata", None) or {}

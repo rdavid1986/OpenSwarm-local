@@ -23,8 +23,12 @@ ExperimentalTaskType = Literal[
     "architecture_plan_execute",
     "frontend_plan_draft",
     "frontend_plan_execute",
+    "frontend_implementation_draft",
+    "frontend_implementation_execute",
     "backend_plan_draft",
     "backend_plan_execute",
+    "backend_implementation_draft",
+    "backend_implementation_execute",
     "validation_plan_draft",
     "security_review_draft",
     "security_review_execute",
@@ -275,6 +279,78 @@ TASK_TYPE_REGISTRY: dict[ExperimentalTaskType, ExperimentalTaskTypeSpec] = {
         },
         allow_idempotent_skip=False,
         matcher=_matches_backend_plan_execute,
+    ),
+    "frontend_implementation_draft": ExperimentalTaskTypeSpec(
+        type="frontend_implementation_draft",
+        title="Draft controlled frontend implementation",
+        allowed_tools=[],
+        output_contract={
+            "frontend_implementation_plan": {
+                "status": "draft|ready",
+                "summary": "string",
+                "allowed_paths": ["frontend/src"],
+                "forbidden_paths": ["backend", "electron", "frontend/package.json", "frontend/package-lock.json"],
+                "proposed_files": [],
+                "requires_approval": True,
+                "executes": False,
+            }
+        },
+        allow_idempotent_skip=False,
+        matcher=None,
+    ),
+    "frontend_implementation_execute": ExperimentalTaskTypeSpec(
+        type="frontend_implementation_execute",
+        title="Execute controlled frontend implementation",
+        allowed_tools=[],
+        output_contract={
+            "frontend_implementation_result": {
+                "status": "blocked_until_enabled",
+                "summary": "string",
+                "files_changed": [],
+                "diff_summary": [],
+                "evidence": [],
+                "executes": False,
+                "activation_requirement": "Enable scoped write/edit tools and path guard before execution.",
+            }
+        },
+        allow_idempotent_skip=False,
+        matcher=None,
+    ),
+    "backend_implementation_draft": ExperimentalTaskTypeSpec(
+        type="backend_implementation_draft",
+        title="Draft controlled backend implementation",
+        allowed_tools=[],
+        output_contract={
+            "backend_implementation_plan": {
+                "status": "draft|ready",
+                "summary": "string",
+                "allowed_paths": ["backend/apps/agents"],
+                "forbidden_paths": ["frontend", "electron", "backend/requirements.txt", "pyproject.toml"],
+                "proposed_files": [],
+                "requires_approval": True,
+                "executes": False,
+            }
+        },
+        allow_idempotent_skip=False,
+        matcher=None,
+    ),
+    "backend_implementation_execute": ExperimentalTaskTypeSpec(
+        type="backend_implementation_execute",
+        title="Execute controlled backend implementation",
+        allowed_tools=[],
+        output_contract={
+            "backend_implementation_result": {
+                "status": "blocked_until_enabled",
+                "summary": "string",
+                "files_changed": [],
+                "diff_summary": [],
+                "evidence": [],
+                "executes": False,
+                "activation_requirement": "Enable scoped write/edit tools and path guard before execution.",
+            }
+        },
+        allow_idempotent_skip=False,
+        matcher=None,
     ),
     "validation_plan_draft": ExperimentalTaskTypeSpec(
         type="validation_plan_draft",
