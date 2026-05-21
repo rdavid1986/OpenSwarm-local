@@ -20,6 +20,7 @@ ExperimentalTaskType = Literal[
     "consolidate_final",
     "inspect_readme",
     "architecture_plan_draft",
+    "architecture_plan_execute",
     "frontend_plan_draft",
     "backend_plan_draft",
     "validation_plan_draft",
@@ -86,8 +87,18 @@ def _matches_validation_execute(task: TaskNode) -> bool:
     return "execute safe validation" in title or "safe validation checks" in title
 
 
+def _matches_architecture_plan_execute(task: TaskNode) -> bool:
+    title = task.title.lower()
+    return "architecture" in title and "plan" in title and any(word in title for word in ("execute", "create", "generate", "build"))
+
+
 def _matches_create_readme(task: TaskNode) -> bool:
+    title = task.title.lower()
+    if "readme" in title and any(word in title for word in ("create", "crea")):
+        return True
     text = _task_text(task)
+    if "architecture" in text and "plan" in text:
+        return False
     return "readme" in text and any(word in text for word in ("create", "crea"))
 
 
@@ -162,6 +173,22 @@ TASK_TYPE_REGISTRY: dict[ExperimentalTaskType, ExperimentalTaskTypeSpec] = {
         },
         allow_idempotent_skip=False,
         matcher=None,
+    ),
+    "architecture_plan_execute": ExperimentalTaskTypeSpec(
+        type="architecture_plan_execute",
+        title="Execute architecture plan",
+        allowed_tools=[],
+        output_contract={
+            "architecture_plan": {
+                "status": "ready",
+                "summary": "string",
+                "components": [],
+                "constraints": [],
+                "risks": [],
+            }
+        },
+        allow_idempotent_skip=False,
+        matcher=_matches_architecture_plan_execute,
     ),
     "frontend_plan_draft": ExperimentalTaskTypeSpec(
         type="frontend_plan_draft",
@@ -367,6 +394,9 @@ def validate_experimental_task_completion(
         if planner_agent_runtime_enabled:
             return any(item.get("kind") == "planner_result" and item.get("status") == "validated" for item in task.evidence)
         return any(item.get("kind") == "plan_reused" for item in task.evidence)
+
+    if task_type == "architecture_plan_execute":
+        return any(item.get("kind") == "architecture_plan_result" and item.get("status") == "ready" for item in task.evidence)
 
     if task_type == "create_readme":
         return readme_artifact_finder(swarm, task.id) is not None

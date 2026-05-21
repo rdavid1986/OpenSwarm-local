@@ -52,11 +52,12 @@ class ExperimentalDAGConsolidator:
             )
 
         swarm = self.store.load(swarm_id)
-        worker = self._find_task_by_type(swarm, "create_readme")
+        architecture = self._find_task_by_type(swarm, "architecture_plan_execute")
+        worker = self._find_task_by_type(swarm, "create_readme", depends_on=architecture.id)
         reviewer = self._find_task_by_type(swarm, "review_readme", depends_on=worker.id)
         validation = self._find_task_by_type(swarm, "validation_execute", depends_on=reviewer.id)
         consolidate = self._find_task_by_type(swarm, "consolidate_final")
-        errors = self._validate_ready(swarm, worker, reviewer, validation)
+        errors = self._validate_ready(swarm, architecture, worker, reviewer, validation)
         if errors:
             return self._response(swarm, status="not_ready", errors=errors, ok=False)
 
@@ -64,6 +65,7 @@ class ExperimentalDAGConsolidator:
         review_result = self._find_approved_review_result(reviewer, artifact)
         final_evidence = self._build_final_evidence(
             swarm=swarm,
+            architecture=architecture,
             worker=worker,
             reviewer=reviewer,
             consolidate=consolidate,
@@ -71,11 +73,16 @@ class ExperimentalDAGConsolidator:
             review_result=review_result,
             validation=validation,
         )
+        architecture_result = self._find_architecture_plan_result(architecture)
         validation_result = validation.validations[-1] if validation.validations else {}
         final_result = {
             "status": "completed",
-            "summary": "README.md was created by the Worker, approved by the Reviewer, and validated with SafeShell evidence.",
+            "summary": "Architecture plan was generated, README.md was created by the Worker, approved by the Reviewer, and validated with SafeShell evidence.",
             "artifact_refs": [artifact.get("id")],
+            "architecture_plan_result": {
+                "status": architecture_result.get("status"),
+                "architecture_plan": architecture_result.get("architecture_plan") or {},
+            },
             "review_result": {
                 "status": review_result.get("status"),
                 "artifact_path": review_result.get("artifact_path"),
@@ -86,7 +93,7 @@ class ExperimentalDAGConsolidator:
                 "commands": validation_result.get("commands") or [],
                 "evidence": validation_result.get("evidence") or [],
             },
-            "completed_tasks": [worker.id, reviewer.id, validation.id, consolidate.id],
+            "completed_tasks": [architecture.id, worker.id, reviewer.id, validation.id, consolidate.id],
             "created_at": _now_iso(),
         }
         final_result["claim_guard"] = self._build_claim_guard(
@@ -110,8 +117,12 @@ class ExperimentalDAGConsolidator:
         self.store.save(swarm)
         return self._response(swarm, status="completed", ok=True)
 
-    def _validate_ready(self, swarm: SwarmState, worker: TaskNode, reviewer: TaskNode, validation: TaskNode) -> list[dict[str, Any]]:
+    def _validate_ready(self, swarm: SwarmState, architecture: TaskNode, worker: TaskNode, reviewer: TaskNode, validation: TaskNode) -> list[dict[str, Any]]:
         errors: list[dict[str, Any]] = []
+        if architecture.status != "completed":
+            errors.append({"error": "architecture_not_completed", "task_id": architecture.id, "status": architecture.status})
+        if not self._find_architecture_plan_result(architecture):
+            errors.append({"error": "architecture_plan_result_missing", "task_id": architecture.id})
         if worker.status != "completed":
             errors.append({"error": "worker_not_completed", "task_id": worker.id, "status": worker.status})
         if reviewer.status != "completed":
@@ -131,6 +142,7 @@ class ExperimentalDAGConsolidator:
     def _build_final_evidence(
         *,
         swarm: SwarmState,
+        architecture: TaskNode,
         worker: TaskNode,
         reviewer: TaskNode,
         consolidate: TaskNode,
@@ -138,7 +150,13 @@ class ExperimentalDAGConsolidator:
         review_result: dict[str, Any],
         validation: TaskNode,
     ) -> list[dict[str, Any]]:
+        architecture_result = ExperimentalDAGConsolidator._find_architecture_plan_result(architecture) or {}
         return [
+            {
+                "kind": "architecture_plan_result",
+                "task_id": architecture.id,
+                "architecture_plan_result": architecture_result,
+            },
             {
                 "kind": "artifact",
                 "task_id": worker.id,
@@ -157,6 +175,7 @@ class ExperimentalDAGConsolidator:
             {
                 "kind": "task_status",
                 "tasks": [
+                    {"id": architecture.id, "title": architecture.title, "status": architecture.status},
                     {"id": worker.id, "title": worker.title, "status": worker.status},
                     {"id": reviewer.id, "title": reviewer.title, "status": reviewer.status},
                     {"id": validation.id, "title": validation.title, "status": validation.status},
@@ -175,7 +194,7 @@ class ExperimentalDAGConsolidator:
                         "path": (entry.get("result") or {}).get("path"),
                     }
                     for entry in swarm.tool_history
-                    if entry.get("task_id") in {worker.id, reviewer.id, validation.id}
+                    if entry.get("task_id") in {architecture.id, worker.id, reviewer.id, validation.id}
                 ],
             },
         ]
@@ -296,6 +315,18 @@ class ExperimentalDAGConsolidator:
             except ValueError:
                 continue
         raise FileNotFoundError(f"Task not found for type: {task_type}")
+
+    @staticmethod
+    def _find_architecture_plan_result(architecture: TaskNode) -> dict[str, Any] | None:
+        return next(
+            (
+                item
+                for item in architecture.evidence
+                if item.get("kind") == "architecture_plan_result" and item.get("status") == "ready"
+            ),
+            None,
+        )
+
 
     @staticmethod
     def _find_readme_artifact(swarm: SwarmState, worker_task_id: str) -> dict[str, Any] | None:

@@ -1,0 +1,55 @@
+from backend.apps.agents.orchestration.models import SwarmState
+from backend.apps.agents.orchestration.orchestrator import SwarmOrchestrator
+from backend.apps.agents.runtime.experimental_task_type_registry import classify_experimental_task
+
+
+def test_readme_dag_includes_architecture_plan_execute_before_readme():
+    orchestrator = SwarmOrchestrator()
+    swarm = SwarmState(
+        id="swarm-architecture-dag",
+        title="Architecture DAG test",
+        user_prompt="Create a project README",
+    )
+    orchestrator.store.save(swarm)
+
+    updated = orchestrator.ensure_readme_dag(
+        swarm_id=swarm.id,
+        generated_plan={
+            "summary": "Build a local-first app",
+            "app_type": "web app",
+            "main_goal": "test goal",
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "SQLite",
+            "mvp_priority": "README MVP",
+            "out_of_scope": "payments",
+        },
+    )
+
+    task_types = [classify_experimental_task(task) for task in updated.tasks]
+    assert task_types == [
+        "architecture_plan_execute",
+        "create_readme",
+        "review_readme",
+        "validation_execute",
+        "consolidate_final",
+    ]
+
+    architecture_task = updated.tasks[0]
+    write_task = updated.tasks[1]
+    review_task = updated.tasks[2]
+    validation_task = updated.tasks[3]
+    consolidate_task = updated.tasks[4]
+
+    assert write_task.depends_on == [architecture_task.id]
+    assert review_task.depends_on == [write_task.id]
+    assert validation_task.depends_on == [review_task.id]
+    assert consolidate_task.depends_on == [validation_task.id]
+
+    assert [contract.role for contract in updated.contracts] == [
+        "CoordinatorAgent",
+        "ArchitectAgent",
+        "DocumentationAgent",
+        "ReviewerAgent",
+        "TesterAgent",
+    ]

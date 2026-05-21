@@ -63,6 +63,7 @@ class SwarmOrchestrator:
             return self.store.save(swarm)
 
         plan_spec = get_experimental_task_spec("plan_reused")
+        architecture_spec = get_experimental_task_spec("architecture_plan_execute")
         create_spec = get_experimental_task_spec("create_readme")
         review_spec = get_experimental_task_spec("review_readme")
         consolidate_spec = get_experimental_task_spec("consolidate_final")
@@ -80,6 +81,13 @@ class SwarmOrchestrator:
             allowed_tools=list(plan_spec.allowed_tools),
             acceptance_criteria=["Tasks have clear dependencies and acceptance criteria."],
             output_contract=dict(plan_spec.output_contract),
+        )
+        architect = AgentContract(
+            role="ArchitectAgent",
+            objective="Generate a safe architecture plan from the project intake without using tools.",
+            allowed_tools=list(architecture_spec.allowed_tools),
+            acceptance_criteria=["Architecture plan is ready.", "Architecture output includes components, constraints, and risks."],
+            output_contract=dict(architecture_spec.output_contract),
         )
         worker = AgentContract(
             role="DocumentationAgent",
@@ -100,6 +108,17 @@ class SwarmOrchestrator:
             title=plan_spec.title,
             objective="Create or reuse a minimal plan for the requested work.",
             assigned_contract_id=planner.id,
+        )
+        architecture_task = TaskNode(
+            title=architecture_spec.title,
+            objective=(
+                "Generate an architecture plan from the project intake before creating artifacts. "
+                f"Use the intake context: {plan_summary} "
+                f"App type: {app_type}. Main goal: {main_goal}. "
+                f"Stack: {frontend} + {backend} + {database}. "
+                f"MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
+            ),
+            assigned_contract_id=architect.id,
         )
         write_task = TaskNode(
             title=create_spec.title,
@@ -155,6 +174,7 @@ class SwarmOrchestrator:
         mvp_priority = str(plan.get("mvp_priority") or "MVP priority not defined")
         out_of_scope = str(plan.get("out_of_scope") or "out of scope not defined")
 
+        architecture_spec = get_experimental_task_spec("architecture_plan_execute")
         create_spec = get_experimental_task_spec("create_readme")
         review_spec = get_experimental_task_spec("review_readme")
         consolidate_spec = get_experimental_task_spec("consolidate_final")
@@ -166,6 +186,13 @@ class SwarmOrchestrator:
             allowed_tools=list(consolidate_spec.allowed_tools),
             acceptance_criteria=["Every completed task has evidence.", "Final result cites artifacts."],
             output_contract=dict(consolidate_spec.output_contract),
+        )
+        architect = AgentContract(
+            role="ArchitectAgent",
+            objective="Generate a safe architecture plan from the project intake without using tools.",
+            allowed_tools=list(architecture_spec.allowed_tools),
+            acceptance_criteria=["Architecture plan is ready.", "Architecture output includes components, constraints, and risks."],
+            output_contract=dict(architecture_spec.output_contract),
         )
         worker = AgentContract(
             role="DocumentationAgent",
@@ -189,6 +216,17 @@ class SwarmOrchestrator:
             output_contract=dict(validation_spec.output_contract),
         )
 
+        architecture_task = TaskNode(
+            title=architecture_spec.title,
+            objective=(
+                "Generate an architecture plan from the project intake before creating artifacts. "
+                f"Use the intake context: {plan_summary} "
+                f"App type: {app_type}. Main goal: {main_goal}. "
+                f"Stack: {frontend} + {backend} + {database}. "
+                f"MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
+            ),
+            assigned_contract_id=architect.id,
+        )
         write_task = TaskNode(
             title=create_spec.title,
             objective=(
@@ -199,6 +237,7 @@ class SwarmOrchestrator:
                 f"MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
             ),
             assigned_contract_id=worker.id,
+            depends_on=[architecture_task.id],
         )
         review_task = TaskNode(
             title=review_spec.title,
@@ -224,8 +263,8 @@ class SwarmOrchestrator:
 
         swarm.intent = "task"
         swarm.coordinator_contract_id = coordinator.id
-        swarm.contracts.extend([coordinator, worker, reviewer, tester])
-        swarm.tasks.extend([write_task, review_task, validation_task, consolidate_task])
+        swarm.contracts.extend([coordinator, architect, worker, reviewer, tester])
+        swarm.tasks.extend([architecture_task, write_task, review_task, validation_task, consolidate_task])
         swarm.messages.append(
             AgentToAgentMessage(
                 type="broadcast_to_swarm",

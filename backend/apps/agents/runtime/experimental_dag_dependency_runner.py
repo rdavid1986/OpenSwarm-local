@@ -76,6 +76,43 @@ class ExperimentalDAGDependencyRunner:
         self.consolidator = consolidator or ExperimentalDAGConsolidator(store=self.store)
         self.planner_adapter_factory = planner_adapter_factory or getattr(self.chain_runner, "adapter_factory", OllamaAdapter)
 
+    def _run_architecture_plan_execute_task(
+        self,
+        *,
+        task: TaskNode,
+        swarm: SwarmState,
+    ) -> dict[str, Any]:
+        architecture_plan = {
+            "status": "ready",
+            "summary": "Architecture plan generated from the current swarm intake context.",
+            "components": [
+                {"name": "orchestrator", "responsibility": "Coordinate task execution and state transitions."},
+                {"name": "agents", "responsibility": "Execute specialized responsibilities through controlled task types."},
+                {"name": "evidence", "responsibility": "Record verifiable outputs for review and final consolidation."},
+                {"name": "validation", "responsibility": "Run safe validation checks through approved execution paths."},
+            ],
+            "constraints": [
+                "No shell access is granted by architecture_plan_execute.",
+                "No files are written by architecture_plan_execute.",
+                "Frontend and backend implementation remain inactive in this phase.",
+            ],
+            "risks": [
+                "Architecture output is generated from available swarm context only.",
+                "Detailed implementation tasks require later specialized task types.",
+            ],
+        }
+        result = {
+            "kind": "architecture_plan_result",
+            "status": "ready",
+            "architecture_plan": architecture_plan,
+            "created_at": _now_iso(),
+        }
+        task.evidence.append(result)
+        task.status = "completed"
+        task.updated_at = _now_iso()
+        return result
+
+
     def _run_validation_execute_task(
         self,
         *,
@@ -181,6 +218,18 @@ class ExperimentalDAGDependencyRunner:
                     self._mark_plan_reused(swarm, current)
                     execution_order[-1]["action"] = "marked_reused"
                     self._trace_event(swarm_id, "task_completed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": "plan_reused"})
+                continue
+
+            if task_type == "architecture_plan_execute":
+                current.status = "running"
+                self.store.save(swarm)
+                architecture_result = self._run_architecture_plan_execute_task(
+                    task=current,
+                    swarm=swarm,
+                )
+                self.store.save(swarm)
+                self._trace_event(swarm_id, "architecture_plan_completed", task_id=current.id, payload=architecture_result)
+                self._trace_event(swarm_id, "task_completed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": "ready"})
                 continue
 
             if task_type == "create_readme":
