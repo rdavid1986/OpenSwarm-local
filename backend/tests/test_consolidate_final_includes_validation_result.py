@@ -86,6 +86,29 @@ def test_consolidate_final_includes_validation_result():
         }
     )
 
+    security = TaskNode(
+        id="task-security",
+        title="Execute security review",
+        description="Generate security review",
+        objective="Generate security review",
+        assigned_agent_id="security",
+        depends_on=[backend.id],
+        status="completed",
+    )
+    security.evidence.append(
+        {
+            "kind": "security_review_result",
+            "status": "ready",
+            "security_review": {
+                "status": "ready",
+                "summary": "Security review generated",
+                "findings": [],
+                "constraints": [],
+                "risks": [],
+            },
+        }
+    )
+
     worker = TaskNode(
         id="task-worker",
         title="Create README",
@@ -93,7 +116,7 @@ def test_consolidate_final_includes_validation_result():
         objective="Create README.md",
         task_type="create_readme",
         assigned_agent_id="worker",
-        depends_on=[backend.id],
+        depends_on=[security.id],
         status="completed",
     )
     reviewer = TaskNode(
@@ -159,12 +182,13 @@ def test_consolidate_final_includes_validation_result():
             AgentContract(agent_id="architect", role="ArchitectAgent", objective="Generate architecture plan"),
             AgentContract(agent_id="frontend", role="FrontendAgent", objective="Generate frontend plan"),
             AgentContract(agent_id="backend", role="BackendAgent", objective="Generate backend plan"),
+            AgentContract(agent_id="security", role="SecurityAgent", objective="Generate security review"),
             AgentContract(agent_id="worker", role="DocumentationAgent", objective="Create README.md"),
             AgentContract(agent_id="reviewer", role="ReviewerAgent", objective="Review README.md"),
             AgentContract(agent_id="tester", role="TesterAgent", objective="Execute safe validation checks"),
             AgentContract(agent_id="coordinator", role="CoordinatorAgent", objective="Consolidate final result"),
         ],
-        tasks=[architecture, frontend, backend, worker, reviewer, validation, consolidate],
+        tasks=[architecture, frontend, backend, security, worker, reviewer, validation, consolidate],
         artifacts=[artifact],
         tool_history=[
             {"tool": "Write", "task_id": worker.id, "status": "completed", "ok": True, "result": {"path": "README.md"}},
@@ -180,17 +204,20 @@ def test_consolidate_final_includes_validation_result():
     assert result.final_result["architecture_plan_result"]["status"] == "ready"
     assert result.final_result["frontend_plan_result"]["status"] == "ready"
     assert result.final_result["backend_plan_result"]["status"] == "ready"
+    assert result.final_result["security_review_result"]["status"] == "ready"
     assert result.final_result["validation_result"]["status"] == "passed"
     assert result.final_result["validation_result"]["commands"][0]["command"] == "python -m py_compile ok.py"
     assert architecture.id in result.final_result["completed_tasks"]
     assert frontend.id in result.final_result["completed_tasks"]
     assert backend.id in result.final_result["completed_tasks"]
+    assert security.id in result.final_result["completed_tasks"]
     assert validation.id in result.final_result["completed_tasks"]
 
     evidence_kinds = [item.get("kind") for item in result.final_evidence]
     assert "architecture_plan_result" in evidence_kinds
     assert "frontend_plan_result" in evidence_kinds
     assert "backend_plan_result" in evidence_kinds
+    assert "security_review_result" in evidence_kinds
     assert "validation_result" in evidence_kinds
 
     tool_items = next(item for item in result.final_evidence if item.get("kind") == "tool_history_summary")

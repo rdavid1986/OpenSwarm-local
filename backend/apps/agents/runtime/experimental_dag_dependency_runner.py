@@ -199,6 +199,54 @@ class ExperimentalDAGDependencyRunner:
         return result
 
 
+    def _run_security_review_execute_task(
+        self,
+        *,
+        task: TaskNode,
+        swarm: SwarmState,
+    ) -> dict[str, Any]:
+        security_review = {
+            "status": "ready",
+            "summary": "Security review generated from architecture, frontend plan, backend plan, and project intake context.",
+            "findings": [
+                {
+                    "area": "tool_policy",
+                    "severity": "medium",
+                    "summary": "Executable planning tasks currently run without tools, which keeps implementation risk low.",
+                },
+                {
+                    "area": "dependency_control",
+                    "severity": "medium",
+                    "summary": "Missing dependencies should require explicit user approval before installation.",
+                },
+                {
+                    "area": "evidence_integrity",
+                    "severity": "high",
+                    "summary": "Final completion claims must remain tied to recorded task evidence and claim guard checks.",
+                },
+            ],
+            "constraints": [
+                "No security files are written by security_review_execute.",
+                "No shell access is granted by security_review_execute.",
+                "Security review is advisory until later enforcement task types are approved.",
+            ],
+            "risks": [
+                "Security review is generated from current swarm context only.",
+                "Full security verification requires later read-only inspection and validation task types.",
+            ],
+        }
+        result = {
+            "kind": "security_review_result",
+            "status": "ready",
+            "security_review": security_review,
+            "created_at": _now_iso(),
+        }
+        task.evidence.append(result)
+        task.status = "completed"
+        task.updated_at = _now_iso()
+        return result
+
+
     def _run_validation_execute_task(
         self,
         *,
@@ -339,6 +387,18 @@ class ExperimentalDAGDependencyRunner:
                 )
                 self.store.save(swarm)
                 self._trace_event(swarm_id, "backend_plan_completed", task_id=current.id, payload=backend_result)
+                self._trace_event(swarm_id, "task_completed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": "ready"})
+                continue
+
+            if task_type == "security_review_execute":
+                current.status = "running"
+                self.store.save(swarm)
+                security_result = self._run_security_review_execute_task(
+                    task=current,
+                    swarm=swarm,
+                )
+                self.store.save(swarm)
+                self._trace_event(swarm_id, "security_review_completed", task_id=current.id, payload=security_result)
                 self._trace_event(swarm_id, "task_completed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": "ready"})
                 continue
 

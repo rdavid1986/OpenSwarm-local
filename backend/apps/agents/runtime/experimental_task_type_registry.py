@@ -121,7 +121,14 @@ def _matches_create_readme(task: TaskNode) -> bool:
 
 
 def _matches_review_readme(task: TaskNode) -> bool:
+    title = task.title.lower()
+    if "security" in title:
+        return False
+    if "review" in title and "readme" in title:
+        return True
     text = _task_text(task)
+    if "security" in text and "review" in text:
+        return False
     return "review" in text and "readme" in text
 
 

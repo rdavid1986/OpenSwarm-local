@@ -55,11 +55,12 @@ class ExperimentalDAGConsolidator:
         architecture = self._find_task_by_type(swarm, "architecture_plan_execute")
         frontend = self._find_task_by_type(swarm, "frontend_plan_execute", depends_on=architecture.id)
         backend = self._find_task_by_type(swarm, "backend_plan_execute", depends_on=frontend.id)
-        worker = self._find_task_by_type(swarm, "create_readme", depends_on=backend.id)
+        security = self._find_task_by_type(swarm, "security_review_execute", depends_on=backend.id)
+        worker = self._find_task_by_type(swarm, "create_readme", depends_on=security.id)
         reviewer = self._find_task_by_type(swarm, "review_readme", depends_on=worker.id)
         validation = self._find_task_by_type(swarm, "validation_execute", depends_on=reviewer.id)
         consolidate = self._find_task_by_type(swarm, "consolidate_final")
-        errors = self._validate_ready(swarm, architecture, frontend, backend, worker, reviewer, validation)
+        errors = self._validate_ready(swarm, architecture, frontend, backend, security, worker, reviewer, validation)
         if errors:
             return self._response(swarm, status="not_ready", errors=errors, ok=False)
 
@@ -70,6 +71,7 @@ class ExperimentalDAGConsolidator:
             architecture=architecture,
             frontend=frontend,
             backend=backend,
+            security=security,
             worker=worker,
             reviewer=reviewer,
             consolidate=consolidate,
@@ -80,6 +82,7 @@ class ExperimentalDAGConsolidator:
         architecture_result = self._find_architecture_plan_result(architecture)
         frontend_result = self._find_frontend_plan_result(frontend)
         backend_result = self._find_backend_plan_result(backend)
+        security_result = self._find_security_review_result(security)
         validation_result = validation.validations[-1] if validation.validations else {}
         final_result = {
             "status": "completed",
@@ -97,6 +100,10 @@ class ExperimentalDAGConsolidator:
                 "status": backend_result.get("status"),
                 "backend_plan": backend_result.get("backend_plan") or {},
             },
+            "security_review_result": {
+                "status": security_result.get("status"),
+                "security_review": security_result.get("security_review") or {},
+            },
             "review_result": {
                 "status": review_result.get("status"),
                 "artifact_path": review_result.get("artifact_path"),
@@ -107,7 +114,7 @@ class ExperimentalDAGConsolidator:
                 "commands": validation_result.get("commands") or [],
                 "evidence": validation_result.get("evidence") or [],
             },
-            "completed_tasks": [architecture.id, frontend.id, backend.id, worker.id, reviewer.id, validation.id, consolidate.id],
+            "completed_tasks": [architecture.id, frontend.id, backend.id, security.id, worker.id, reviewer.id, validation.id, consolidate.id],
             "created_at": _now_iso(),
         }
         final_result["claim_guard"] = self._build_claim_guard(
@@ -131,7 +138,7 @@ class ExperimentalDAGConsolidator:
         self.store.save(swarm)
         return self._response(swarm, status="completed", ok=True)
 
-    def _validate_ready(self, swarm: SwarmState, architecture: TaskNode, frontend: TaskNode, backend: TaskNode, worker: TaskNode, reviewer: TaskNode, validation: TaskNode) -> list[dict[str, Any]]:
+    def _validate_ready(self, swarm: SwarmState, architecture: TaskNode, frontend: TaskNode, backend: TaskNode, security: TaskNode, worker: TaskNode, reviewer: TaskNode, validation: TaskNode) -> list[dict[str, Any]]:
         errors: list[dict[str, Any]] = []
         if architecture.status != "completed":
             errors.append({"error": "architecture_not_completed", "task_id": architecture.id, "status": architecture.status})
@@ -145,6 +152,10 @@ class ExperimentalDAGConsolidator:
             errors.append({"error": "backend_not_completed", "task_id": backend.id, "status": backend.status})
         if not self._find_backend_plan_result(backend):
             errors.append({"error": "backend_plan_result_missing", "task_id": backend.id})
+        if security.status != "completed":
+            errors.append({"error": "security_not_completed", "task_id": security.id, "status": security.status})
+        if not self._find_security_review_result(security):
+            errors.append({"error": "security_review_result_missing", "task_id": security.id})
         if worker.status != "completed":
             errors.append({"error": "worker_not_completed", "task_id": worker.id, "status": worker.status})
         if reviewer.status != "completed":
@@ -167,6 +178,7 @@ class ExperimentalDAGConsolidator:
         architecture: TaskNode,
         frontend: TaskNode,
         backend: TaskNode,
+        security: TaskNode,
         worker: TaskNode,
         reviewer: TaskNode,
         consolidate: TaskNode,
@@ -177,6 +189,7 @@ class ExperimentalDAGConsolidator:
         architecture_result = ExperimentalDAGConsolidator._find_architecture_plan_result(architecture) or {}
         frontend_result = ExperimentalDAGConsolidator._find_frontend_plan_result(frontend) or {}
         backend_result = ExperimentalDAGConsolidator._find_backend_plan_result(backend) or {}
+        security_result = ExperimentalDAGConsolidator._find_security_review_result(security) or {}
         return [
             {
                 "kind": "architecture_plan_result",
@@ -192,6 +205,11 @@ class ExperimentalDAGConsolidator:
                 "kind": "backend_plan_result",
                 "task_id": backend.id,
                 "backend_plan_result": backend_result,
+            },
+            {
+                "kind": "security_review_result",
+                "task_id": security.id,
+                "security_review_result": security_result,
             },
             {
                 "kind": "artifact",
@@ -214,6 +232,7 @@ class ExperimentalDAGConsolidator:
                     {"id": architecture.id, "title": architecture.title, "status": architecture.status},
                     {"id": frontend.id, "title": frontend.title, "status": frontend.status},
                     {"id": backend.id, "title": backend.title, "status": backend.status},
+                    {"id": security.id, "title": security.title, "status": security.status},
                     {"id": worker.id, "title": worker.title, "status": worker.status},
                     {"id": reviewer.id, "title": reviewer.title, "status": reviewer.status},
                     {"id": validation.id, "title": validation.title, "status": validation.status},
@@ -232,7 +251,7 @@ class ExperimentalDAGConsolidator:
                         "path": (entry.get("result") or {}).get("path"),
                     }
                     for entry in swarm.tool_history
-                    if entry.get("task_id") in {architecture.id, frontend.id, backend.id, worker.id, reviewer.id, validation.id}
+                    if entry.get("task_id") in {architecture.id, frontend.id, backend.id, security.id, worker.id, reviewer.id, validation.id}
                 ],
             },
         ]
@@ -385,6 +404,18 @@ class ExperimentalDAGConsolidator:
                 item
                 for item in backend.evidence
                 if item.get("kind") == "backend_plan_result" and item.get("status") == "ready"
+            ),
+            None,
+        )
+
+
+    @staticmethod
+    def _find_security_review_result(security: TaskNode) -> dict[str, Any] | None:
+        return next(
+            (
+                item
+                for item in security.evidence
+                if item.get("kind") == "security_review_result" and item.get("status") == "ready"
             ),
             None,
         )

@@ -31,6 +31,7 @@ def test_readme_dag_includes_architecture_plan_execute_before_readme():
         "architecture_plan_execute",
         "frontend_plan_execute",
         "backend_plan_execute",
+        "security_review_execute",
         "create_readme",
         "review_readme",
         "validation_execute",
@@ -40,14 +41,16 @@ def test_readme_dag_includes_architecture_plan_execute_before_readme():
     architecture_task = updated.tasks[0]
     frontend_task = updated.tasks[1]
     backend_task = updated.tasks[2]
-    write_task = updated.tasks[3]
-    review_task = updated.tasks[4]
-    validation_task = updated.tasks[5]
-    consolidate_task = updated.tasks[6]
+    security_task = updated.tasks[3]
+    write_task = updated.tasks[4]
+    review_task = updated.tasks[5]
+    validation_task = updated.tasks[6]
+    consolidate_task = updated.tasks[7]
 
     assert frontend_task.depends_on == [architecture_task.id]
     assert backend_task.depends_on == [frontend_task.id]
-    assert write_task.depends_on == [backend_task.id]
+    assert security_task.depends_on == [backend_task.id]
+    assert write_task.depends_on == [security_task.id]
     assert review_task.depends_on == [write_task.id]
     assert validation_task.depends_on == [review_task.id]
     assert consolidate_task.depends_on == [validation_task.id]
@@ -57,6 +60,7 @@ def test_readme_dag_includes_architecture_plan_execute_before_readme():
         "ArchitectAgent",
         "FrontendAgent",
         "BackendAgent",
+        "SecurityAgent",
         "DocumentationAgent",
         "ReviewerAgent",
         "TesterAgent",
