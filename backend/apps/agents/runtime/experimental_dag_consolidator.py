@@ -54,8 +54,9 @@ class ExperimentalDAGConsolidator:
         swarm = self.store.load(swarm_id)
         worker = self._find_task_by_type(swarm, "create_readme")
         reviewer = self._find_task_by_type(swarm, "review_readme", depends_on=worker.id)
+        validation = self._find_task_by_type(swarm, "validation_execute", depends_on=reviewer.id)
         consolidate = self._find_task_by_type(swarm, "consolidate_final")
-        errors = self._validate_ready(swarm, worker, reviewer)
+        errors = self._validate_ready(swarm, worker, reviewer, validation)
         if errors:
             return self._response(swarm, status="not_ready", errors=errors, ok=False)
 
@@ -68,17 +69,24 @@ class ExperimentalDAGConsolidator:
             consolidate=consolidate,
             artifact=artifact,
             review_result=review_result,
+            validation=validation,
         )
+        validation_result = validation.validations[-1] if validation.validations else {}
         final_result = {
             "status": "completed",
-            "summary": "README.md was created by the Worker and approved by the Reviewer with evidence.",
+            "summary": "README.md was created by the Worker, approved by the Reviewer, and validated with SafeShell evidence.",
             "artifact_refs": [artifact.get("id")],
             "review_result": {
                 "status": review_result.get("status"),
                 "artifact_path": review_result.get("artifact_path"),
                 "required_read_satisfied": review_result.get("required_read_satisfied"),
             },
-            "completed_tasks": [worker.id, reviewer.id, consolidate.id],
+            "validation_result": {
+                "status": validation_result.get("status"),
+                "commands": validation_result.get("commands") or [],
+                "evidence": validation_result.get("evidence") or [],
+            },
+            "completed_tasks": [worker.id, reviewer.id, validation.id, consolidate.id],
             "created_at": _now_iso(),
         }
         final_result["claim_guard"] = self._build_claim_guard(
@@ -102,12 +110,16 @@ class ExperimentalDAGConsolidator:
         self.store.save(swarm)
         return self._response(swarm, status="completed", ok=True)
 
-    def _validate_ready(self, swarm: SwarmState, worker: TaskNode, reviewer: TaskNode) -> list[dict[str, Any]]:
+    def _validate_ready(self, swarm: SwarmState, worker: TaskNode, reviewer: TaskNode, validation: TaskNode) -> list[dict[str, Any]]:
         errors: list[dict[str, Any]] = []
         if worker.status != "completed":
             errors.append({"error": "worker_not_completed", "task_id": worker.id, "status": worker.status})
         if reviewer.status != "completed":
             errors.append({"error": "reviewer_not_completed", "task_id": reviewer.id, "status": reviewer.status})
+        if validation.status != "completed":
+            errors.append({"error": "validation_not_completed", "task_id": validation.id, "status": validation.status})
+        if not validation.validations:
+            errors.append({"error": "validation_result_missing", "task_id": validation.id})
         artifact = self._find_readme_artifact(swarm, worker.id)
         if not artifact:
             errors.append({"error": "readme_artifact_missing", "task_id": worker.id})
@@ -124,6 +136,7 @@ class ExperimentalDAGConsolidator:
         consolidate: TaskNode,
         artifact: dict[str, Any],
         review_result: dict[str, Any],
+        validation: TaskNode,
     ) -> list[dict[str, Any]]:
         return [
             {
@@ -137,10 +150,16 @@ class ExperimentalDAGConsolidator:
                 "review_result": review_result,
             },
             {
+                "kind": "validation_result",
+                "task_id": validation.id,
+                "validation_result": validation.validations[-1] if validation.validations else {},
+            },
+            {
                 "kind": "task_status",
                 "tasks": [
                     {"id": worker.id, "title": worker.title, "status": worker.status},
                     {"id": reviewer.id, "title": reviewer.title, "status": reviewer.status},
+                    {"id": validation.id, "title": validation.title, "status": validation.status},
                     {"id": consolidate.id, "title": consolidate.title, "status": "completed"},
                 ],
             },
@@ -156,7 +175,7 @@ class ExperimentalDAGConsolidator:
                         "path": (entry.get("result") or {}).get("path"),
                     }
                     for entry in swarm.tool_history
-                    if entry.get("task_id") in {worker.id, reviewer.id}
+                    if entry.get("task_id") in {worker.id, reviewer.id, validation.id}
                 ],
             },
         ]

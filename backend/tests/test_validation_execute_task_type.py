@@ -11,7 +11,7 @@ def test_validation_execute_allows_only_safe_validation_tools():
     assert "Edit" not in spec.allowed_tools
     assert "Diff" not in spec.allowed_tools
     assert spec.allow_idempotent_skip is False
-    assert spec.matcher is None
+    assert spec.matcher is not None
     assert spec.output_contract == {
         "validation_result": {
             "status": "passed|failed",

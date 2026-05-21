@@ -81,6 +81,11 @@ def _matches_plan_reused(task: TaskNode) -> bool:
     return "plan" in text and ("dag" in text or "task" in text)
 
 
+def _matches_validation_execute(task: TaskNode) -> bool:
+    title = task.title.lower()
+    return "execute safe validation" in title or "safe validation checks" in title
+
+
 def _matches_create_readme(task: TaskNode) -> bool:
     text = _task_text(task)
     return "readme" in text and any(word in text for word in ("create", "crea"))
@@ -255,7 +260,7 @@ TASK_TYPE_REGISTRY: dict[ExperimentalTaskType, ExperimentalTaskTypeSpec] = {
             }
         },
         allow_idempotent_skip=False,
-        matcher=None,
+        matcher=_matches_validation_execute,
     ),
 
 }

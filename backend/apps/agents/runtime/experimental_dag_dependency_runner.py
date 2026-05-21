@@ -76,6 +76,59 @@ class ExperimentalDAGDependencyRunner:
         self.consolidator = consolidator or ExperimentalDAGConsolidator(store=self.store)
         self.planner_adapter_factory = planner_adapter_factory or getattr(self.chain_runner, "adapter_factory", OllamaAdapter)
 
+    def _run_validation_execute_task(
+        self,
+        *,
+        swarm: SwarmState,
+        task: TaskNode,
+        contract: AgentContract,
+        workspace_path: str,
+    ) -> dict[str, Any]:
+        spec = get_experimental_task_spec("validation_execute")
+        validate_experimental_task_contract(
+            swarm=swarm,
+            task=task,
+            task_type="validation_execute",
+        )
+
+        history: list[dict[str, Any]] = []
+        command = "python -m py_compile ok.py"
+        result = self.chain_runner.runtime.tools.execute_tool(
+            ToolCall(name="SafeShell", input={"command": command}, raw_name="SafeShell"),
+            ToolExecutionContext(
+                workspace_path=workspace_path,
+                session_id="experimental-dag-validation",
+                swarm_id=swarm.id,
+                agent_id=contract.id,
+                task_id=task.id,
+                allowed_tools=list(spec.allowed_tools),
+                metadata={"task_type": "validation_execute"},
+            ),
+            history=history,
+        )
+
+        swarm.tool_history.extend(history)
+
+        validation_result = {
+            "status": "passed" if result.ok else "failed",
+            "commands": [
+                {
+                    "command": command,
+                    "ok": result.ok,
+                    "exit_code": result.result.get("exit_code"),
+                    "stdout": result.result.get("stdout", ""),
+                    "stderr": result.result.get("stderr", ""),
+                }
+            ],
+            "evidence": ["command_executed"] if result.ok else [],
+        }
+        task.validations.append(validation_result)
+        if result.ok:
+            task.evidence.append("command_executed")
+        task.status = "completed" if result.ok else "failed"
+        task.updated_at = _now_iso()
+        return validation_result
+
     async def run_dag_dependencies(
         self,
         *,
@@ -182,6 +235,24 @@ class ExperimentalDAGDependencyRunner:
                     self._trace_event(swarm_id, "task_failed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": "failed", "errors": result.get("errors") or []})
                     self._trace_event(swarm_id, "dag_failed", task_id=current.id, payload={"error": "inspect_readme_failed", "errors": result.get("errors") or []})
                     return self._response(swarm_id, status="failed", execution_order=execution_order, errors=result.get("errors") or [], ok=False)
+                continue
+
+
+            if task_type == "validation_execute":
+                current.status = "running"
+                self.store.save(swarm)
+                validation_result = await self._run_validation_execute_task(
+                    swarm_id=swarm_id,
+                    task=current,
+                    body=body,
+                )
+                self.store.save(swarm)
+                if validation_result.get("status") == "completed":
+                    self._trace_event(swarm_id, "task_completed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": "completed"})
+                else:
+                    self._trace_event(swarm_id, "task_failed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": "failed", "errors": validation_result.get("errors") or []})
+                    self._trace_event(swarm_id, "dag_failed", task_id=current.id, payload={"error": "validation_execute_failed", "errors": validation_result.get("errors") or []})
+                    return self._response(swarm_id, status="failed", execution_order=execution_order, errors=validation_result.get("errors") or [], ok=False)
                 continue
 
             if task_type == "consolidate_final":

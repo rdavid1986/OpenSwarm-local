@@ -158,6 +158,7 @@ class SwarmOrchestrator:
         create_spec = get_experimental_task_spec("create_readme")
         review_spec = get_experimental_task_spec("review_readme")
         consolidate_spec = get_experimental_task_spec("consolidate_final")
+        validation_spec = get_experimental_task_spec("validation_execute")
 
         coordinator = AgentContract(
             role="CoordinatorAgent",
@@ -180,6 +181,13 @@ class SwarmOrchestrator:
             acceptance_criteria=["Reviewer reads README.md.", "Reviewer returns approval or rejection with evidence."],
             output_contract=dict(review_spec.output_contract),
         )
+        tester = AgentContract(
+            role="TesterAgent",
+            objective="Run strictly allowlisted validation commands with SafeShell.",
+            allowed_tools=list(validation_spec.allowed_tools),
+            acceptance_criteria=["Validation runs only allowlisted SafeShell commands.", "Validation produces command evidence."],
+            output_contract=dict(validation_spec.output_contract),
+        )
 
         write_task = TaskNode(
             title=create_spec.title,
@@ -201,17 +209,23 @@ class SwarmOrchestrator:
             assigned_contract_id=reviewer.id,
             depends_on=[write_task.id],
         )
+        validation_task = TaskNode(
+            title=validation_spec.title,
+            objective="Run safe validation checks before final consolidation.",
+            assigned_contract_id=tester.id,
+            depends_on=[review_task.id],
+        )
         consolidate_task = TaskNode(
             title=consolidate_spec.title,
-            objective="Summarize work, artifacts, reviewer result, evidence, and claim guard status for the user.",
+            objective="Summarize work, artifacts, reviewer result, validation result, evidence, and claim guard status for the user.",
             assigned_contract_id=coordinator.id,
-            depends_on=[review_task.id],
+            depends_on=[validation_task.id],
         )
 
         swarm.intent = "task"
         swarm.coordinator_contract_id = coordinator.id
-        swarm.contracts.extend([coordinator, worker, reviewer])
-        swarm.tasks.extend([write_task, review_task, consolidate_task])
+        swarm.contracts.extend([coordinator, worker, reviewer, tester])
+        swarm.tasks.extend([write_task, review_task, validation_task, consolidate_task])
         swarm.messages.append(
             AgentToAgentMessage(
                 type="broadcast_to_swarm",
