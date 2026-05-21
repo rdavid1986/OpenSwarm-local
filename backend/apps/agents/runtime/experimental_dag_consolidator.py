@@ -133,7 +133,12 @@ class ExperimentalDAGConsolidator:
         consolidate.evidence = [item for item in consolidate.evidence if item.get("kind") != "final_consolidation"]
         consolidate.evidence.append({"kind": "final_consolidation", "final_result": final_result, "final_evidence_count": len(final_evidence)})
         consolidate.updated_at = _now_iso()
-        self._append_consolidation_message_once(swarm, consolidate, final_result)
+        self._append_consolidation_message_once(
+            swarm,
+            consolidate=consolidate,
+            final_result=final_result,
+            from_agent_id=consolidate.assigned_contract_id or "",
+        )
         swarm.status = "completed"
         self.store.save(swarm)
         return self._response(swarm, status="completed", ok=True)
@@ -389,6 +394,7 @@ class ExperimentalDAGConsolidator:
 
 
     def _find_task_by_type(
+        self,
         swarm: SwarmState,
         task_type: ExperimentalTaskType,
         *,
