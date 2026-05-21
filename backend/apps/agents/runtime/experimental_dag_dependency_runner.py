@@ -154,6 +154,51 @@ class ExperimentalDAGDependencyRunner:
         return result
 
 
+    def _run_backend_plan_execute_task(
+        self,
+        *,
+        task: TaskNode,
+        swarm: SwarmState,
+    ) -> dict[str, Any]:
+        backend_plan = {
+            "status": "ready",
+            "summary": "Backend plan generated from architecture and project intake context.",
+            "services": [
+                {"name": "orchestration_api", "responsibility": "Expose swarm, DAG, task, evidence, and final result operations."},
+                {"name": "runtime_services", "responsibility": "Run controlled task types through explicit dispatch paths."},
+                {"name": "storage", "responsibility": "Persist swarm state, artifacts, evidence, and configuration locally."},
+            ],
+            "data_models": [
+                {"name": "SwarmState", "purpose": "Store contracts, tasks, artifacts, messages, evidence, and final results."},
+                {"name": "TaskNode", "purpose": "Represent DAG tasks, dependencies, status, validations, and evidence."},
+                {"name": "AgentContract", "purpose": "Constrain role, tools, objectives, and output contracts."},
+            ],
+            "api_endpoints": [
+                {"path": "/api/swarms", "purpose": "Swarm lifecycle and interaction endpoints."},
+                {"path": "/api/swarms/{swarm_id}/experimental/start-implementation", "purpose": "Start controlled DAG implementation."},
+            ],
+            "constraints": [
+                "No backend files are written by backend_plan_execute.",
+                "No shell access is granted by backend_plan_execute.",
+                "Implementation remains inactive until a later approved task type.",
+            ],
+            "risks": [
+                "Backend plan is derived from current swarm context only.",
+                "API implementation changes require later file-writing task types with explicit tool policies.",
+            ],
+        }
+        result = {
+            "kind": "backend_plan_result",
+            "status": "ready",
+            "backend_plan": backend_plan,
+            "created_at": _now_iso(),
+        }
+        task.evidence.append(result)
+        task.status = "completed"
+        task.updated_at = _now_iso()
+        return result
+
+
     def _run_validation_execute_task(
         self,
         *,
@@ -282,6 +327,18 @@ class ExperimentalDAGDependencyRunner:
                 )
                 self.store.save(swarm)
                 self._trace_event(swarm_id, "frontend_plan_completed", task_id=current.id, payload=frontend_result)
+                self._trace_event(swarm_id, "task_completed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": "ready"})
+                continue
+
+            if task_type == "backend_plan_execute":
+                current.status = "running"
+                self.store.save(swarm)
+                backend_result = self._run_backend_plan_execute_task(
+                    task=current,
+                    swarm=swarm,
+                )
+                self.store.save(swarm)
+                self._trace_event(swarm_id, "backend_plan_completed", task_id=current.id, payload=backend_result)
                 self._trace_event(swarm_id, "task_completed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": "ready"})
                 continue
 
