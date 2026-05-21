@@ -27,12 +27,16 @@ class SwarmOrchestrator:
         user_prompt: str,
         dashboard_id: str | None = None,
         workspace_path: str | None = None,
+        intent: str | None = None,
     ) -> SwarmState:
         prompt = (user_prompt or "").strip()
         if not prompt:
             raise ValueError("user_prompt is required")
 
-        intent = self._classify_intent(prompt)
+        requested_intent = (intent or "").strip().lower()
+        if requested_intent and requested_intent not in {"chat", "task"}:
+            raise ValueError("intent must be 'chat' or 'task'")
+        intent = requested_intent or self._classify_intent(prompt)
 
         if intent == "chat":
             coordinator = AgentContract(

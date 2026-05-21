@@ -68,6 +68,7 @@ class CreateSwarmRequest(BaseModel):
     user_prompt: str = "Experimental swarm"
     dashboard_id: str | None = None
     workspace_path: str | None = None
+    intent: str | None = None
 
 
 class RunMVPRequest(BaseModel):
@@ -292,10 +293,18 @@ def _classify_chat_question(user_message: str) -> str:
         or "hacer una app" in normalized
         or "hagamos una app" in normalized
         or "armemos una app" in normalized
+        or "crea una app" in normalized
+        or "crea un app" in normalized
+        or "creá una app" in normalized
+        or "creá un app" in normalized
+        or "crea un proyecto" in normalized
+        or "creá un proyecto" in normalized
         or "haceme una web" in normalized
         or "hacer una web" in normalized
         or "hagamos una web" in normalized
         or "armemos una web" in normalized
+        or "crea una web" in normalized
+        or "creá una web" in normalized
         or "implementa" in normalized
         or "implementá" in normalized
         or "empeza a construir" in normalized
@@ -1552,6 +1561,7 @@ async def create_swarm(body: CreateSwarmRequest):
             user_prompt=body.user_prompt,
             dashboard_id=body.dashboard_id,
             workspace_path=body.workspace_path,
+            intent=body.intent,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

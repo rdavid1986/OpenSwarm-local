@@ -38,11 +38,11 @@ async function readJson(res: Response): Promise<any> {
 
 export const createExperimentalSwarm = createAsyncThunk(
   'experimentalSwarms/create',
-  async ({ userPrompt, dashboardId }: { userPrompt: string; dashboardId?: string }) => {
+  async ({ userPrompt, dashboardId, intent }: { userPrompt: string; dashboardId?: string; intent?: 'chat' | 'task' }) => {
     const res = await fetch(`${SWARMS_API}/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_prompt: userPrompt, dashboard_id: dashboardId }),
+      body: JSON.stringify({ user_prompt: userPrompt, dashboard_id: dashboardId, intent }),
     });
     return await readJson(res);
   },

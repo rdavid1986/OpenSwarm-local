@@ -25,7 +25,6 @@ import {
   denyExperimentalApproval,
   fetchExperimentalSwarm,
   resumeExperimentalApproval,
-  runExperimentalDag,
   startExperimentalImplementation,
 } from '@/shared/state/experimentalSwarmsSlice';
 import { useAppDispatch, useAppSelector } from '@/shared/hooks';
@@ -479,13 +478,12 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     }
 
     let swarmIdToRun = activeSwarmId;
-    let intent = swarmState.swarm?.intent || 'task';
+    const activeIntent = activeSwarm?.intent || swarmState.swarm?.intent || null;
 
-    if (!swarmIdToRun) {
-      const action = await dispatch(createExperimentalSwarm({ userPrompt: cleanPrompt || 'Experimental swarm', dashboardId }));
+    if (!swarmIdToRun || (cleanPrompt && activeIntent !== 'chat')) {
+      const action = await dispatch(createExperimentalSwarm({ userPrompt: cleanPrompt || 'Experimental swarm', dashboardId, intent: 'chat' }));
       if (createExperimentalSwarm.fulfilled.match(action)) {
         swarmIdToRun = action.payload.id;
-        intent = action.payload.intent || 'task';
         dispatch(setSwarmCardSwarmId({ swarmCardId, swarmId: swarmIdToRun }));
         window.setTimeout(() => onSwarmBound?.({ swarmCardId, swarmId: swarmIdToRun }), 0);
       }
@@ -495,7 +493,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
     await dispatch(chatExperimentalSwarm({ swarmId: swarmIdToRun, message: cleanPrompt || lastSubmittedPrompt || 'Continue' }));
     dispatch(fetchExperimentalSwarm(swarmIdToRun));
-  }, [activeSwarmId, dashboardId, dispatch, lastSubmittedPrompt, onSwarmBound, prompt, swarmCardId, swarmState.swarm?.intent]);
+  }, [activeSwarm?.intent, activeSwarmId, dashboardId, dispatch, lastSubmittedPrompt, onSwarmBound, prompt, swarmCardId, swarmState.swarm?.intent]);
 
   const handleProjectIntakeOption = useCallback(async (option: any) => {
     const label = renderText(option?.label ?? option?.value, '').trim();
