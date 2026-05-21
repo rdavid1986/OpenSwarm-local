@@ -493,13 +493,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
     if (!swarmIdToRun) return;
 
-    if (intent === 'chat') {
-      await dispatch(chatExperimentalSwarm({ swarmId: swarmIdToRun, message: cleanPrompt || lastSubmittedPrompt || 'Continue' }));
-      dispatch(fetchExperimentalSwarm(swarmIdToRun));
-      return;
-    }
-
-    await dispatch(runExperimentalDag({ swarmId: swarmIdToRun }));
+    await dispatch(chatExperimentalSwarm({ swarmId: swarmIdToRun, message: cleanPrompt || lastSubmittedPrompt || 'Continue' }));
     dispatch(fetchExperimentalSwarm(swarmIdToRun));
   }, [activeSwarmId, dashboardId, dispatch, lastSubmittedPrompt, onSwarmBound, prompt, swarmCardId, swarmState.swarm?.intent]);
 
