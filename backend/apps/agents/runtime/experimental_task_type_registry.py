@@ -85,8 +85,7 @@ def _task_text(task: TaskNode) -> str:
 
 
 def _matches_plan_reused(task: TaskNode) -> bool:
-    text = _task_text(task)
-    return "plan" in text and ("dag" in text or "task" in text)
+    return task.title.strip().lower() == "plan task dag"
 
 
 def _matches_validation_execute(task: TaskNode) -> bool:
