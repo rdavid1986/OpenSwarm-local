@@ -29,6 +29,7 @@ def test_readme_dag_includes_architecture_plan_execute_before_readme():
     task_types = [classify_experimental_task(task) for task in updated.tasks]
     assert task_types == [
         "architecture_plan_execute",
+        "frontend_plan_execute",
         "create_readme",
         "review_readme",
         "validation_execute",
@@ -36,12 +37,14 @@ def test_readme_dag_includes_architecture_plan_execute_before_readme():
     ]
 
     architecture_task = updated.tasks[0]
-    write_task = updated.tasks[1]
-    review_task = updated.tasks[2]
-    validation_task = updated.tasks[3]
-    consolidate_task = updated.tasks[4]
+    frontend_task = updated.tasks[1]
+    write_task = updated.tasks[2]
+    review_task = updated.tasks[3]
+    validation_task = updated.tasks[4]
+    consolidate_task = updated.tasks[5]
 
-    assert write_task.depends_on == [architecture_task.id]
+    assert frontend_task.depends_on == [architecture_task.id]
+    assert write_task.depends_on == [frontend_task.id]
     assert review_task.depends_on == [write_task.id]
     assert validation_task.depends_on == [review_task.id]
     assert consolidate_task.depends_on == [validation_task.id]
@@ -49,6 +52,7 @@ def test_readme_dag_includes_architecture_plan_execute_before_readme():
     assert [contract.role for contract in updated.contracts] == [
         "CoordinatorAgent",
         "ArchitectAgent",
+        "FrontendAgent",
         "DocumentationAgent",
         "ReviewerAgent",
         "TesterAgent",

@@ -113,6 +113,47 @@ class ExperimentalDAGDependencyRunner:
         return result
 
 
+    def _run_frontend_plan_execute_task(
+        self,
+        *,
+        task: TaskNode,
+        swarm: SwarmState,
+    ) -> dict[str, Any]:
+        frontend_plan = {
+            "status": "ready",
+            "summary": "Frontend plan generated from architecture and project intake context.",
+            "components": [
+                {"name": "app_shell", "responsibility": "Provide the main application layout and navigation."},
+                {"name": "chat_surface", "responsibility": "Display user messages, agent progress, artifacts, and final results."},
+                {"name": "orchestration_canvas", "responsibility": "Show DAG task state, dependencies, evidence, and claim guard status."},
+                {"name": "settings_models", "responsibility": "Expose local-first model/provider configuration without executing setup actions."},
+            ],
+            "routes": [
+                {"path": "/", "purpose": "Main chat and orchestration workspace."},
+                {"path": "/settings", "purpose": "Model, provider, and local runtime configuration."},
+            ],
+            "constraints": [
+                "No frontend files are written by frontend_plan_execute.",
+                "No shell access is granted by frontend_plan_execute.",
+                "Implementation remains inactive until a later approved task type.",
+            ],
+            "risks": [
+                "Frontend plan is derived from current swarm context only.",
+                "UI implementation requires later file-writing task types with explicit tool policies.",
+            ],
+        }
+        result = {
+            "kind": "frontend_plan_result",
+            "status": "ready",
+            "frontend_plan": frontend_plan,
+            "created_at": _now_iso(),
+        }
+        task.evidence.append(result)
+        task.status = "completed"
+        task.updated_at = _now_iso()
+        return result
+
+
     def _run_validation_execute_task(
         self,
         *,
@@ -229,6 +270,18 @@ class ExperimentalDAGDependencyRunner:
                 )
                 self.store.save(swarm)
                 self._trace_event(swarm_id, "architecture_plan_completed", task_id=current.id, payload=architecture_result)
+                self._trace_event(swarm_id, "task_completed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": "ready"})
+                continue
+
+            if task_type == "frontend_plan_execute":
+                current.status = "running"
+                self.store.save(swarm)
+                frontend_result = self._run_frontend_plan_execute_task(
+                    task=current,
+                    swarm=swarm,
+                )
+                self.store.save(swarm)
+                self._trace_event(swarm_id, "frontend_plan_completed", task_id=current.id, payload=frontend_result)
                 self._trace_event(swarm_id, "task_completed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": "ready"})
                 continue
 
