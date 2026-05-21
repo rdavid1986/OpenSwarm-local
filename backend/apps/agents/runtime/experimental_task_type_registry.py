@@ -22,9 +22,12 @@ ExperimentalTaskType = Literal[
     "architecture_plan_draft",
     "architecture_plan_execute",
     "frontend_plan_draft",
+    "frontend_plan_execute",
     "backend_plan_draft",
+    "backend_plan_execute",
     "validation_plan_draft",
     "security_review_draft",
+    "security_review_execute",
     "safe_shell_draft",
     "safe_shell_execute",
     "validation_execute",
@@ -90,6 +93,21 @@ def _matches_validation_execute(task: TaskNode) -> bool:
 def _matches_architecture_plan_execute(task: TaskNode) -> bool:
     title = task.title.lower()
     return "architecture" in title and "plan" in title and any(word in title for word in ("execute", "create", "generate", "build"))
+
+
+def _matches_security_review_execute(task: TaskNode) -> bool:
+    title = task.title.lower()
+    return "security" in title and "review" in title and any(word in title for word in ("execute", "create", "generate", "run"))
+
+
+def _matches_backend_plan_execute(task: TaskNode) -> bool:
+    title = task.title.lower()
+    return "backend" in title and "plan" in title and any(word in title for word in ("execute", "create", "generate", "build"))
+
+
+def _matches_frontend_plan_execute(task: TaskNode) -> bool:
+    title = task.title.lower()
+    return "frontend" in title and "plan" in title and any(word in title for word in ("execute", "create", "generate", "build"))
 
 
 def _matches_create_readme(task: TaskNode) -> bool:
@@ -203,6 +221,23 @@ TASK_TYPE_REGISTRY: dict[ExperimentalTaskType, ExperimentalTaskTypeSpec] = {
         allow_idempotent_skip=False,
         matcher=None,
     ),
+    "frontend_plan_execute": ExperimentalTaskTypeSpec(
+        type="frontend_plan_execute",
+        title="Execute frontend plan",
+        allowed_tools=[],
+        output_contract={
+            "frontend_plan": {
+                "status": "ready",
+                "summary": "string",
+                "components": [],
+                "routes": [],
+                "constraints": [],
+                "risks": [],
+            }
+        },
+        allow_idempotent_skip=False,
+        matcher=_matches_frontend_plan_execute,
+    ),
     "backend_plan_draft": ExperimentalTaskTypeSpec(
         type="backend_plan_draft",
         title="Draft backend plan",
@@ -215,6 +250,24 @@ TASK_TYPE_REGISTRY: dict[ExperimentalTaskType, ExperimentalTaskTypeSpec] = {
         },
         allow_idempotent_skip=False,
         matcher=None,
+    ),
+    "backend_plan_execute": ExperimentalTaskTypeSpec(
+        type="backend_plan_execute",
+        title="Execute backend plan",
+        allowed_tools=[],
+        output_contract={
+            "backend_plan": {
+                "status": "ready",
+                "summary": "string",
+                "services": [],
+                "data_models": [],
+                "api_endpoints": [],
+                "constraints": [],
+                "risks": [],
+            }
+        },
+        allow_idempotent_skip=False,
+        matcher=_matches_backend_plan_execute,
     ),
     "validation_plan_draft": ExperimentalTaskTypeSpec(
         type="validation_plan_draft",
@@ -241,6 +294,22 @@ TASK_TYPE_REGISTRY: dict[ExperimentalTaskType, ExperimentalTaskTypeSpec] = {
         },
         allow_idempotent_skip=False,
         matcher=None,
+    ),
+    "security_review_execute": ExperimentalTaskTypeSpec(
+        type="security_review_execute",
+        title="Execute security review",
+        allowed_tools=[],
+        output_contract={
+            "security_review": {
+                "status": "ready",
+                "summary": "string",
+                "findings": [],
+                "constraints": [],
+                "risks": [],
+            }
+        },
+        allow_idempotent_skip=False,
+        matcher=_matches_security_review_execute,
     ),
     "safe_shell_draft": ExperimentalTaskTypeSpec(
         type="safe_shell_draft",
