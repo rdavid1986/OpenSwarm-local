@@ -1079,8 +1079,8 @@ def _advance_project_intake(swarm, user_message: str) -> tuple[str, dict[str, An
         "project_intake_action": {
             "type": "start_implementation",
             "label": "Start Swarm Implementation",
-            "enabled": False,
-            "reason": "Implementation runner is not enabled in this phase.",
+            "enabled": experimental_dag_dependency_runner_enabled(),
+            "reason": None if experimental_dag_dependency_runner_enabled() else "Implementation runner is not enabled. Start backend with OPENSWARM_EXPERIMENTAL_DAG_MINI_RUNNER=1 and OPENSWARM_EXPERIMENTAL_DAG_DEPENDENCY_RUNNER=1.",
         },
     }
 
@@ -1103,7 +1103,7 @@ def _build_project_intake_message(state: dict[str, Any]) -> str:
             f"- Prioridad MVP: {plan.get('mvp_priority', 'no definido')}",
             f"- Fuera del MVP: {plan.get('out_of_scope', 'no definido')}",
             "",
-            "El botón de implementación queda preparado, pero todavía no ejecuta tools ni DAG en esta fase.",
+            "El botón de implementación queda preparado y se habilita cuando el runner experimental está activo.",
         ]
         return "\n".join(lines)
 

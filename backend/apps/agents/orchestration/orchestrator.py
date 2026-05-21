@@ -62,6 +62,15 @@ class SwarmOrchestrator:
             )
             return self.store.save(swarm)
 
+        plan_summary = f"Initial task request: {prompt}"
+        app_type = "app"
+        main_goal = prompt
+        frontend = "frontend not defined"
+        backend = "backend not defined"
+        database = "database not defined"
+        mvp_priority = "MVP priority not defined"
+        out_of_scope = "out of scope not defined"
+
         plan_spec = get_experimental_task_spec("plan_reused")
         architecture_spec = get_experimental_task_spec("architecture_plan_execute")
         frontend_spec = get_experimental_task_spec("frontend_plan_execute")
@@ -70,6 +79,7 @@ class SwarmOrchestrator:
         create_spec = get_experimental_task_spec("create_readme")
         review_spec = get_experimental_task_spec("review_readme")
         consolidate_spec = get_experimental_task_spec("consolidate_final")
+        validation_spec = get_experimental_task_spec("validation_execute")
 
         coordinator = AgentContract(
             role="CoordinatorAgent",
@@ -127,6 +137,13 @@ class SwarmOrchestrator:
             acceptance_criteria=["Reviewer reads README.md.", "Reviewer returns approval or rejection with evidence."],
             output_contract=dict(review_spec.output_contract),
         )
+        tester = AgentContract(
+            role="TesterAgent",
+            objective="Run strictly allowlisted validation commands with SafeShell.",
+            allowed_tools=list(validation_spec.allowed_tools),
+            acceptance_criteria=["Validation runs only allowlisted SafeShell commands.", "Validation produces command evidence."],
+            output_contract=dict(validation_spec.output_contract),
+        )
 
         plan_task = TaskNode(
             title=plan_spec.title,
@@ -143,6 +160,7 @@ class SwarmOrchestrator:
                 f"MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
             ),
             assigned_contract_id=architect.id,
+            depends_on=[plan_task.id],
         )
         frontend_plan_task = TaskNode(
             title=frontend_spec.title,
@@ -178,7 +196,7 @@ class SwarmOrchestrator:
             title=create_spec.title,
             objective="Create a basic README.md in the workspace using a real write tool.",
             assigned_contract_id=worker.id,
-            depends_on=[plan_task.id],
+            depends_on=[security_review_task.id],
         )
         review_task = TaskNode(
             title=review_spec.title,
@@ -186,11 +204,17 @@ class SwarmOrchestrator:
             assigned_contract_id=reviewer.id,
             depends_on=[write_task.id],
         )
+        validation_task = TaskNode(
+            title=validation_spec.title,
+            objective="Run safe validation checks after reviewer approval and before final consolidation.",
+            assigned_contract_id=tester.id,
+            depends_on=[review_task.id],
+        )
         consolidate_task = TaskNode(
             title=consolidate_spec.title,
-            objective="Summarize work, artifacts, reviewer result, and evidence for the user.",
+            objective="Summarize work, artifacts, reviewer result, validation result, and evidence for the user.",
             assigned_contract_id=coordinator.id,
-            depends_on=[review_task.id],
+            depends_on=[validation_task.id],
         )
 
         swarm = SwarmState(
@@ -200,8 +224,18 @@ class SwarmOrchestrator:
             dashboard_id=dashboard_id,
             workspace_path=workspace_path,
             coordinator_contract_id=coordinator.id,
-            contracts=[coordinator, planner, worker, reviewer],
-            tasks=[plan_task, write_task, review_task, consolidate_task],
+            contracts=[coordinator, planner, architect, frontend_planner, backend_planner, security_reviewer, worker, reviewer, tester],
+            tasks=[
+                plan_task,
+                architecture_task,
+                frontend_plan_task,
+                backend_plan_task,
+                security_review_task,
+                write_task,
+                review_task,
+                validation_task,
+                consolidate_task,
+            ],
             messages=[
                 AgentToAgentMessage(
                     type="broadcast_to_swarm",
