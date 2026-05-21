@@ -340,23 +340,54 @@ class ExperimentalDAGConsolidator:
             "See claim_guard.unsupported_claims before trusting completion claims."
         )
 
-    def _append_consolidation_message_once(self, swarm: SwarmState, consolidate: TaskNode, final_result: dict[str, Any]) -> None:
-        from_agent_id = consolidate.assigned_contract_id or swarm.coordinator_contract_id or "CoordinatorAgent"
-        for existing in swarm.messages:
-            if existing.type == "send_message_to_agent" and existing.from_agent_id == from_agent_id and existing.task_id == consolidate.id and existing.payload.get("final_result"):
-                existing.payload["final_result"] = final_result
+    def _append_consolidation_message_once(
+        self,
+        swarm: SwarmState,
+        *,
+        consolidate: TaskNode,
+        final_result: dict[str, Any],
+        from_agent_id: str,
+    ) -> None:
+        summary = str(final_result.get("summary") or "").strip()
+        artifact_refs = list(final_result.get("artifact_refs") or [])
+
+        payload = {
+            "role": "assistant",
+            "content": summary,
+            "route": "final_result",
+            "source": "local",
+            "final_result": final_result,
+            "claim_guard": final_result.get("claim_guard"),
+            "implementation": {
+                "status": final_result.get("status"),
+            },
+        }
+
+        for message in swarm.messages:
+            if (
+                message.type == "chat_message"
+                and message.task_id == consolidate.id
+                and isinstance(message.payload, dict)
+                and message.payload.get("route") == "final_result"
+            ):
+                message.payload.update(payload)
+                message.artifact_refs = artifact_refs
+                message.requires_response = False
                 return
+
         swarm.messages.append(
             AgentToAgentMessage(
-                type="send_message_to_agent",
+                type="chat_message",
                 from_agent_id=from_agent_id,
+                to_agent_id="user",
                 task_id=consolidate.id,
-                payload={"final_result": final_result},
-                artifact_refs=list(final_result.get("artifact_refs") or []),
+                payload=payload,
+                artifact_refs=artifact_refs,
+                requires_response=False,
             )
         )
 
-    @staticmethod
+
     def _find_task_by_type(
         swarm: SwarmState,
         task_type: ExperimentalTaskType,

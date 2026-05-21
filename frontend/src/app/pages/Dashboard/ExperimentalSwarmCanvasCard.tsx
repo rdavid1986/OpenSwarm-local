@@ -390,28 +390,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   };
   const implementationMeta = implementationStateMeta[implementationVisualState];
   const isImplementationActionRunning = isStartingImplementation || (swarmState.actionLoading && startImplementationInFlightRef.current);
-  const baseChatMessages = activeSwarmId
+  const chatMessages = activeSwarmId
     ? (swarmState.messages || []).filter((message: any) => getSwarmMessageText(message))
     : [];
-  const finalSummaryText = renderText(finalResult?.summary || '', '').trim();
-  const finalSummaryAlreadyInChat = !!finalSummaryText && baseChatMessages.some(
-    (message: any) => getSwarmMessageText(message) === finalSummaryText,
-  );
-  const chatMessages = finalSummaryText && !finalSummaryAlreadyInChat
-    ? [
-        ...baseChatMessages,
-        {
-          role: 'assistant',
-          content: finalSummaryText,
-          payload: {
-            role: 'assistant',
-            route: 'final_result',
-            source: 'local',
-            claim_guard: (finalResult as any)?.claim_guard,
-          },
-        },
-      ]
-    : baseChatMessages;
   const finalRoute = typeof finalResult === 'object' && finalResult ? (finalResult as any).route : null;
   const finalAnswerGuardApplied = typeof finalResult === 'object' && finalResult ? (finalResult as any).answer_guard_applied : null;
   const finalResponseSource = finalRoute && finalRoute !== 'normal_chat' ? 'local' : finalRoute === 'normal_chat' ? 'model' : null;
