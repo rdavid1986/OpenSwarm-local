@@ -29,6 +29,7 @@ from backend.apps.agents.runtime.experimental_task_type_registry import (
     ExperimentalTaskType,
     classify_experimental_task,
     get_experimental_task_spec,
+    find_assigned_contract,
     validate_experimental_task_contract,
     validate_experimental_task_completion,
 )
@@ -263,7 +264,7 @@ class ExperimentalDAGDependencyRunner:
         )
 
         history: list[dict[str, Any]] = []
-        command = "python -m py_compile ok.py"
+        command = "git diff --check"
         result = self.chain_runner.runtime.tools.execute_tool(
             ToolCall(name="SafeShell", input={"command": command}, raw_name="SafeShell"),
             ToolExecutionContext(
@@ -295,7 +296,21 @@ class ExperimentalDAGDependencyRunner:
         }
         task.validations.append(validation_result)
         if result.ok:
-            task.evidence.append("command_executed")
+            task.evidence.append({
+                "kind": "command_executed",
+                "command": command,
+                "status": "passed",
+                "tool": "SafeShell",
+                "created_at": _now_iso(),
+            })
+        else:
+            task.errors.append({
+                "error": "validation_command_failed",
+                "command": command,
+                "exit_code": result.result.get("exit_code"),
+                "stderr": result.result.get("stderr", ""),
+                "tool_error": result.error,
+            })
         task.status = "completed" if result.ok else "failed"
         task.updated_at = _now_iso()
         return validation_result
@@ -460,14 +475,24 @@ class ExperimentalDAGDependencyRunner:
             if task_type == "validation_execute":
                 current.status = "running"
                 self.store.save(swarm)
-                validation_result = await self._run_validation_execute_task(
+                contract = find_assigned_contract(swarm=swarm, task=current)
+                if contract is None:
+                    raise FileNotFoundError(f"Assigned contract not found for task: {current.id}")
+                workspace = self.chain_runner.single_task_runner._resolve_workspace(
+                    body.workspace_path or swarm.workspace_path,
                     swarm_id=swarm_id,
+                )
+                validation_result = self._run_validation_execute_task(
+                    swarm=swarm,
                     task=current,
-                    body=body,
+                    contract=contract,
+                    workspace_path=str(workspace),
                 )
                 self.store.save(swarm)
-                if validation_result.get("status") == "completed":
-                    self._trace_event(swarm_id, "task_completed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": "completed"})
+                if validation_result.get("status") == "passed":
+                    execution_order[-1]["action"] = "executed"
+                    execution_order[-1]["status"] = "passed"
+                    self._trace_event(swarm_id, "task_completed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": "passed"})
                 else:
                     self._trace_event(swarm_id, "task_failed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": "failed", "errors": validation_result.get("errors") or []})
                     self._trace_event(swarm_id, "dag_failed", task_id=current.id, payload={"error": "validation_execute_failed", "errors": validation_result.get("errors") or []})

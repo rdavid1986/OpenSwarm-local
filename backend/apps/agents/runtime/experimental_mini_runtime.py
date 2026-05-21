@@ -19,7 +19,7 @@ from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.runtime.mini_agent_runtime import MiniAgentRuntime, MiniAgentRuntimeContext, MiniAgentRuntimeResult
 
 EXPERIMENTAL_MINI_RUNTIME_FLAG = "OPENSWARM_EXPERIMENTAL_MINI_RUNTIME"
-ALLOWED_EXPERIMENTAL_TOOLS = {"Read", "Write", "Edit", "Glob", "Grep", "SearchFiles", "SearchText"}
+ALLOWED_EXPERIMENTAL_TOOLS = {"Read", "Write", "Edit", "Diff", "Glob", "Grep", "SearchFiles", "SearchText"}
 
 
 class ExperimentalMiniRuntimeRequest(BaseModel):
