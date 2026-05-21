@@ -1153,15 +1153,15 @@ def _build_project_intake_plan(state: dict[str, Any]) -> dict[str, Any]:
 def _build_orchestration_canvas_nodes(plan: dict[str, Any]) -> list[dict[str, Any]]:
     plan_summary = str(plan.get("summary") or "Preview generated from project intake.")
     node_specs = [
-        ("orchestrator", "Orchestrator", "Coordinator", "Coordinates the implementation flow and keeps scope aligned.", 40, 120),
-        ("planner", "Planner", "Planning", "Turns the intake answers into an implementation breakdown.", 280, 120),
-        ("frontend_planner", "Frontend Planner", "Frontend Planning", f"Plans UI for {plan.get('frontend') or 'the selected frontend'}.", 520, 20),
-        ("backend_planner", "Backend Planner", "Backend Planning", f"Plans services and persistence for {plan.get('backend') or 'the selected backend'}.", 520, 220),
-        ("frontend_agent", "Frontend Agent", "Implementation", "Implements the frontend tasks when execution is enabled.", 760, 20),
-        ("backend_agent", "Backend Agent", "Implementation", "Implements the backend tasks when execution is enabled.", 760, 220),
-        ("reviewer", "Reviewer", "Review", "Reviews implementation quality and scope fit.", 1000, 120),
-        ("test_runner", "Test Runner", "Validation", "Runs validation checks when execution is enabled.", 1240, 120),
-        ("consolidator", "Consolidator", "Consolidation", "Summarizes results and links real artifacts/evidence.", 1480, 120),
+        ("plan", "Plan", "Planning", "Turns the intake answers into an implementation breakdown.", 40, 120),
+        ("architecture", "Architecture", "Architecture", "Plans the safe implementation architecture.", 280, 120),
+        ("frontend_plan", "Frontend Plan", "Frontend Planning", f"Plans UI for {plan.get('frontend') or 'the selected frontend'}.", 520, 120),
+        ("backend_plan", "Backend Plan", "Backend Planning", f"Plans services and persistence for {plan.get('backend') or 'the selected backend'}.", 760, 120),
+        ("security_review", "Security Review", "Security Review", "Reviews risks before implementation tasks run.", 1000, 120),
+        ("create_worker", "Create / Worker", "Implementation", "Creates the controlled implementation artifact when execution is enabled.", 1240, 120),
+        ("reviewer", "Reviewer", "Review", "Reviews implementation quality and scope fit.", 1480, 120),
+        ("validation", "Validation", "Validation", "Runs validation checks when execution is enabled.", 1720, 120),
+        ("consolidator", "Consolidator", "Consolidation", "Summarizes results and links real artifacts/evidence.", 1960, 120),
     ]
     return [
         {
@@ -1184,15 +1184,14 @@ def _build_orchestration_canvas_nodes(plan: dict[str, Any]) -> list[dict[str, An
 
 def _build_orchestration_canvas_edges() -> list[dict[str, Any]]:
     pairs = [
-        ("orchestrator", "planner"),
-        ("planner", "frontend_planner"),
-        ("planner", "backend_planner"),
-        ("frontend_planner", "frontend_agent"),
-        ("backend_planner", "backend_agent"),
-        ("frontend_agent", "reviewer"),
-        ("backend_agent", "reviewer"),
-        ("reviewer", "test_runner"),
-        ("test_runner", "consolidator"),
+        ("plan", "architecture"),
+        ("architecture", "frontend_plan"),
+        ("frontend_plan", "backend_plan"),
+        ("backend_plan", "security_review"),
+        ("security_review", "create_worker"),
+        ("create_worker", "reviewer"),
+        ("reviewer", "validation"),
+        ("validation", "consolidator"),
     ]
     return [
         {"id": f"{source}-{target}", "from": source, "to": target}
@@ -1232,105 +1231,63 @@ def _sync_specialized_contract_nodes(swarm) -> None:
     if not isinstance(nodes, list):
         return
 
-    contracts = [
-        contract for contract in getattr(swarm, "contracts", []) or []
-        if getattr(contract, "role", None) in {
-            "ArchitectAgent",
-            "FrontendAgent",
-            "BackendAgent",
-            "TesterAgent",
-            "SecurityAgent",
-        }
-    ]
-    if not contracts:
-        return
-
-    node_specs = {
-        "ArchitectAgent": {
-            "id": "architect_agent_contract",
-            "label": "Architect Agent",
-            "role": "Dormant Architecture Contract",
-            "description": "Contrato especializado disponible. Todavía no ejecuta tareas ni tools.",
-            "x": 520,
-            "y": 420,
-        },
-        "FrontendAgent": {
-            "id": "frontend_agent_contract",
-            "label": "Frontend Agent Contract",
-            "role": "Dormant Frontend Contract",
-            "description": "Contrato frontend disponible. Se activará cuando existan task types frontend seguros.",
-            "x": 760,
-            "y": 420,
-        },
-        "BackendAgent": {
-            "id": "backend_agent_contract",
-            "label": "Backend Agent Contract",
-            "role": "Dormant Backend Contract",
-            "description": "Contrato backend disponible. Se activará cuando existan task types backend seguros.",
-            "x": 760,
-            "y": 560,
-        },
-        "TesterAgent": {
-            "id": "tester_agent_contract",
-            "label": "Tester Agent",
-            "role": "Dormant Validation Contract",
-            "description": "Contrato de validación disponible. No ejecuta shell hasta que exista una shell tool segura.",
-            "x": 1000,
-            "y": 420,
-        },
-        "SecurityAgent": {
-            "id": "security_agent_contract",
-            "label": "Security Agent",
-            "role": "Dormant Security Contract",
-            "description": "Contrato de seguridad disponible para revisar riesgos antes de habilitar operaciones sensibles.",
-            "x": 1000,
-            "y": 560,
-        },
+    contract_node_ids = {
+        "architect_agent_contract",
+        "frontend_agent_contract",
+        "backend_agent_contract",
+        "tester_agent_contract",
+        "security_agent_contract",
+    }
+    node_role_map = {
+        "plan": "CoordinatorAgent",
+        "architecture": "ArchitectAgent",
+        "frontend_plan": "FrontendAgent",
+        "backend_plan": "BackendAgent",
+        "security_review": "SecurityAgent",
+        "create_worker": "DocumentationAgent",
+        "reviewer": "ReviewerAgent",
+        "validation": "TesterAgent",
+        "consolidator": "CoordinatorAgent",
+    }
+    contracts_by_role = {
+        getattr(contract, "role", ""): contract
+        for contract in getattr(swarm, "contracts", []) or []
     }
 
-    existing_nodes_by_id = {
-        str(node.get("id")): node
-        for node in nodes
-        if isinstance(node, dict)
-    }
-    next_nodes = list(nodes)
+    next_nodes: list[dict[str, Any]] = []
     changed = False
 
-    for contract in contracts:
-        spec = node_specs.get(getattr(contract, "role", ""))
-        if not spec:
+    for node in nodes:
+        if not isinstance(node, dict):
+            next_nodes.append(node)
             continue
 
-        node_id = spec["id"]
-        existing = existing_nodes_by_id.get(node_id)
-        node_payload = {
-            **spec,
-            "status": "draft",
-            "model": getattr(contract, "model", None),
-            "artifact_ref": None,
-            "evidence_ref": "contract:dormant",
-            "contract_ref": getattr(contract, "id", None),
-            "width": 200,
-            "height": 96,
-        }
-
-        if existing:
-            updated = {**existing, **node_payload}
-            if updated != existing:
-                existing.update(updated)
-                changed = True
+        node_id = str(node.get("id") or "")
+        if node_id in contract_node_ids or node_id.endswith("_agent_contract"):
+            changed = True
             continue
 
-        next_nodes.append(node_payload)
-        existing_nodes_by_id[node_id] = node_payload
-        changed = True
+        next_node = dict(node)
+        contract = contracts_by_role.get(node_role_map.get(node_id, ""))
+        if contract:
+            allowed_tools = list(getattr(contract, "allowed_tools", []) or [])
+            next_node["assigned_contract_id"] = getattr(contract, "id", None)
+            next_node["assigned_agent_role"] = getattr(contract, "role", None)
+            next_node["allowed_tools"] = allowed_tools
+            if getattr(contract, "model", None):
+                next_node["model"] = getattr(contract, "model", None)
+
+        if next_node != node:
+            changed = True
+        next_nodes.append(next_node)
 
     if not changed:
         return
 
     next_state = dict(state)
     next_state["nodes"] = next_nodes
-    next_state["specialized_contracts_linked"] = True
+    next_state["specialized_contracts_linked"] = False
+    next_state["contracts_embedded_in_task_nodes"] = True
     next_state["updated_at"] = datetime.now(timezone.utc).isoformat()
     swarm.orchestration_canvas_state = next_state
 
@@ -1384,7 +1341,7 @@ def _enrich_orchestration_canvas_with_evidence(swarm) -> None:
         next_node = dict(node)
         node_id = str(next_node.get("id") or "")
 
-        if node_id in {"frontend_agent", "backend_agent"} and artifact_ref:
+        if node_id == "create_worker" and artifact_ref:
             next_node["artifact_ref"] = artifact_ref
             next_node["evidence_ref"] = evidence_ref
             next_node["status"] = "completed" if first_artifact else next_node.get("status", "pending")
@@ -1392,7 +1349,7 @@ def _enrich_orchestration_canvas_with_evidence(swarm) -> None:
             next_node["artifact_ref"] = review_ref
             next_node["evidence_ref"] = review_ref
             next_node["status"] = "completed"
-        elif node_id == "test_runner" and tool_ref:
+        elif node_id == "validation" and tool_ref:
             next_node["evidence_ref"] = tool_ref
             next_node["status"] = "completed"
         elif node_id == "consolidator" and final_status:

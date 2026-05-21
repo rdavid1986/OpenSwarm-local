@@ -22,6 +22,9 @@ export interface OrchestrationCanvasNode {
   role?: string | null;
   status?: OrchestrationNodeStatus;
   description?: string | null;
+  assigned_agent_role?: string | null;
+  assigned_contract_id?: string | null;
+  allowed_tools?: string[];
   model?: string | null;
   artifact_ref?: string | null;
   evidence_ref?: string | null;
@@ -273,6 +276,11 @@ const SwarmOrchestrationPreview: React.FC<Props> = ({ state, zoom = 1, onNodeMov
                 {node.role}
               </Typography>
             )}
+            {node.assigned_agent_role && (
+              <Typography sx={{ color: c.text.tertiary, fontSize: 10.5, mb: 0.5 }} noWrap>
+                agent: {node.assigned_agent_role}
+              </Typography>
+            )}
             {node.description && (
               <Typography sx={{ color: c.text.secondary, fontSize: 11, lineHeight: 1.25 }} noWrap={!node.expanded}>
                 {node.description}
@@ -291,6 +299,11 @@ const SwarmOrchestrationPreview: React.FC<Props> = ({ state, zoom = 1, onNodeMov
             {node.model && (
               <Typography sx={{ color: c.text.tertiary, fontSize: 10, mt: 0.5 }} noWrap>
                 model: {node.model}
+              </Typography>
+            )}
+            {Array.isArray(node.allowed_tools) && node.allowed_tools.length > 0 && (
+              <Typography sx={{ color: c.text.tertiary, fontSize: 10, mt: 0.5 }} noWrap>
+                tools: {node.allowed_tools.join(', ')}
               </Typography>
             )}
             {(node.artifact_ref || node.evidence_ref) && (
