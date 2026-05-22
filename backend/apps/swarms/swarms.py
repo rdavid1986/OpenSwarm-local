@@ -2123,6 +2123,16 @@ async def experimental_start_implementation(swarm_id: str, body: ExperimentalDAG
         generated_plan = intake_state.get("generated_plan") if isinstance(intake_state, dict) else None
         normalized_plan = swarm_orchestrator._normalize_generated_plan(generated_plan)
         dag_template = swarm_orchestrator._select_dag_template(normalized_plan)
+        swarm = swarm_orchestrator.store.load(swarm_id)
+        swarm.decisions.append({
+            "kind": "dag_template_selected",
+            "source": "start_implementation",
+            "template": dag_template,
+            "reason": "Selected from normalized project intake plan before controlled DAG creation.",
+            "normalized_plan": normalized_plan,
+            "created_at": _project_intake_now(),
+        })
+        swarm_orchestrator.store.save(swarm)
         if dag_template == "static_app":
             swarm_orchestrator.ensure_static_app_dag(swarm_id=swarm_id, generated_plan=generated_plan)
         else:
