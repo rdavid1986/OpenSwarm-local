@@ -928,8 +928,21 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
           >
             <Box sx={{ maxWidth: 860, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 1.5 }}>
               {chatMessages.length === 0 && events.length === 0 && (
-                <Box sx={{ alignSelf: 'flex-start', maxWidth: '86%', bgcolor: c.bg.surface, border: `1px solid ${c.border.subtle}`, borderRadius: 1.25, px: 1.5, py: 1.25 }}>
-                  <Typography sx={{ fontSize: '0.88rem', lineHeight: 1.55 }}>
+                <Box sx={{ alignSelf: 'stretch', maxWidth: '100%', bgcolor: 'transparent', border: 'none', px: 0.5, py: 1.25 }}>
+                  <style>{`@keyframes swarm-text-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }`}</style>
+                  <Typography
+                    sx={{
+                      fontSize: '0.88rem',
+                      lineHeight: 1.55,
+                      background: `linear-gradient(90deg, ${c.text.ghost} 0%, ${c.text.ghost} 40%, ${c.text.primary} 50%, ${c.text.ghost} 60%, ${c.text.ghost} 100%)`,
+                      backgroundSize: '200% 100%',
+                      WebkitBackgroundClip: 'text',
+                      backgroundClip: 'text',
+                      WebkitTextFillColor: 'transparent',
+                      color: 'transparent',
+                      animation: 'swarm-text-shimmer 5.1s linear infinite',
+                    }}
+                  >
                     Describe a large task. Swarm will plan and run an experimental orchestration for this dashboard.
                   </Typography>
                 </Box>
@@ -957,14 +970,14 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                   <Box
                     key={message.id || idx}
                     sx={{
-                      alignSelf: isUser ? 'flex-end' : 'flex-start',
-                      maxWidth: '86%',
-                      bgcolor: isUser ? c.accent.primary : c.bg.surface,
-                      color: isUser ? c.text.inverse : c.text.primary,
-                      border: isUser ? 'none' : `1px solid ${c.border.subtle}`,
-                      borderRadius: 1.25,
-                      px: 1.5,
-                      py: 1.25,
+                      alignSelf: isUser ? 'flex-end' : 'stretch',
+                      maxWidth: isUser ? '78%' : '100%',
+                      bgcolor: 'transparent',
+                      color: c.text.primary,
+                      border: 'none',
+                      borderRadius: isUser ? 0.85 : 0,
+                      px: isUser ? 1.5 : 0.5,
+                      py: isUser ? 1.15 : 1.25,
                     }}
                   >
                     {!isUser && (
@@ -972,7 +985,27 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         Swarm
                       </Typography>
                     )}
-                    <Typography sx={{ fontSize: '0.88rem', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                    <Typography
+                      sx={{
+                        fontSize: '0.88rem',
+                        lineHeight: 1.55,
+                        whiteSpace: 'pre-wrap',
+                        ...(isLatestChatMessage ? {
+                          overflow: 'hidden',
+                          animation: 'swarmMessageReveal 0.72s steps(34, end) both',
+                          '@keyframes swarmMessageReveal': {
+                            '0%': {
+                              clipPath: 'inset(0 100% 0 0)',
+                              opacity: 0.65,
+                            },
+                            '100%': {
+                              clipPath: 'inset(0 0 0 0)',
+                              opacity: 1,
+                            },
+                          },
+                        } : {}),
+                      }}
+                    >
                       {body}
                     </Typography>
                     {!isUser && projectIntake.options.length > 0 && (
@@ -986,7 +1019,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                             <Button
                               key={`${message.id || idx}-option-${optionIdx}`}
                               size="small"
-                              variant={isSelected ? 'contained' : isCustom ? 'outlined' : 'contained'}
+                              variant="outlined"
                               disabled={swarmState.actionLoading || !isLatestChatMessage}
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -999,7 +1032,26 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                                 fontSize: '0.72rem',
                                 textTransform: 'none',
                                 opacity: !isLatestChatMessage && !isSelected ? 0.45 : 1,
-                                borderWidth: isSelected ? 2 : undefined,
+                                borderRadius: 0.5,
+                                color: isSelected ? '#1d4ed8' : c.text.secondary,
+                                bgcolor: 'transparent',
+                                borderColor: 'transparent',
+                                borderWidth: 0,
+                                fontWeight: 400,
+                                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                                boxShadow: 'none',
+                                '&:before': isSelected ? {
+                                  content: '"✓"',
+                                  marginRight: '6px',
+                                  color: '#1d4ed8',
+                                } : undefined,
+                                '&:hover': {
+                                  bgcolor: 'transparent',
+                                  borderColor: 'transparent',
+                                  color: '#1d4ed8',
+                                  textDecoration: 'underline',
+                                  textUnderlineOffset: '3px',
+                                },
                               }}
                             >
                               {label}
@@ -1019,7 +1071,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                       </Box>
                     )}
                     {!isUser && projectIntake.action?.type === 'start_implementation' && (
-                      <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-start' }}>
+                      <Box sx={{ mt: 0.55, display: 'flex', flexDirection: 'column', gap: 0.35, alignItems: 'flex-start' }}>
                         <Button
                           size="small"
                           variant="contained"
@@ -1028,7 +1080,36 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                             e.stopPropagation();
                             handleStartImplementation();
                           }}
-                          sx={{ minHeight: 28, px: 1.25, py: 0.35, fontSize: '0.74rem', textTransform: 'none' }}
+                          sx={{
+                            minHeight: 28,
+                            px: 0.25,
+                            py: 0.2,
+                            fontSize: '0.74rem',
+                            textTransform: 'none',
+                            fontWeight: 500,
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                            bgcolor: 'transparent',
+                            color: '#1d4ed8',
+                            border: 'none',
+                            boxShadow: 'none',
+                            '&:before': {
+                              content: '">"',
+                              marginRight: '6px',
+                              color: '#1d4ed8',
+                            },
+                            '&:hover': {
+                              bgcolor: 'transparent',
+                              color: '#1e40af',
+                              textDecoration: 'underline',
+                              textUnderlineOffset: '3px',
+                              boxShadow: 'none',
+                            },
+                            '&.Mui-disabled': {
+                              bgcolor: 'transparent',
+                              color: c.text.ghost,
+                              borderColor: 'transparent',
+                            },
+                          }}
                         >
                           {isImplementationActionRunning ? 'Ejecutando implementación…' : renderText(projectIntake.action.label, 'Start Swarm Implementation')}
                         </Button>
@@ -1069,8 +1150,37 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               })}
 
               {lastSubmittedPrompt && !lastSubmittedAlreadyPersisted && (
-                <Box sx={{ alignSelf: 'flex-end', maxWidth: '86%', bgcolor: c.accent.primary, color: c.text.inverse, borderRadius: 1.25, px: 1.5, py: 1.25 }}>
-                  <Typography sx={{ fontSize: '0.88rem', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                <Box
+                  sx={{
+                    alignSelf: 'flex-end',
+                    maxWidth: '78%',
+                    bgcolor: 'transparent',
+                    color: c.text.primary,
+                    border: 'none',
+                    borderRadius: 0.85,
+                    px: 1.5,
+                    py: 1.15,
+                  }}
+                >
+                  <Typography
+                    sx={{
+                      fontSize: '0.88rem',
+                      lineHeight: 1.55,
+                      whiteSpace: 'pre-wrap',
+                      overflow: 'hidden',
+                      animation: 'swarmMessageReveal 0.5s steps(28, end) both',
+                      '@keyframes swarmMessageReveal': {
+                        '0%': {
+                          clipPath: 'inset(0 100% 0 0)',
+                          opacity: 0.65,
+                        },
+                        '100%': {
+                          clipPath: 'inset(0 0 0 0)',
+                          opacity: 1,
+                        },
+                      },
+                    }}
+                  >
                     {lastSubmittedPrompt}
                   </Typography>
                 </Box>
@@ -1085,9 +1195,65 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               ))}
 
               {swarmState.actionLoading && (
-                <Box sx={{ alignSelf: 'flex-start', maxWidth: '86%', bgcolor: c.bg.surface, border: `1px solid ${c.border.subtle}`, borderRadius: 1.25, px: 1.5, py: 1 }}>
-                  <Typography sx={{ fontSize: '0.78rem', color: c.text.muted }}>
-                    Swarm is working…
+                <Box
+                  sx={{
+                    alignSelf: 'stretch',
+                    maxWidth: '100%',
+                    bgcolor: 'transparent',
+                    border: 'none',
+                    borderRadius: 0,
+                    px: 0.5,
+                    py: 0.75,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-start',
+                    gap: 0.55,
+                  }}
+                >
+                  <style>{`@keyframes swarm-text-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }`}</style>
+                  <Typography
+                    sx={{
+                      fontSize: '0.78rem',
+                      letterSpacing: '0.01em',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Box
+                      component="span"
+                      sx={{
+                        background: `linear-gradient(90deg, ${c.text.ghost} 0%, ${c.text.ghost} 40%, ${c.text.primary} 50%, ${c.text.ghost} 60%, ${c.text.ghost} 100%)`,
+                        backgroundSize: '200% 100%',
+                        WebkitBackgroundClip: 'text',
+                        backgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent',
+                        color: 'transparent',
+                        animation: 'swarm-text-shimmer 5.1s linear infinite',
+                      }}
+                    >
+                      Swarm is working
+                    </Box>
+                    <Box
+                      component="span"
+                      sx={{
+                        display: 'inline-flex',
+                        ml: 0.45,
+                        '& span': {
+                          animation: 'swarmDotBlink 1s infinite',
+                          opacity: 0.25,
+                        },
+                        '& span:nth-of-type(2)': { animationDelay: '0.15s' },
+                        '& span:nth-of-type(3)': { animationDelay: '0.3s' },
+                        '@keyframes swarmDotBlink': {
+                          '0%, 80%, 100%': { opacity: 0.25, transform: 'translateY(0)' },
+                          '40%': { opacity: 1, transform: 'translateY(-1px)' },
+                        },
+                      }}
+                    >
+                      <span>.</span>
+                      <span>.</span>
+                      <span>.</span>
+                    </Box>
                   </Typography>
                 </Box>
               )}
