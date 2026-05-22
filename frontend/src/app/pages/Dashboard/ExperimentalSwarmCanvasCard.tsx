@@ -11,6 +11,7 @@ import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import {
   removeSwarmCard,
   setSwarmCardMode,
+  setSwarmCardModel,
   setSwarmCardPosition,
   setSwarmCardSize,
   setSwarmCardSwarmId,
@@ -360,6 +361,10 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const handleSwarmModeChange = useCallback((nextMode: SwarmMode) => {
     dispatch(setSwarmCardMode({ swarmCardId, swarmMode: nextMode }));
     setCustomIntakeMode(false);
+  }, [dispatch, swarmCardId]);
+
+  const handleSwarmModelChange = useCallback((nextModel: string) => {
+    dispatch(setSwarmCardModel({ swarmCardId, swarmModel: nextModel }));
   }, [dispatch, swarmCardId]);
 
   const activeSwarmId = swarmId || null;
@@ -921,7 +926,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             onWheel={(e) => e.stopPropagation()}
             sx={{ flex: '1 1 0', height: 0, overflowY: 'auto', overflowX: 'hidden', p: 2, minHeight: 0 }}
           >
-            <Box sx={{ maxWidth: 760, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+            <Box sx={{ maxWidth: 860, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 1.5 }}>
               {chatMessages.length === 0 && events.length === 0 && (
                 <Box sx={{ alignSelf: 'flex-start', maxWidth: '86%', bgcolor: c.bg.surface, border: `1px solid ${c.border.subtle}`, borderRadius: 1.25, px: 1.5, py: 1.25 }}>
                   <Typography sx={{ fontSize: '0.88rem', lineHeight: 1.55 }}>
@@ -1113,6 +1118,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               canContinue={Boolean(activeSwarmId)}
               customIntakeMode={customIntakeMode}
               model={activeSwarmModel}
+              onModelChange={handleSwarmModelChange}
               modelLabel={activeSwarmModel}
               inputRef={promptInputRef}
             />
