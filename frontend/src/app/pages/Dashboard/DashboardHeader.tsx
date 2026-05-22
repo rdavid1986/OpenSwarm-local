@@ -1,11 +1,18 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
+import InputBase from '@mui/material/InputBase';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
 import GridViewRoundedIcon from '@mui/icons-material/GridViewRounded';
 import LanguageIcon from '@mui/icons-material/Language';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import EditIcon from '@mui/icons-material/Edit';
+import CheckIcon from '@mui/icons-material/Check';
+import CloseIcon from '@mui/icons-material/Close';
+import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import type { AgentSession } from '@/shared/state/agentsSlice';
 import type { CardPosition, ViewCardPosition, BrowserCardPosition } from '@/shared/state/dashboardLayoutSlice';
@@ -22,6 +29,10 @@ interface DashboardHeaderProps {
   dashboardId: string | undefined;
   canvasActions: CanvasActions;
   onHighlightCard?: (cardId: string) => void;
+  onRenameDashboard?: (name: string) => void;
+  onOpenWorkspace?: () => void;
+  workspacePath?: string | null;
+  workspaceLoading?: boolean;
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -43,10 +54,17 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({
   dashboardId,
   canvasActions,
   onHighlightCard,
+  onRenameDashboard,
+  onOpenWorkspace,
+  workspacePath,
+  workspaceLoading = false,
 }) => {
   const c = useClaudeTokens();
   const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const agentItems = Object.values(cards)
     .map((card) => {
@@ -100,8 +118,38 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({
   );
 
   const toggle = useCallback(() => {
-    if (hasItems) setExpanded((v) => !v);
-  }, [hasItems]);
+    if (!editing && hasItems) setExpanded((v) => !v);
+  }, [editing, hasItems]);
+
+  const startEditing = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpanded(false);
+    setDraftName(dashboardName || 'Dashboard');
+    setEditing(true);
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  }, [dashboardName]);
+
+  const cancelEditing = useCallback((e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setEditing(false);
+    setDraftName('');
+  }, []);
+
+  const submitEditing = useCallback((e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const trimmed = draftName.trim();
+    if (trimmed && trimmed !== dashboardName) {
+      onRenameDashboard?.(trimmed);
+    }
+    setEditing(false);
+  }, [dashboardName, draftName, onRenameDashboard]);
+
+  const handleOpenWorkspace = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    onOpenWorkspace?.();
+  }, [onOpenWorkspace]);
+
+  const workspaceDisabled = !workspacePath || workspaceLoading || !onOpenWorkspace;
 
   return (
     <Box ref={containerRef} sx={{ position: 'relative', display: 'inline-flex', flexDirection: 'column' }}>
@@ -124,16 +172,88 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({
         }}
       >
         <DashboardIcon sx={{ fontSize: 'small', color: c.accent.primary }} />
-        <Typography
-          sx={{
-            fontSize: '0.9rem',
-            fontWeight: 600,
-            color: c.text.primary,
-            lineHeight: 1,
-          }}
-        >
-          {dashboardName || 'Dashboard'}
-        </Typography>
+        {editing ? (
+          <InputBase
+            inputRef={inputRef}
+            value={draftName}
+            onChange={(e) => setDraftName(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Enter') submitEditing();
+              if (e.key === 'Escape') cancelEditing();
+            }}
+            sx={{
+              width: 220,
+              fontSize: '0.9rem',
+              fontWeight: 600,
+              color: c.text.primary,
+              lineHeight: 1,
+            }}
+          />
+        ) : (
+          <Typography
+            sx={{
+              fontSize: '0.9rem',
+              fontWeight: 600,
+              color: c.text.primary,
+              lineHeight: 1,
+              maxWidth: 280,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {dashboardName || 'Dashboard'}
+          </Typography>
+        )}
+        {editing ? (
+          <>
+            <IconButton
+              size="small"
+              onClick={submitEditing}
+              onPointerDown={(e) => e.stopPropagation()}
+              sx={{ p: 0.25, color: c.status.success }}
+            >
+              <CheckIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+            <IconButton
+              size="small"
+              onClick={cancelEditing}
+              onPointerDown={(e) => e.stopPropagation()}
+              sx={{ p: 0.25, color: c.text.muted }}
+            >
+              <CloseIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          </>
+        ) : (
+          <>
+            <Tooltip title="Rename dashboard">
+              <IconButton
+                size="small"
+                onClick={startEditing}
+                onPointerDown={(e) => e.stopPropagation()}
+                sx={{ p: 0.25, color: c.text.muted, '&:hover': { color: c.text.primary } }}
+              >
+                <EditIcon sx={{ fontSize: 15 }} />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title={workspaceDisabled ? 'Workspace no disponible todavía' : workspacePath}>
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={handleOpenWorkspace}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  disabled={workspaceDisabled}
+                  sx={{ p: 0.25, color: c.text.muted, '&:hover': { color: c.accent.primary } }}
+                >
+                  <FolderOpenIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              </span>
+            </Tooltip>
+          </>
+        )}
         {hasItems && (
           <KeyboardArrowDownIcon
             sx={{

@@ -27,6 +27,7 @@ import {
   resumeExperimentalApproval,
   startExperimentalImplementation,
 } from '@/shared/state/experimentalSwarmsSlice';
+import { renameDashboard } from '@/shared/state/dashboardsSlice';
 import { useAppDispatch, useAppSelector } from '@/shared/hooks';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import type { CardType } from './useDashboardSelection';
@@ -293,6 +294,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const c = useClaudeTokens();
   const dispatch = useAppDispatch();
   const swarmState = useAppSelector((s) => s.experimentalSwarms);
+  const dashboard = useAppSelector((s) => dashboardId ? s.dashboards.items[dashboardId] : undefined);
 
   const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
   const resizeRef = useRef<{
@@ -332,6 +334,19 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     evidence: false,
     finalResult: true,
   });
+
+  const maybeRenameDashboardFromSwarmTitle = useCallback((title: any) => {
+    if (!dashboardId || !dashboard) return;
+    const nextName = renderText(title, '').trim();
+    if (!nextName || nextName === dashboard.name) return;
+    if (!dashboard.auto_named && dashboard.name !== 'Untitled Dashboard') return;
+    dispatch(renameDashboard({
+      id: dashboardId,
+      name: nextName,
+      previousName: dashboard.name,
+      autoNamed: true,
+    }));
+  }, [dashboard, dashboardId, dispatch]);
 
   const activeSwarmId = swarmId || null;
   const activeSwarm = activeSwarmId && swarmState.swarm?.id === activeSwarmId ? swarmState.swarm : null;
@@ -493,7 +508,20 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
     await dispatch(chatExperimentalSwarm({ swarmId: swarmIdToRun, message: cleanPrompt || lastSubmittedPrompt || 'Continue' }));
     dispatch(fetchExperimentalSwarm(swarmIdToRun));
-  }, [activeSwarm?.intent, activeSwarmId, dashboardId, dispatch, lastSubmittedPrompt, onSwarmBound, prompt, swarmCardId, swarmState.swarm?.intent]);
+  }, [activeSwarm?.intent, activeSwarmId, dashboardId, dispatch, lastSubmittedPrompt, maybeRenameDashboardFromSwarmTitle, onSwarmBound, prompt, swarmCardId, swarmState.swarm?.intent]);
+
+  useEffect(() => {
+    const intakeStatus = (activeSwarm as any)?.project_intake_state?.status;
+    const finalRoute = (activeSwarm as any)?.final_result?.route;
+    const canUseSwarmTitle =
+      intakeStatus === 'ready_to_implement' ||
+      finalRoute === 'project_plan_ready' ||
+      finalRoute === 'final_result';
+
+    if (canUseSwarmTitle && activeSwarm?.title) {
+      maybeRenameDashboardFromSwarmTitle(activeSwarm.title);
+    }
+  }, [activeSwarm, activeSwarm?.title, maybeRenameDashboardFromSwarmTitle]);
 
   const handleProjectIntakeOption = useCallback(async (option: any) => {
     const label = renderText(option?.label ?? option?.value, '').trim();

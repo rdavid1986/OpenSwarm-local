@@ -22,6 +22,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
     getAppVersion: () => ipcRenderer.invoke('get-app-version'),
     openExternal: (url) => ipcRenderer.invoke('open-external', url),
+    openFolder: (folderPath) => ipcRenderer.invoke('open-folder', folderPath),
     connectSlack: () => ipcRenderer.invoke('connect-slack'),
     sendCdpCommand: (wcId, method, params) => ipcRenderer.invoke('send-cdp-command', wcId, method, params),
     cdpCacheSet: (wcId, indexMap) => ipcRenderer.invoke('cdp-cache-set', wcId, indexMap),

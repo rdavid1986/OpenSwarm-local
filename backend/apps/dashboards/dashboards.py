@@ -123,7 +123,10 @@ async def list_dashboards():
 
 @dashboards.router.post("/create")
 async def create_dashboard(body: DashboardCreate):
-    dashboard = Dashboard(name=body.name)
+    dashboard = Dashboard(
+        name=body.name,
+        auto_named=(body.name == "Untitled Dashboard"),
+    )
     _save(dashboard)
     return dashboard.model_dump(mode="json")
 
@@ -271,7 +274,7 @@ async def update_dashboard(dashboard_id: str, body: DashboardUpdate):
     dashboard = _load(dashboard_id)
     if body.name is not None:
         dashboard.name = body.name
-        dashboard.auto_named = False
+        dashboard.auto_named = bool(body.auto_named) if body.auto_named is not None else False
     if body.layout is not None:
         dashboard.layout = body.layout
     if body.thumbnail is not None:

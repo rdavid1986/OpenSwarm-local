@@ -42,11 +42,11 @@ export const createDashboard = createAsyncThunk(
 
 export const renameDashboard = createAsyncThunk(
   'dashboards/rename',
-  async ({ id, name }: { id: string; name: string; previousName?: string }) => {
+  async ({ id, name, autoNamed }: { id: string; name: string; previousName?: string; autoNamed?: boolean }) => {
     const res = await fetch(`${DASHBOARDS_API}/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, auto_named: autoNamed }),
     });
     if (!res.ok) throw new Error(`rename failed: ${res.status}`);
     return (await res.json()) as Dashboard;
@@ -121,10 +121,10 @@ const dashboardsSlice = createSlice({
       // entry / picker label swaps with no perceptible lag. Server confirms
       // on .fulfilled (rare correction); .rejected rolls back to previousName.
       .addCase(renameDashboard.pending, (state, action) => {
-        const { id, name } = action.meta.arg;
+        const { id, name, autoNamed } = action.meta.arg;
         if (state.items[id]) {
           state.items[id].name = name;
-          state.items[id].auto_named = false;
+          state.items[id].auto_named = !!autoNamed;
         }
       })
       .addCase(renameDashboard.fulfilled, (state, action) => {

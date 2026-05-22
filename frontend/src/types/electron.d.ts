@@ -46,6 +46,7 @@ declare global {
     onUpdateError: (cb: (message: string) => void) => () => void;
     onWebviewNewWindow: (cb: (url: string, webContentsId: number) => void) => () => void;
     openExternal: (url: string) => Promise<void>;
+    openFolder: (folderPath: string) => Promise<{ ok: boolean; error?: string }>;
     // Deep-link listener — fires when OS opens the app with openswarm://... URL.
     onAuthUrl?: (cb: (url: string) => void) => () => void;
     // OAuth claim deep-link listener — fires for openswarm://oauth/{provider}/complete.

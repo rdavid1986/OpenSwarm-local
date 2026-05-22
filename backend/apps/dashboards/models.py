@@ -107,5 +107,6 @@ class DashboardCreate(BaseModel):
 
 class DashboardUpdate(BaseModel):
     name: Optional[str] = None
+    auto_named: Optional[bool] = None
     layout: Optional[DashboardLayout] = None
     thumbnail: Optional[str] = None

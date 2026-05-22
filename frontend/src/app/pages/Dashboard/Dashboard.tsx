@@ -56,7 +56,7 @@ import {
 } from '@/shared/state/dashboardLayoutSlice';
 import { fetchOutputs } from '@/shared/state/outputsSlice';
 import { updateOrchestrationNodePosition } from '@/shared/state/experimentalSwarmsSlice';
-import { generateDashboardName, updateDashboardThumbnail } from '@/shared/state/dashboardsSlice';
+import { generateDashboardName, renameDashboard, updateDashboardThumbnail } from '@/shared/state/dashboardsSlice';
 import { dashboardWs } from '@/shared/ws/WebSocketManager';
 import { initBrowserCommandHandler } from '@/shared/browserCommandHandler';
 import { clearPendingBrowserUrl, clearPendingFocusAgentId } from '@/shared/state/tempStateSlice';
@@ -111,9 +111,10 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   const dispatch = useAppDispatch();
   const elementSelectionCtx = useElementSelection();
   const isElementSelectMode = elementSelectionCtx?.selectMode ?? false;
-  const dashboardName = useAppSelector((state) =>
-    dashboardId ? state.dashboards.items[dashboardId]?.name : undefined,
+  const dashboard = useAppSelector((state) =>
+    dashboardId ? state.dashboards.items[dashboardId] : undefined,
   );
+  const dashboardName = dashboard?.name;
   const sessions = useAppSelector((state) => state.agents.sessions);
   const expandedSessionIds = useAppSelector((state) => state.agents.expandedSessionIds);
   const cards = useAppSelector((state) => state.dashboardLayout.cards);
@@ -143,6 +144,11 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
 
   const linkedSwarmIds = useMemo(
     () => new Set(Object.values(swarmCards).filter((sc) => sc.swarm_id).map((sc) => sc.swarm_id as string)),
+    [swarmCards],
+  );
+
+  const dashboardSwarmId = useMemo(
+    () => swarmCards['swarm-main']?.swarm_id || null,
     [swarmCards],
   );
 
@@ -204,6 +210,8 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   const [autoFocusSessionId, setAutoFocusSessionId] = useState<string | null>(null);
   const [pendingSelectSessionId, setPendingSelectSessionId] = useState<string | null>(null);
   const [focusedCardId, setFocusedCardId] = useState<string | null>(null);
+  const [dashboardWorkspacePath, setDashboardWorkspacePath] = useState<string | null>(null);
+  const [dashboardWorkspaceLoading, setDashboardWorkspaceLoading] = useState(false);
   const [showWalkthrough, setShowWalkthrough] = useState(() => {
     if (localStorage.getItem('openswarm_walkthrough_pending') === 'true') {
       return true;
@@ -227,6 +235,40 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
       highlightTimerRef.current = null;
     }, 2000);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDashboardWorkspacePath(null);
+    if (!dashboardSwarmId) {
+      setDashboardWorkspaceLoading(false);
+      return;
+    }
+
+    setDashboardWorkspaceLoading(true);
+    fetch(`${API_BASE}/swarms/${dashboardSwarmId}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`swarm fetch failed: ${res.status}`);
+        return await res.json();
+      })
+      .then((swarm) => {
+        if (!cancelled) {
+          const workspacePath = typeof swarm?.workspace_path === 'string' && swarm.workspace_path.trim()
+            ? swarm.workspace_path
+            : null;
+          setDashboardWorkspacePath(workspacePath);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setDashboardWorkspacePath(null);
+      })
+      .finally(() => {
+        if (!cancelled) setDashboardWorkspaceLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboardSwarmId]);
 
   useEffect(() => {
     if (autoFocusSessionId) {
@@ -2042,6 +2084,24 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   const dotSize = Math.max(1, 1.5 * canvas.zoom);
   const dotSpacing = 24 * canvas.zoom;
 
+  const handleRenameDashboard = useCallback((name: string) => {
+    if (!dashboardId || !dashboard) return;
+    dispatch(renameDashboard({
+      id: dashboardId,
+      name,
+      previousName: dashboard.name,
+      autoNamed: false,
+    }));
+  }, [dashboard, dashboardId, dispatch]);
+
+  const handleOpenDashboardWorkspace = useCallback(async () => {
+    if (!dashboardWorkspacePath) return;
+    const result = await window.openswarm?.openFolder?.(dashboardWorkspacePath);
+    if (result && !result.ok) {
+      console.warn('[dashboard] failed to open workspace folder:', result.error);
+    }
+  }, [dashboardWorkspacePath]);
+
   return (
     <>
     <DashboardSelectionOverlay />
@@ -2071,6 +2131,10 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
             dashboardId={dashboardId}
             canvasActions={canvas.actions}
             onHighlightCard={handleHighlightCard}
+            onRenameDashboard={handleRenameDashboard}
+            onOpenWorkspace={handleOpenDashboardWorkspace}
+            workspacePath={dashboardWorkspacePath}
+            workspaceLoading={dashboardWorkspaceLoading}
           />
         </Box>
       </Box>

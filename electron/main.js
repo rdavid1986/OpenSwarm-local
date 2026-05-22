@@ -1243,6 +1243,40 @@ ipcMain.handle('open-external', (_event, url) => {
   }
 });
 
+ipcMain.handle('open-folder', async (_event, folderPath) => {
+  try {
+    if (typeof folderPath !== 'string' || !folderPath.trim()) {
+      return { ok: false, error: 'folderPath is required' };
+    }
+
+    const workspacesRoot = path.resolve(os.homedir(), '.openswarm', 'workspaces');
+    const target = path.resolve(folderPath);
+    const rootWithSep = workspacesRoot.endsWith(path.sep) ? workspacesRoot : workspacesRoot + path.sep;
+    const comparableTarget = process.platform === 'win32' ? target.toLowerCase() : target;
+    const comparableRoot = process.platform === 'win32' ? workspacesRoot.toLowerCase() : workspacesRoot;
+    const comparableRootWithSep = process.platform === 'win32' ? rootWithSep.toLowerCase() : rootWithSep;
+
+    if (comparableTarget !== comparableRoot && !comparableTarget.startsWith(comparableRootWithSep)) {
+      return { ok: false, error: 'folderPath is outside the OpenSwarm workspaces directory' };
+    }
+
+    if (!fs.existsSync(target)) {
+      return { ok: false, error: 'folderPath does not exist' };
+    }
+
+    const stat = fs.statSync(target);
+    if (!stat.isDirectory()) {
+      return { ok: false, error: 'folderPath is not a directory' };
+    }
+
+    const openError = await shell.openPath(target);
+    if (openError) return { ok: false, error: openError };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
 // ---------------------------------------------------------------------------
 // CDP debugger bridge for the browser sub-agent
 // ---------------------------------------------------------------------------
