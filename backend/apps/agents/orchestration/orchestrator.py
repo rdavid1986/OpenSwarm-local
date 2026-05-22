@@ -17,7 +17,12 @@ from backend.apps.agents.orchestration.models import (
     TaskNode,
 )
 from backend.apps.agents.orchestration.store import SwarmStore, swarm_store
-from backend.apps.agents.runtime.experimental_task_type_registry import get_experimental_task_spec
+from backend.apps.agents.runtime.experimental_task_type_registry import (
+    ExperimentalTaskContractValidationError,
+    classify_experimental_task,
+    get_experimental_task_spec,
+    validate_experimental_task_contract,
+)
 
 
 class SwarmOrchestrator:
@@ -842,6 +847,63 @@ class SwarmOrchestrator:
             )
 
         return self.store.save(swarm)
+
+    def _validate_dag_proposal_state(self, swarm: SwarmState) -> list[dict]:
+        errors: list[dict] = []
+
+        if not swarm.tasks:
+            return [{"error": "dag_proposal_has_no_tasks"}]
+
+        task_ids = [task.id for task in swarm.tasks]
+        duplicate_task_ids = sorted({task_id for task_id in task_ids if task_ids.count(task_id) > 1})
+        if duplicate_task_ids:
+            errors.append({"error": "duplicate_task_ids", "task_ids": duplicate_task_ids})
+
+        contract_ids = [contract.id for contract in swarm.contracts]
+        duplicate_contract_ids = sorted({contract_id for contract_id in contract_ids if contract_ids.count(contract_id) > 1})
+        if duplicate_contract_ids:
+            errors.append({"error": "duplicate_contract_ids", "contract_ids": duplicate_contract_ids})
+
+        tasks_by_id = {task.id: task for task in swarm.tasks}
+        for task in swarm.tasks:
+            for dep_id in task.depends_on:
+                if dep_id not in tasks_by_id:
+                    errors.append({"error": "unknown_dependency", "task_id": task.id, "missing_dep": dep_id})
+
+        if not errors:
+            visiting: set[str] = set()
+            visited: set[str] = set()
+
+            def visit(task_id: str) -> None:
+                if task_id in visited:
+                    return
+                if task_id in visiting:
+                    raise ValueError(f"Cycle detected at task {task_id}")
+                visiting.add(task_id)
+                for dep_id in tasks_by_id[task_id].depends_on:
+                    visit(dep_id)
+                visiting.remove(task_id)
+                visited.add(task_id)
+
+            try:
+                for task_id in task_ids:
+                    visit(task_id)
+            except ValueError as exc:
+                errors.append({"error": "invalid_task_dependencies", "detail": str(exc)})
+
+        for task in swarm.tasks:
+            try:
+                task_type = classify_experimental_task(task)
+            except ValueError as exc:
+                errors.append({"error": "unknown_task_type", "task_id": task.id, "title": task.title, "detail": str(exc)})
+                continue
+
+            try:
+                validate_experimental_task_contract(swarm=swarm, task=task, task_type=task_type)
+            except ExperimentalTaskContractValidationError as exc:
+                errors.append(exc.to_error())
+
+        return errors
 
     def submit_artifact(
         self,
