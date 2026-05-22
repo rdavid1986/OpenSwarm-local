@@ -285,6 +285,43 @@ class SwarmOrchestrator:
         self._ensure_workspace_path(swarm)
         return self.store.save(swarm)
 
+    @staticmethod
+    def _normalize_generated_plan(generated_plan: dict | None, *, defaults: dict[str, str] | None = None) -> dict[str, str]:
+        source = generated_plan if isinstance(generated_plan, dict) else {}
+        fallback = defaults or {}
+        normalized = {
+            "summary": str(source.get("summary") or fallback.get("summary") or "Plan generated from project intake."),
+            "app_type": str(source.get("app_type") or fallback.get("app_type") or "app"),
+            "main_goal": str(source.get("main_goal") or fallback.get("main_goal") or "build the requested MVP"),
+            "frontend": str(source.get("frontend") or fallback.get("frontend") or "frontend not defined"),
+            "backend": str(source.get("backend") or fallback.get("backend") or "backend not defined"),
+            "database": str(source.get("database") or fallback.get("database") or "database not defined"),
+            "mvp_priority": str(source.get("mvp_priority") or fallback.get("mvp_priority") or "MVP priority not defined"),
+            "out_of_scope": str(source.get("out_of_scope") or fallback.get("out_of_scope") or "out of scope not defined"),
+            "visual_style": str(source.get("visual_style") or fallback.get("visual_style") or "clean modern UI"),
+        }
+        return normalized
+
+    @staticmethod
+    def _select_dag_template(normalized_plan: dict[str, str]) -> str:
+        app_type = normalized_plan.get("app_type", "").lower()
+        frontend = normalized_plan.get("frontend", "").lower()
+        backend = normalized_plan.get("backend", "").lower()
+        database = normalized_plan.get("database", "").lower()
+
+        static_signals = ["static", "html", "css", "landing", "tutorial", "brochure"]
+        no_backend_signals = ["no backend", "none", "static", "sin backend"]
+        no_database_signals = ["no database", "none", "static", "sin database"]
+
+        if (
+            any(signal in app_type or signal in frontend for signal in static_signals)
+            and any(signal in backend for signal in no_backend_signals)
+            and any(signal in database for signal in no_database_signals)
+        ):
+            return "static_app"
+
+        return "implementation_brief"
+
     def ensure_static_app_dag(self, *, swarm_id: str, generated_plan: dict | None = None) -> SwarmState:
         swarm = self.store.load(swarm_id)
         self._ensure_workspace_path(swarm)
