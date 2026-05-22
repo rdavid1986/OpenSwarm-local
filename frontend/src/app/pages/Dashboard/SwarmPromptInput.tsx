@@ -14,6 +14,40 @@ import SwarmModePicker, { getSwarmModeOption } from './SwarmModePicker';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
 
+function formatTokenCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+const ContextRing: React.FC<{ used: number; limit: number; accentColor: string; trackColor: string }> = ({ used, limit, accentColor, trackColor }) => {
+  if (used === 0 || limit <= 0) return null;
+  const pct = Math.min((used / limit) * 100, 100);
+  const size = 20;
+  const strokeWidth = 2;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const dashOffset = circumference * (1 - pct / 100);
+  const tooltip = `${pct.toFixed(1)}% · ${formatTokenCount(used)} / ${formatTokenCount(limit)} context used`;
+
+  return (
+    <Tooltip title={tooltip}>
+      <Box sx={{ display: 'inline-flex', alignItems: 'center', cursor: 'default', p: 0.5 }}>
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+          <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke={trackColor} strokeWidth={strokeWidth} />
+          <circle
+            cx={size / 2} cy={size / 2} r={radius}
+            fill="none" stroke={accentColor} strokeWidth={strokeWidth}
+            strokeDasharray={circumference} strokeDashoffset={dashOffset}
+            strokeLinecap="round"
+            transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          />
+        </svg>
+      </Box>
+    </Tooltip>
+  );
+};
+
 interface Props {
   value: string;
   onChange: (value: string) => void;
@@ -29,6 +63,7 @@ interface Props {
   model?: string | null;
   onModelChange?: (model: string) => void;
   modelLabel?: string | null;
+  contextEstimate?: { used: number; limit: number };
   inputRef?: React.Ref<HTMLInputElement | HTMLTextAreaElement>;
 }
 
@@ -47,6 +82,7 @@ const SwarmPromptInput: React.FC<Props> = ({
   model,
   onModelChange,
   modelLabel,
+  contextEstimate,
   inputRef,
 }) => {
   const c = useClaudeTokens();
@@ -129,6 +165,14 @@ const SwarmPromptInput: React.FC<Props> = ({
         </Box>
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {contextEstimate && (
+            <ContextRing
+              used={contextEstimate.used}
+              limit={contextEstimate.limit}
+              accentColor={c.accent.primary}
+              trackColor={c.border.subtle}
+            />
+          )}
           <Typography sx={{ color: c.text.tertiary, fontSize: '0.72rem', display: { xs: 'none', sm: 'block' } }}>
             Shift+Enter
           </Typography>

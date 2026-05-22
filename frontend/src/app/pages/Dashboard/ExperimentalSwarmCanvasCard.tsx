@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
@@ -75,6 +75,37 @@ const EDGE_THICKNESS = 6;
 const CORNER_SIZE = 14;
 const MIN_SIDE_W = 220;
 const MAX_SIDE_W = 520;
+const DEFAULT_SWARM_CONTEXT_LIMIT = 32_000;
+
+function getSwarmMessageContextText(message: any): string {
+  if (!message) return '';
+  if (typeof message === 'string') return message;
+  const payload = message.payload && typeof message.payload === 'object' ? message.payload : null;
+  const content = payload?.content ?? message.content ?? message.text ?? '';
+  if (typeof content === 'string') return content;
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return '';
+  }
+}
+
+function getSwarmModelContextLimit(model: string | null): number {
+  const raw = String(model || '').toLowerCase();
+  const directMatch = raw.match(/(\d+(?:\.\d+)?)\s*k/);
+  if (directMatch) {
+    return Math.max(1, Math.round(Number(directMatch[1]) * 1000));
+  }
+  if (raw.includes('1m') || raw.includes('1000000')) return 1_000_000;
+  if (raw.includes('200k') || raw.includes('200000')) return 200_000;
+  if (raw.includes('128k') || raw.includes('128000')) return 128_000;
+  if (raw.includes('64k') || raw.includes('64000')) return 64_000;
+  if (raw.includes('32k') || raw.includes('32000')) return 32_000;
+  if (raw.includes('16k') || raw.includes('16000')) return 16_000;
+  if (raw.includes('8k') || raw.includes('8000')) return 8_000;
+  return DEFAULT_SWARM_CONTEXT_LIMIT;
+}
+
 
 const CURSOR_MAP: Record<ResizeDir, string> = {
   n: 'ns-resize',
@@ -433,6 +464,21 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     const role = getSwarmMessageRole(message);
     return (role === 'user' || role === 'human') && getSwarmMessageText(message) === lastSubmittedPrompt;
   });
+
+  const contextEstimate = useMemo(() => {
+    let totalChars = 0;
+    for (const message of chatMessages) {
+      totalChars += getSwarmMessageContextText(message).length;
+    }
+    if (lastSubmittedPrompt && !lastSubmittedAlreadyPersisted) {
+      totalChars += lastSubmittedPrompt.length;
+    }
+    return {
+      used: Math.round(totalChars / 4),
+      limit: getSwarmModelContextLimit(activeSwarmModel),
+    };
+  }, [activeSwarmModel, chatMessages, lastSubmittedAlreadyPersisted, lastSubmittedPrompt]);
+
 
   const stopImplementationPolling = useCallback(() => {
     if (implementationPollingIntervalRef.current !== null) {
@@ -1286,6 +1332,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               model={activeSwarmModel}
               onModelChange={handleSwarmModelChange}
               modelLabel={activeSwarmModel}
+              contextEstimate={contextEstimate}
               inputRef={promptInputRef}
             />
           </Box>
