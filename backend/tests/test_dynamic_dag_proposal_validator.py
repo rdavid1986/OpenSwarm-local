@@ -76,3 +76,28 @@ def test_dag_proposal_validator_rejects_contract_with_extra_tools():
     errors = orchestrator._validate_dag_proposal_state(swarm)
 
     assert any(error.get("code") == "allowed_tools_exceed_task_type" for error in errors)
+
+
+def test_record_dag_proposal_decision_marks_accepted_or_rejected():
+    orchestrator = SwarmOrchestrator()
+    swarm = SwarmState(title="Test", user_prompt="Test")
+
+    accepted = orchestrator._record_dag_proposal_decision(
+        swarm=swarm,
+        source="planner_model",
+        proposal_kind="model_generated_dag",
+        validation_errors=[],
+        metadata={"template": "dynamic"},
+    )
+    rejected = orchestrator._record_dag_proposal_decision(
+        swarm=accepted,
+        source="planner_model",
+        proposal_kind="model_generated_dag",
+        validation_errors=[{"error": "unknown_dependency"}],
+    )
+
+    assert rejected.decisions[-2]["kind"] == "dag_proposal_validation"
+    assert rejected.decisions[-2]["status"] == "accepted"
+    assert rejected.decisions[-2]["metadata"]["template"] == "dynamic"
+    assert rejected.decisions[-1]["status"] == "rejected"
+    assert rejected.decisions[-1]["validation_errors"][0]["error"] == "unknown_dependency"

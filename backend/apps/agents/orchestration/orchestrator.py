@@ -905,6 +905,28 @@ class SwarmOrchestrator:
 
         return errors
 
+    def _record_dag_proposal_decision(
+        self,
+        *,
+        swarm: SwarmState,
+        source: str,
+        proposal_kind: str,
+        validation_errors: list[dict],
+        metadata: dict | None = None,
+    ) -> SwarmState:
+        status = "accepted" if not validation_errors else "rejected"
+        swarm.decisions.append(
+            {
+                "kind": "dag_proposal_validation",
+                "source": source,
+                "proposal_kind": proposal_kind,
+                "status": status,
+                "validation_errors": validation_errors,
+                "metadata": metadata or {},
+            }
+        )
+        return swarm
+
     def submit_artifact(
         self,
         *,
