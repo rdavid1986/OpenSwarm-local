@@ -69,6 +69,8 @@ class CreateSwarmRequest(BaseModel):
     dashboard_id: str | None = None
     workspace_path: str | None = None
     intent: str | None = None
+    swarm_mode: str | None = None
+    swarm_model: str | None = None
 
 
 class RunMVPRequest(BaseModel):
@@ -96,6 +98,7 @@ class ExperimentalApprovalDecisionRequest(BaseModel):
 class ExperimentalChatRequest(BaseModel):
     message: str
     model: str = "qwen2.5-coder:14b"
+    swarm_mode: str | None = None
 
 
 class OrchestrationNodePositionRequest(BaseModel):
@@ -1520,6 +1523,41 @@ def _controlled_chat_response(route: str, user_message: str, swarm) -> str | Non
     return None
 
 
+def _normalize_swarm_mode(value: str | None) -> str:
+    normalized = (value or "ask").strip().lower()
+    return normalized if normalized in {"ask", "plan", "app_builder", "skill_builder", "debug"} else "ask"
+
+
+def _swarm_mode_local_response(swarm_mode: str, user_message: str, swarm) -> tuple[str, str] | None:
+    if swarm_mode == "plan":
+        return (
+            "swarm_mode_plan",
+            (
+                "Plan mode todavía no ejecuta implementación. "
+                "Puedo ayudarte a ordenar alcance, pasos, riesgos y validaciones sin iniciar el intake de App Builder.\n\n"
+                f"Pedido recibido: {user_message}"
+            ),
+        )
+
+    if swarm_mode == "skill_builder":
+        return (
+            "swarm_mode_skill_builder",
+            (
+                "Skill Builder todavía está en modo borrador controlado y no toca AgentManager legacy. "
+                "Usá este modo para describir la skill/agente, entradas, herramientas esperadas y criterios de validación.\n\n"
+                f"Pedido recibido: {user_message}"
+            ),
+        )
+
+    if swarm_mode == "debug":
+        return (
+            "swarm_mode_debug",
+            _debug_request_explanation() + "\n\n" + _current_swarm_state_explanation(swarm),
+        )
+
+    return None
+
+
 def _normalize_chat_response(content: str, user_message: str) -> str:
     text = (content or "").strip()
     route = _classify_chat_question(user_message)
@@ -1629,25 +1667,47 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
     if getattr(swarm, "intent", "task") != "chat":
         raise HTTPException(status_code=400, detail="Swarm is not a chat-intent swarm")
 
+    swarm_mode = _normalize_swarm_mode(body.swarm_mode)
     coordinator_id = swarm.coordinator_contract_id or (swarm.contracts[0].id if swarm.contracts else "swarm")
     swarm.messages.append(
         AgentToAgentMessage(
             type="chat_message",
             from_agent_id="user",
             to_agent_id=coordinator_id,
-            payload={"role": "user", "content": user_message},
+            payload={"role": "user", "content": user_message, "swarm_mode": swarm_mode},
             requires_response=True,
         )
     )
 
     route = _classify_chat_question(user_message)
+    if swarm_mode == "ask" and route == "implementation_request":
+        route = "normal_chat"
+
+    mode_response = _swarm_mode_local_response(swarm_mode, user_message, swarm)
+    if mode_response:
+        route, assistant_content = mode_response
+        _save_local_chat_message(
+            swarm,
+            coordinator_id,
+            assistant_content,
+            {"route": route, "swarm_mode": swarm_mode},
+        )
+        swarm = swarm_orchestrator.store.save(swarm)
+        event_trace_runtime.create(
+            swarm_id=swarm.id,
+            event_type="chat_completed",
+            payload={"message": "swarm_mode_local_response", "source": "local_swarm_mode", "route": route, "swarm_mode": swarm_mode},
+        )
+        return {**_dump(swarm), "provider_events": []}
+
     project_intake_payload: dict[str, Any] | None = None
-    if _is_project_intake_collecting(swarm):
+    if swarm_mode == "app_builder" and _is_project_intake_collecting(swarm):
         assistant_content, project_intake_payload = _advance_project_intake(swarm, user_message)
-    elif route == "implementation_request":
+    elif swarm_mode == "app_builder" and route == "implementation_request":
         assistant_content, project_intake_payload = _start_project_intake(swarm, user_message)
 
     if project_intake_payload:
+        project_intake_payload["swarm_mode"] = swarm_mode
         _save_local_chat_message(swarm, coordinator_id, assistant_content, project_intake_payload)
         swarm = swarm_orchestrator.store.save(swarm)
         event_trace_runtime.create(
@@ -1657,6 +1717,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
                 "message": "project_intake_updated",
                 "source": "local_project_intake",
                 "route": project_intake_payload.get("route"),
+                "swarm_mode": swarm_mode,
                 "project_intake_status": (project_intake_payload.get("project_intake_state") or {}).get("status"),
             },
         )
@@ -1675,6 +1736,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
                     "content": assistant_content,
                     "route": route,
                     "source": "local",
+                    "swarm_mode": swarm_mode,
                     "answer_guard_applied": False,
                     "answer_guard_reason": None,
                 },
@@ -1686,13 +1748,14 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
             "summary": assistant_content,
             "intent": "chat",
             "route": route,
+            "swarm_mode": swarm_mode,
             "answer_guard_applied": False,
         }
         swarm = swarm_orchestrator.store.save(swarm)
         event_trace_runtime.create(
             swarm_id=swarm.id,
             event_type="chat_completed",
-            payload={"message": "chat_response_generated", "source": "local_project_context", "route": route},
+            payload={"message": "chat_response_generated", "source": "local_project_context", "route": route, "swarm_mode": swarm_mode},
         )
         return {**_dump(swarm), "provider_events": []}
 
@@ -1742,6 +1805,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
                 "content": assistant_content,
                 "route": route,
                 "source": "model",
+                "swarm_mode": swarm_mode,
                 "answer_guard_applied": answer_guard_applied,
                 "answer_guard_reason": answer_guard_reason,
             },
@@ -1753,6 +1817,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
         "summary": assistant_content,
         "intent": "chat",
         "route": route,
+        "swarm_mode": swarm_mode,
         "answer_guard_applied": answer_guard_applied,
         "answer_guard_reason": answer_guard_reason,
     }
@@ -1764,6 +1829,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
         payload={
             "message": "chat_response_generated",
             "route": route,
+            "swarm_mode": swarm_mode,
             "answer_guard_applied": answer_guard_applied,
             "answer_guard_reason": answer_guard_reason,
         },

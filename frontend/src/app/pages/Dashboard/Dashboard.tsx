@@ -47,15 +47,21 @@ import {
   removePlansCard,
   togglePlansCardCollapsed,
   addSwarmCard,
-  removeSwarmCard,
+  setSwarmCardSwarmId,
   clearPendingFocusNoteId,
   DEFAULT_CARD_W,
   DEFAULT_CARD_H,
   EXPANDED_CARD_MIN_H,
   GRID_GAP,
 } from '@/shared/state/dashboardLayoutSlice';
+import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
 import { fetchOutputs } from '@/shared/state/outputsSlice';
-import { updateOrchestrationNodePosition } from '@/shared/state/experimentalSwarmsSlice';
+import {
+  chatExperimentalSwarm,
+  createExperimentalSwarm,
+  fetchExperimentalSwarm,
+  updateOrchestrationNodePosition,
+} from '@/shared/state/experimentalSwarmsSlice';
 import { generateDashboardName, renameDashboard, updateDashboardThumbnail } from '@/shared/state/dashboardsSlice';
 import { dashboardWs } from '@/shared/ws/WebSocketManager';
 import { initBrowserCommandHandler } from '@/shared/browserCommandHandler';
@@ -203,7 +209,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   );
   const toolbarRef = useRef<HTMLDivElement>(null);
 
-  const [toolbarOpen, setToolbarOpen] = useState(false);
+  const [toolbarComposer, setToolbarComposer] = useState<'agent' | 'swarm' | null>(null);
   const [searchPaletteOpen, setSearchPaletteOpen] = useState(false);
   const [highlightedCardId, setHighlightedCardId] = useState<string | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1013,7 +1019,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
       if (needsShift !== e.shiftKey) return;
       if (needsAlt !== e.altKey) return;
       e.preventDefault();
-      setToolbarOpen(true);
+      setToolbarComposer('agent');
     };
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
@@ -1390,11 +1396,11 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   );
 
   const handleNewAgent = useCallback(() => {
-    setToolbarOpen(true);
+    setToolbarComposer('agent');
   }, []);
 
   const handleToolbarCancel = useCallback(() => {
-    setToolbarOpen(false);
+    setToolbarComposer(null);
   }, []);
 
   const handleToolbarSend = useCallback(
@@ -1408,7 +1414,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
       attachedSkills?: Array<{ id: string; name: string; content: string }>,
       selectedBrowserIds?: string[],
     ) => {
-      setToolbarOpen(false);
+      setToolbarComposer(null);
       report('dashboard', 'agent_created', { mode, model, has_images: !!images?.length, has_context: !!contextPaths?.length, has_browser: !!selectedBrowserIds?.length });
 
       const draftId = `draft-${Date.now().toString(36)}`;
@@ -1589,52 +1595,78 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     dispatch(saveLayout(payload));
   }, [dashboardId, dispatch, expandedSessionIds, layoutInitialized]);
 
+  const focusSwarmCard = useCallback((swarmCardId = 'swarm-main') => {
+    const card = store.getState().dashboardLayout.swarmCards[swarmCardId];
+    const viewport = canvas.viewportRef.current;
+    if (!card || card.hidden || !viewport) return;
+
+    const targetZoom = 1.1;
+    const targetPanX = (viewport.clientWidth - card.width * targetZoom) / 2 - card.x * targetZoom;
+    const targetPanY = (viewport.clientHeight - card.height * targetZoom) / 2 - card.y * targetZoom;
+
+    dispatch(bringToFront({ id: card.swarm_card_id, type: 'swarm' }));
+    selection.selectCard(card.swarm_card_id, 'swarm', false);
+    setFocusedCardId(card.swarm_card_id);
+    canvas.actions.setState({ panX: targetPanX, panY: targetPanY, zoom: targetZoom });
+    handleHighlightCard(card.swarm_card_id);
+  }, [canvas.actions, canvas.viewportRef, dispatch, handleHighlightCard, selection]);
+
+  const handleToolbarSwarmSend = useCallback(async (
+    prompt: string,
+    swarmMode: SwarmMode,
+    swarmModel: string,
+  ) => {
+    const cleanPrompt = prompt.trim();
+    if (!cleanPrompt) return;
+
+    setToolbarComposer(null);
+    report('dashboard', 'swarm_created', { swarm_mode: swarmMode, model: swarmModel });
+
+    const swarmCardId = 'swarm-main';
+    dispatch(addSwarmCard({ expandedSessionIds, swarmMode, swarmModel }));
+    window.setTimeout(() => focusSwarmCard(swarmCardId), 120);
+
+    let swarmIdToRun = store.getState().dashboardLayout.swarmCards[swarmCardId]?.swarm_id || null;
+    const loadedSwarm = store.getState().experimentalSwarms.swarm;
+    if (swarmIdToRun && loadedSwarm?.id === swarmIdToRun && loadedSwarm?.intent && loadedSwarm.intent !== 'chat') {
+      swarmIdToRun = null;
+    }
+
+    if (!swarmIdToRun) {
+      const createAction = await dispatch(createExperimentalSwarm({
+        userPrompt: cleanPrompt,
+        dashboardId,
+        intent: 'chat',
+        swarmMode,
+        swarmModel,
+      }));
+
+      if (!createExperimentalSwarm.fulfilled.match(createAction)) return;
+      swarmIdToRun = createAction.payload.id;
+      dispatch(setSwarmCardSwarmId({ swarmCardId, swarmId: swarmIdToRun }));
+    }
+
+    await dispatch(chatExperimentalSwarm({
+      swarmId: swarmIdToRun,
+      message: cleanPrompt,
+      swarmMode,
+      model: swarmModel,
+    }));
+    dispatch(fetchExperimentalSwarm(swarmIdToRun));
+    window.setTimeout(() => focusSwarmCard(swarmCardId), 160);
+  }, [dashboardId, dispatch, expandedSessionIds, focusSwarmCard]);
+
   const handleAddSwarm = useCallback(() => {
     report('dashboard', 'swarm_toggled');
     const existing = store.getState().dashboardLayout.swarmCards['swarm-main'];
 
-    const focusSwarmCard = () => {
-      const card = store.getState().dashboardLayout.swarmCards['swarm-main'];
-      const viewport = canvas.viewportRef.current;
-      if (!card || card.hidden || !viewport) return;
-
-      const targetZoom = 1.1;
-      const targetPanX = (viewport.clientWidth - card.width * targetZoom) / 2 - card.x * targetZoom;
-      const targetPanY = (viewport.clientHeight - card.height * targetZoom) / 2 - card.y * targetZoom;
-
-      dispatch(bringToFront({ id: card.swarm_card_id, type: 'swarm' }));
-      selection.selectCard(card.swarm_card_id, 'swarm', false);
-      setFocusedCardId(card.swarm_card_id);
-      canvas.actions.setState({ panX: targetPanX, panY: targetPanY, zoom: targetZoom });
-      handleHighlightCard(card.swarm_card_id);
-    };
-
     if (existing && !existing.hidden) {
-      const vp = canvas.viewportRef.current;
-      const { panX, panY, zoom } = canvasStateRef.current;
-      const cardLeft = existing.x * zoom + panX;
-      const cardTop = existing.y * zoom + panY;
-      const cardRight = (existing.x + existing.width) * zoom + panX;
-      const cardBottom = (existing.y + existing.height) * zoom + panY;
-      const margin = 80;
-      const isVisible = !!vp
-        && cardRight > margin
-        && cardBottom > margin
-        && cardLeft < vp.clientWidth - margin
-        && cardTop < vp.clientHeight - margin;
-
-      if (isVisible) {
-        dispatch(removeSwarmCard('swarm-main'));
-        return;
-      }
-
-      focusSwarmCard();
+      focusSwarmCard('swarm-main');
       return;
     }
 
-    dispatch(addSwarmCard({ expandedSessionIds }));
-    setTimeout(focusSwarmCard, 120);
-  }, [dispatch, expandedSessionIds, canvas.actions, canvas.viewportRef, handleHighlightCard, selection]);
+    setToolbarComposer('swarm');
+  }, [focusSwarmCard]);
 
   const focusPlansCard = useCallback((plansCardId: string) => {
     const card = store.getState().dashboardLayout.plansCards[plansCardId];
@@ -2517,6 +2549,8 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                 cardHeight={sc.height}
                 cardZOrder={sc.zOrder ?? 0}
                 collapsed={!!sc.collapsed}
+                swarmMode={sc.swarm_mode || 'ask'}
+                swarmModel={sc.swarm_model || null}
                 zoom={canvas.zoom}
                 isSelected={selection.isSelected(sc.swarm_card_id)}
                 isHighlighted={highlightedCardId === sc.swarm_card_id}
@@ -2611,11 +2645,12 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
       <Box sx={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}>
         <DashboardToolbar
           ref={toolbarRef}
-          inputOpen={toolbarOpen}
+          composerType={toolbarComposer}
           onAddSwarm={handleAddSwarm}
           onNewAgent={handleNewAgent}
           onCancel={handleToolbarCancel}
           onSend={handleToolbarSend}
+          onSwarmSend={handleToolbarSwarmSend}
           onAddView={handleAddView}
           onHistoryResume={handleHistoryResume}
           onAddBrowser={handleAddBrowser}

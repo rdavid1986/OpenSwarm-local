@@ -55,9 +55,13 @@ export interface PlansCardPosition {
   hidden?: boolean;
 }
 
+export type SwarmMode = 'ask' | 'plan' | 'app_builder' | 'skill_builder' | 'debug';
+
 export interface SwarmCardPosition {
   swarm_card_id: string;
   swarm_id?: string | null;
+  swarm_mode?: SwarmMode;
+  swarm_model?: string | null;
   x: number;
   y: number;
   width: number;
@@ -415,10 +419,18 @@ const dashboardLayoutSlice = createSlice({
       }
     },
 
-    addSwarmCard(state, action: PayloadAction<{ expandedSessionIds?: string[]; swarmId?: string | null } | undefined>) {
+    addSwarmCard(state, action: PayloadAction<{
+      expandedSessionIds?: string[];
+      swarmId?: string | null;
+      swarmMode?: SwarmMode;
+      swarmModel?: string | null;
+    } | undefined>) {
       const id = 'swarm-main';
       if (state.swarmCards[id]) {
         state.swarmCards[id].hidden = false;
+        state.swarmCards[id].swarm_id = action.payload?.swarmId ?? state.swarmCards[id].swarm_id ?? null;
+        state.swarmCards[id].swarm_mode = action.payload?.swarmMode ?? state.swarmCards[id].swarm_mode ?? 'ask';
+        state.swarmCards[id].swarm_model = action.payload?.swarmModel ?? state.swarmCards[id].swarm_model ?? null;
         state.swarmCards[id].zOrder = state.nextZOrder++;
         return;
       }
@@ -427,6 +439,8 @@ const dashboardLayoutSlice = createSlice({
       state.swarmCards[id] = {
         swarm_card_id: id,
         swarm_id: action.payload?.swarmId ?? null,
+        swarm_mode: action.payload?.swarmMode ?? 'ask',
+        swarm_model: action.payload?.swarmModel ?? null,
         x: pos.x,
         y: pos.y,
         width: DEFAULT_SWARM_CARD_W,
@@ -469,6 +483,28 @@ const dashboardLayoutSlice = createSlice({
       const card = state.swarmCards[swarmCardId];
       if (card) {
         card.swarm_id = swarmId;
+      }
+    },
+
+    setSwarmCardMode(
+      state,
+      action: PayloadAction<{ swarmCardId: string; swarmMode: SwarmMode }>
+    ) {
+      const { swarmCardId, swarmMode } = action.payload;
+      const card = state.swarmCards[swarmCardId];
+      if (card) {
+        card.swarm_mode = swarmMode;
+      }
+    },
+
+    setSwarmCardModel(
+      state,
+      action: PayloadAction<{ swarmCardId: string; swarmModel: string | null }>
+    ) {
+      const { swarmCardId, swarmModel } = action.payload;
+      const card = state.swarmCards[swarmCardId];
+      if (card) {
+        card.swarm_model = swarmModel;
       }
     },
 
@@ -1093,6 +1129,8 @@ const dashboardLayoutSlice = createSlice({
           if (c.zOrder > maxZ) maxZ = c.zOrder;
         }
         for (const c of Object.values(state.swarmCards)) {
+          c.swarm_mode = c.swarm_mode || 'ask';
+          c.swarm_model = c.swarm_model ?? null;
           if (!c.zOrder) c.zOrder = 0;
           if (c.zOrder > maxZ) maxZ = c.zOrder;
         }
@@ -1131,6 +1169,8 @@ export const {
   setSwarmCardPosition,
   setSwarmCardSize,
   setSwarmCardSwarmId,
+  setSwarmCardMode,
+  setSwarmCardModel,
   removeSwarmCard,
   toggleSwarmCardCollapsed,
   togglePlansCardCollapsed,

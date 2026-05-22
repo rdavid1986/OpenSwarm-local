@@ -66,6 +66,8 @@ class PlansCardPosition(BaseModel):
 class SwarmCardPosition(BaseModel):
     swarm_card_id: str
     swarm_id: Optional[str] = None
+    swarm_mode: str = "ask"
+    swarm_model: Optional[str] = None
     x: float = 0
     y: float = 0
     width: float = 760

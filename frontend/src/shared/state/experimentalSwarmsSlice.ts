@@ -1,5 +1,6 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { API_BASE } from '@/shared/config';
+import type { SwarmMode } from './dashboardLayoutSlice';
 
 const SWARMS_API = `${API_BASE}/swarms`;
 
@@ -38,11 +39,23 @@ async function readJson(res: Response): Promise<any> {
 
 export const createExperimentalSwarm = createAsyncThunk(
   'experimentalSwarms/create',
-  async ({ userPrompt, dashboardId, intent }: { userPrompt: string; dashboardId?: string; intent?: 'chat' | 'task' }) => {
+  async ({ userPrompt, dashboardId, intent, swarmMode, swarmModel }: {
+    userPrompt: string;
+    dashboardId?: string;
+    intent?: 'chat' | 'task';
+    swarmMode?: SwarmMode;
+    swarmModel?: string | null;
+  }) => {
     const res = await fetch(`${SWARMS_API}/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_prompt: userPrompt, dashboard_id: dashboardId, intent }),
+      body: JSON.stringify({
+        user_prompt: userPrompt,
+        dashboard_id: dashboardId,
+        intent,
+        swarm_mode: swarmMode,
+        swarm_model: swarmModel,
+      }),
     });
     return await readJson(res);
   },
@@ -89,11 +102,18 @@ export const startExperimentalImplementation = createAsyncThunk(
 
 export const chatExperimentalSwarm = createAsyncThunk(
   'experimentalSwarms/chat',
-  async ({ swarmId, message }: { swarmId: string; message: string }) => {
+  async ({ swarmId, message, swarmMode, model }: {
+    swarmId: string;
+    message: string;
+    swarmMode?: SwarmMode;
+    model?: string | null;
+  }) => {
+    const body: Record<string, any> = { message, swarm_mode: swarmMode };
+    if (model) body.model = model;
     const res = await fetch(`${SWARMS_API}/${swarmId}/experimental/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify(body),
     });
     return await readJson(res);
   },

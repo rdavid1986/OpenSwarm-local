@@ -5,14 +5,12 @@ import IconButton from '@mui/material/IconButton';
 import Chip from '@mui/material/Chip';
 import Button from '@mui/material/Button';
 import CloseIcon from '@mui/icons-material/Close';
-import InputBase from '@mui/material/InputBase';
-import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
-import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import {
   removeSwarmCard,
+  setSwarmCardMode,
   setSwarmCardPosition,
   setSwarmCardSize,
   setSwarmCardSwarmId,
@@ -31,6 +29,9 @@ import { renameDashboard } from '@/shared/state/dashboardsSlice';
 import { useAppDispatch, useAppSelector } from '@/shared/hooks';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import type { CardType } from './useDashboardSelection';
+import SwarmPromptInput from './SwarmPromptInput';
+import { DEFAULT_SWARM_MODE, getSwarmModeOption } from './SwarmModePicker';
+import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
 
 type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 type ImplementationVisualState = 'idle' | 'running' | 'completed' | 'failed' | 'verified' | 'unverified';
@@ -44,6 +45,8 @@ interface Props {
   cardHeight: number;
   cardZOrder?: number;
   collapsed?: boolean;
+  swarmMode?: SwarmMode;
+  swarmModel?: string | null;
   zoom?: number;
   isSelected?: boolean;
   isHighlighted?: boolean;
@@ -278,6 +281,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   cardHeight,
   cardZOrder = 0,
   collapsed = false,
+  swarmMode = DEFAULT_SWARM_MODE,
+  swarmModel = null,
   zoom = 1,
   isSelected = false,
   isHighlighted = false,
@@ -295,6 +300,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const dispatch = useAppDispatch();
   const swarmState = useAppSelector((s) => s.experimentalSwarms);
   const dashboard = useAppSelector((s) => dashboardId ? s.dashboards.items[dashboardId] : undefined);
+  const defaultModel = useAppSelector((s) => s.settings.data.default_model);
 
   const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
   const resizeRef = useRef<{
@@ -347,6 +353,14 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       autoNamed: true,
     }));
   }, [dashboard, dashboardId, dispatch]);
+
+  const activeSwarmMode = getSwarmModeOption(swarmMode).id;
+  const activeSwarmModel = swarmModel || defaultModel || null;
+
+  const handleSwarmModeChange = useCallback((nextMode: SwarmMode) => {
+    dispatch(setSwarmCardMode({ swarmCardId, swarmMode: nextMode }));
+    setCustomIntakeMode(false);
+  }, [dispatch, swarmCardId]);
 
   const activeSwarmId = swarmId || null;
   const activeSwarm = activeSwarmId && swarmState.swarm?.id === activeSwarmId ? swarmState.swarm : null;
@@ -494,9 +508,16 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
     let swarmIdToRun = activeSwarmId;
     const activeIntent = activeSwarm?.intent || swarmState.swarm?.intent || null;
+    const requestedMode = activeSwarmMode;
 
     if (!swarmIdToRun || (cleanPrompt && activeIntent !== 'chat')) {
-      const action = await dispatch(createExperimentalSwarm({ userPrompt: cleanPrompt || 'Experimental swarm', dashboardId, intent: 'chat' }));
+      const action = await dispatch(createExperimentalSwarm({
+        userPrompt: cleanPrompt || 'Experimental swarm',
+        dashboardId,
+        intent: 'chat',
+        swarmMode: requestedMode,
+        swarmModel: activeSwarmModel,
+      }));
       if (createExperimentalSwarm.fulfilled.match(action)) {
         swarmIdToRun = action.payload.id;
         dispatch(setSwarmCardSwarmId({ swarmCardId, swarmId: swarmIdToRun }));
@@ -506,9 +527,14 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
     if (!swarmIdToRun) return;
 
-    await dispatch(chatExperimentalSwarm({ swarmId: swarmIdToRun, message: cleanPrompt || lastSubmittedPrompt || 'Continue' }));
+    await dispatch(chatExperimentalSwarm({
+      swarmId: swarmIdToRun,
+      message: cleanPrompt || lastSubmittedPrompt || 'Continue',
+      swarmMode: requestedMode,
+      model: activeSwarmModel,
+    }));
     dispatch(fetchExperimentalSwarm(swarmIdToRun));
-  }, [activeSwarm?.intent, activeSwarmId, dashboardId, dispatch, lastSubmittedPrompt, maybeRenameDashboardFromSwarmTitle, onSwarmBound, prompt, swarmCardId, swarmState.swarm?.intent]);
+  }, [activeSwarm?.intent, activeSwarmId, activeSwarmMode, activeSwarmModel, dashboardId, dispatch, lastSubmittedPrompt, onSwarmBound, prompt, swarmCardId, swarmState.swarm?.intent]);
 
   useEffect(() => {
     const intakeStatus = (activeSwarm as any)?.project_intake_state?.status;
@@ -536,9 +562,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     if (!activeSwarmId || swarmState.actionLoading) return;
 
     setLastSubmittedPrompt(label);
-    await dispatch(chatExperimentalSwarm({ swarmId: activeSwarmId, message: label }));
+    await dispatch(chatExperimentalSwarm({ swarmId: activeSwarmId, message: label, swarmMode: activeSwarmMode, model: activeSwarmModel }));
     dispatch(fetchExperimentalSwarm(activeSwarmId));
-  }, [activeSwarmId, dispatch, swarmState.actionLoading]);
+  }, [activeSwarmId, activeSwarmMode, activeSwarmModel, dispatch, swarmState.actionLoading]);
 
   const handleStartImplementation = useCallback(async () => {
     if (!activeSwarmId || swarmState.actionLoading || startImplementationInFlightRef.current) return;
@@ -1077,55 +1103,19 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
           </Box>
 
           <Box sx={{ flexShrink: 0, p: 1.5, borderTop: `1px solid ${c.border.subtle}`, bgcolor: c.bg.surface }}>
-            <Box sx={{ maxWidth: 720, mx: 'auto', border: `1px solid ${c.border.subtle}`, borderRadius: 1.25, bgcolor: c.bg.surface, boxShadow: c.shadow.md }}>
-              <Box
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
-                sx={{ px: 1.5, pt: 1.25, pb: 0.25 }}
-              >
-                <InputBase
-                  multiline
-                  fullWidth
-                  minRows={1}
-                  maxRows={5}
-                  inputRef={promptInputRef}
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  onKeyDownCapture={(e) => {
-                    e.stopPropagation();
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleStart();
-                    }
-                  }}
-                  onKeyUpCapture={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => e.stopPropagation()}
-                  placeholder={customIntakeMode ? 'Escribí tu respuesta personalizada…' : 'Message Swarm…'}
-                  sx={{ fontSize: '0.95rem', color: c.text.primary, lineHeight: 1.55 }}
-                />
-              </Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 1, pb: 0.75 }}>
-                <Typography sx={{ color: c.text.tertiary, fontSize: '0.75rem' }}>
-                  Shift+Enter for new line
-                </Typography>
-                <IconButton
-                  size="small"
-                  onClick={handleStart}
-                  disabled={swarmState.actionLoading || (!prompt.trim() && !activeSwarmId)}
-                  sx={{
-                    bgcolor: c.accent.primary,
-                    color: c.text.inverse,
-                    p: 0.5,
-                    width: 28,
-                    height: 28,
-                    '&:hover': { bgcolor: c.accent.hover },
-                    '&.Mui-disabled': { bgcolor: c.bg.secondary, color: c.text.ghost },
-                  }}
-                >
-                  {swarmState.actionLoading ? <HourglassEmptyIcon sx={{ fontSize: 16 }} /> : <ArrowUpwardIcon sx={{ fontSize: 16 }} />}
-                </IconButton>
-              </Box>
-            </Box>
+            <SwarmPromptInput
+              value={prompt}
+              onChange={setPrompt}
+              onSend={handleStart}
+              mode={activeSwarmMode}
+              onModeChange={handleSwarmModeChange}
+              loading={swarmState.actionLoading}
+              canContinue={Boolean(activeSwarmId)}
+              customIntakeMode={customIntakeMode}
+              model={activeSwarmModel}
+              modelLabel={activeSwarmModel}
+              inputRef={promptInputRef}
+            />
           </Box>
         </Box>
 

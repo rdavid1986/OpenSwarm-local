@@ -16,6 +16,8 @@ import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import ScienceIcon from '@mui/icons-material/Science';
 import { motion } from 'framer-motion';
 import ChatInput from '@/app/pages/AgentChat/ChatInput';
+import SwarmPromptInput from './SwarmPromptInput';
+import { DEFAULT_SWARM_MODE } from './SwarmModePicker';
 import type { ContextPath } from '@/app/components/DirectoryBrowser';
 import { useElementSelection } from '@/app/components/ElementSelectionContext';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
@@ -25,9 +27,10 @@ import { updateSettings, AppSettings } from '@/shared/state/settingsSlice';
 import { store } from '@/shared/state/store';
 import type { ClaudeTokens } from '@/shared/styles/claudeTokens';
 import type { Output } from '@/shared/state/outputsSlice';
+import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
 
 interface Props {
-  inputOpen: boolean;
+  composerType: 'agent' | 'swarm' | null;
   onAddSwarm: () => void;
   onNewAgent: () => void;
   onCancel: () => void;
@@ -41,6 +44,7 @@ interface Props {
     attachedSkills?: Array<{ id: string; name: string; content: string }>,
     selectedBrowserIds?: string[],
   ) => void;
+  onSwarmSend: (prompt: string, swarmMode: SwarmMode, swarmModel: string) => void;
   onAddView: (outputId: string) => void;
   onHistoryResume: (sessionId: string) => void;
   onAddBrowser: () => void;
@@ -92,7 +96,7 @@ function formatRelativeTime(dateStr: string | null): string {
 }
 
 const DashboardToolbar = React.forwardRef<HTMLDivElement, Props>(
-  ({ inputOpen, onAddSwarm, onNewAgent, onCancel, onSend, onAddView, onHistoryResume, onAddBrowser, onAddNote, onAddPlans, dashboardId, newAgentBounce, onNewAgentBounceEnd }, ref) => {
+  ({ composerType, onAddSwarm, onNewAgent, onCancel, onSend, onSwarmSend, onAddView, onHistoryResume, onAddBrowser, onAddNote, onAddPlans, dashboardId, newAgentBounce, onNewAgentBounceEnd }, ref) => {
     const c = useClaudeTokens();
     const dispatch = useAppDispatch();
     const elementSelection = useElementSelection();
@@ -104,8 +108,13 @@ const DashboardToolbar = React.forwardRef<HTMLDivElement, Props>(
     const defaultModel = useAppSelector((s) => s.settings.data.default_model);
     const defaultThinkingLevel = useAppSelector((s) => s.settings.data.default_thinking_level);
     const settingsLoaded = useAppSelector((s) => s.settings.loaded);
+    const inputOpen = composerType === 'agent';
+    const swarmInputOpen = composerType === 'swarm';
     const [mode, setMode] = useState(defaultMode || 'agent');
     const [model, setModel] = useState(defaultModel || 'sonnet');
+    const [swarmPrompt, setSwarmPrompt] = useState('');
+    const [swarmMode, setSwarmMode] = useState<SwarmMode>(DEFAULT_SWARM_MODE);
+    const [swarmModel, setSwarmModel] = useState(defaultModel || 'sonnet');
     const [thinkingLevel, setThinkingLevel] = useState<'off' | 'low' | 'medium' | 'high' | 'auto'>(defaultThinkingLevel || 'auto');
     // Snap to the persisted Settings defaults as soon as they arrive from the
     // backend. Without the settingsLoaded guard, the effect fires against the
@@ -117,6 +126,7 @@ const DashboardToolbar = React.forwardRef<HTMLDivElement, Props>(
       if (settingsLoaded && !settingsApplied.current) {
         setMode(defaultMode || 'agent');
         setModel(defaultModel || 'sonnet');
+        setSwarmModel(defaultModel || 'sonnet');
         setThinkingLevel(defaultThinkingLevel || 'auto');
         settingsApplied.current = true;
       }
@@ -133,6 +143,16 @@ const DashboardToolbar = React.forwardRef<HTMLDivElement, Props>(
       }
       prevInputOpen.current = inputOpen;
     }, [inputOpen, settingsLoaded, defaultMode, defaultModel, defaultThinkingLevel]);
+
+    const prevSwarmInputOpen = useRef(false);
+    useEffect(() => {
+      if (settingsLoaded && swarmInputOpen && !prevSwarmInputOpen.current) {
+        setSwarmPrompt('');
+        setSwarmMode(DEFAULT_SWARM_MODE);
+        setSwarmModel(defaultModel || 'sonnet');
+      }
+      prevSwarmInputOpen.current = swarmInputOpen;
+    }, [swarmInputOpen, settingsLoaded, defaultModel]);
 
     // Picking a model/mode/thinking-level in the toolbar writes through to
     // the global default. Without this, the reopen-reset effect above
@@ -203,6 +223,13 @@ const DashboardToolbar = React.forwardRef<HTMLDivElement, Props>(
       [onSend, mode, model],
     );
 
+    const handleSwarmSend = useCallback(() => {
+      const cleanPrompt = swarmPrompt.trim();
+      if (!cleanPrompt) return;
+      onSwarmSend(cleanPrompt, swarmMode, swarmModel);
+      setSwarmPrompt('');
+    }, [onSwarmSend, swarmMode, swarmModel, swarmPrompt]);
+
     const handleCloseHistory = useCallback(() => {
       setHistoryOpen(false);
       setHistoryQuery('');
@@ -269,7 +296,7 @@ const DashboardToolbar = React.forwardRef<HTMLDivElement, Props>(
       }));
     }, [dispatch, historyQuery, historySearch.loading, historySearch.hasMore, historySearch.results.length, dashboardId]);
 
-    const isExpanded = inputOpen || viewPickerOpen || historyOpen;
+    const isExpanded = inputOpen || swarmInputOpen || viewPickerOpen || historyOpen;
 
     const autoSelectOnNew = useAppSelector((s) => s.settings.data.auto_select_mode_on_new_agent);
     const prevInputOpenRef = useRef(inputOpen);
@@ -407,7 +434,7 @@ const DashboardToolbar = React.forwardRef<HTMLDivElement, Props>(
           boxShadow: c.shadow.lg,
           padding: isExpanded ? '6px' : '5px',
           userSelect: 'none' as const,
-          overflow: inputOpen || newAgentBounce ? 'visible' : 'hidden',
+          overflow: inputOpen || swarmInputOpen || newAgentBounce ? 'visible' : 'hidden',
           width: viewPickerOpen ? 580 : isExpanded ? 540 : undefined,
         }}
       >
@@ -424,6 +451,21 @@ const DashboardToolbar = React.forwardRef<HTMLDivElement, Props>(
               sessionId={TOOLBAR_OWNER_ID}
               thinkingLevel={thinkingLevel}
               onThinkingLevelChange={handleThinkingLevelChange}
+            />
+          </div>
+        ) : swarmInputOpen ? (
+          <div style={{ width: '100%', minHeight: 56, paddingBottom: 0, marginBottom: -4 }}>
+            <SwarmPromptInput
+              value={swarmPrompt}
+              onChange={setSwarmPrompt}
+              onSend={handleSwarmSend}
+              mode={swarmMode}
+              onModeChange={setSwarmMode}
+              model={swarmModel}
+              onModelChange={setSwarmModel}
+              modelLabel={swarmModel}
+              embedded
+              autoFocus
             />
           </div>
         ) : historyOpen ? (
