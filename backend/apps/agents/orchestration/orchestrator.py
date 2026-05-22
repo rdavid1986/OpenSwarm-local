@@ -328,16 +328,29 @@ class SwarmOrchestrator:
         if swarm.tasks:
             return self.store.save(swarm)
 
-        plan = generated_plan if isinstance(generated_plan, dict) else {}
-        plan_summary = str(plan.get("summary") or "Plan generated from project intake.")
-        app_type = str(plan.get("app_type") or "web app")
-        main_goal = str(plan.get("main_goal") or "build a static app")
-        frontend = str(plan.get("frontend") or "HTML/CSS")
-        backend = str(plan.get("backend") or "no backend")
-        database = str(plan.get("database") or "no database")
-        mvp_priority = str(plan.get("mvp_priority") or "static MVP")
-        out_of_scope = str(plan.get("out_of_scope") or "out of scope not defined")
-        visual_style = str(plan.get("visual_style") or "clean modern UI")
+        plan = self._normalize_generated_plan(
+            generated_plan,
+            defaults={
+                "summary": "Plan generated from project intake.",
+                "app_type": "web app",
+                "main_goal": "build a static app",
+                "frontend": "HTML/CSS",
+                "backend": "no backend",
+                "database": "no database",
+                "mvp_priority": "static MVP",
+                "out_of_scope": "out of scope not defined",
+                "visual_style": "clean modern UI",
+            },
+        )
+        plan_summary = plan["summary"]
+        app_type = plan["app_type"]
+        main_goal = plan["main_goal"]
+        frontend = plan["frontend"]
+        backend = plan["backend"]
+        database = plan["database"]
+        mvp_priority = plan["mvp_priority"]
+        out_of_scope = plan["out_of_scope"]
+        visual_style = plan["visual_style"]
 
         architecture_spec = get_experimental_task_spec("architecture_plan_execute")
         frontend_spec = get_experimental_task_spec("frontend_plan_execute")
@@ -522,15 +535,27 @@ class SwarmOrchestrator:
         if swarm.tasks:
             return self.store.save(swarm)
 
-        plan = generated_plan if isinstance(generated_plan, dict) else {}
-        plan_summary = str(plan.get("summary") or "Plan generated from project intake.")
-        app_type = str(plan.get("app_type") or "app")
-        main_goal = str(plan.get("main_goal") or "document the requested MVP")
-        frontend = str(plan.get("frontend") or "frontend not defined")
-        backend = str(plan.get("backend") or "backend not defined")
-        database = str(plan.get("database") or "database not defined")
-        mvp_priority = str(plan.get("mvp_priority") or "MVP priority not defined")
-        out_of_scope = str(plan.get("out_of_scope") or "out of scope not defined")
+        plan = self._normalize_generated_plan(
+            generated_plan,
+            defaults={
+                "summary": "Plan generated from project intake.",
+                "app_type": "app",
+                "main_goal": "document the requested MVP",
+                "frontend": "frontend not defined",
+                "backend": "backend not defined",
+                "database": "database not defined",
+                "mvp_priority": "MVP priority not defined",
+                "out_of_scope": "out of scope not defined",
+            },
+        )
+        plan_summary = plan["summary"]
+        app_type = plan["app_type"]
+        main_goal = plan["main_goal"]
+        frontend = plan["frontend"]
+        backend = plan["backend"]
+        database = plan["database"]
+        mvp_priority = plan["mvp_priority"]
+        out_of_scope = plan["out_of_scope"]
 
         architecture_spec = get_experimental_task_spec("architecture_plan_execute")
         frontend_spec = get_experimental_task_spec("frontend_plan_execute")
