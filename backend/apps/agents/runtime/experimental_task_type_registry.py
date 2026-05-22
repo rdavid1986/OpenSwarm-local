@@ -17,6 +17,8 @@ ExperimentalTaskType = Literal[
     "plan_reused",
     "create_readme",
     "review_readme",
+    "create_static_app",
+    "review_static_app",
     "consolidate_final",
     "inspect_readme",
     "architecture_plan_draft",
@@ -135,6 +137,22 @@ def _matches_review_readme(task: TaskNode) -> bool:
     return "review" in text and "readme" in text
 
 
+def _matches_create_static_app(task: TaskNode) -> bool:
+    title = task.title.lower()
+    if "static app" in title and any(word in title for word in ("create", "build", "generate")):
+        return True
+    text = _task_text(task)
+    return "index.html" in text and any(word in text for word in ("create", "build", "generate"))
+
+
+def _matches_review_static_app(task: TaskNode) -> bool:
+    title = task.title.lower()
+    if "static app" in title and "review" in title:
+        return True
+    text = _task_text(task)
+    return "index.html" in text and "review" in text
+
+
 def _matches_consolidate_final(task: TaskNode) -> bool:
     text = _task_text(task)
     return "consolidate" in text and "evidence" in text
@@ -166,6 +184,20 @@ TASK_TYPE_REGISTRY: dict[ExperimentalTaskType, ExperimentalTaskTypeSpec] = {
         allowed_tools=["Read", "SearchFiles", "SearchText"],
         output_contract={"review_result": {"status": "approved|rejected", "artifact_path": "README.md", "evidence": []}},
         matcher=_matches_review_readme,
+    ),
+    "create_static_app": ExperimentalTaskTypeSpec(
+        type="create_static_app",
+        title="Create static app files",
+        allowed_tools=["Read", "Write", "Edit", "SearchFiles", "SearchText"],
+        output_contract={"submit_artifact": {"path": "index.html", "kind": "static_app"}},
+        matcher=_matches_create_static_app,
+    ),
+    "review_static_app": ExperimentalTaskTypeSpec(
+        type="review_static_app",
+        title="Review static app files",
+        allowed_tools=["Read", "SearchFiles", "SearchText"],
+        output_contract={"review_result": {"status": "approved|rejected", "artifact_path": "index.html", "evidence": []}},
+        matcher=_matches_review_static_app,
     ),
     "consolidate_final": ExperimentalTaskTypeSpec(
         type="consolidate_final",

@@ -14,6 +14,7 @@ from backend.apps.agents.runtime.experimental_task_type_registry import Experime
 
 
 EXPERIMENTAL_DAG_CONSOLIDATE_RUNTIME_FLAG = "OPENSWARM_EXPERIMENTAL_DAG_CONSOLIDATE_RUNTIME"
+STATIC_APP_REQUIRED_FILES = ("index.html", "styles.css", "content.json")
 
 
 class ExperimentalConsolidateFinalRequest(BaseModel):
@@ -56,15 +57,17 @@ class ExperimentalDAGConsolidator:
         frontend = self._find_task_by_type(swarm, "frontend_plan_execute", depends_on=architecture.id)
         backend = self._find_task_by_type(swarm, "backend_plan_execute", depends_on=frontend.id)
         security = self._find_task_by_type(swarm, "security_review_execute", depends_on=backend.id)
-        worker = self._find_task_by_type(swarm, "create_readme", depends_on=security.id)
-        reviewer = self._find_task_by_type(swarm, "review_readme", depends_on=worker.id)
+        worker, reviewer, expected_artifact_path, artifact_kind, summary = self._resolve_build_tasks(swarm, security)
         validation = self._find_task_by_type(swarm, "validation_execute", depends_on=reviewer.id)
         consolidate = self._find_task_by_type(swarm, "consolidate_final")
-        errors = self._validate_ready(swarm, architecture, frontend, backend, security, worker, reviewer, validation)
+        expected_artifact_paths = self._expected_artifact_paths(artifact_kind, expected_artifact_path)
+        errors = self._validate_ready(swarm, architecture, frontend, backend, security, worker, reviewer, validation, expected_artifact_paths=expected_artifact_paths)
         if errors:
             return self._response(swarm, status="not_ready", errors=errors, ok=False)
 
-        artifact = self._find_readme_artifact(swarm, worker.id)
+        artifacts = [self._find_artifact_by_path(swarm, worker.id, path) for path in expected_artifact_paths]
+        artifacts = [item for item in artifacts if item]
+        artifact = artifacts[0]
         review_result = self._find_approved_review_result(reviewer, artifact)
         final_evidence = self._build_final_evidence(
             swarm=swarm,
@@ -76,6 +79,7 @@ class ExperimentalDAGConsolidator:
             reviewer=reviewer,
             consolidate=consolidate,
             artifact=artifact,
+            artifacts=artifacts,
             review_result=review_result,
             validation=validation,
         )
@@ -86,8 +90,10 @@ class ExperimentalDAGConsolidator:
         validation_result = validation.validations[-1] if validation.validations else {}
         final_result = {
             "status": "completed",
-            "summary": "Se generaron planes de arquitectura, frontend, backend y seguridad. Se creó un README de implementación preliminar y fue revisado/validado con evidencia. No se crearon archivos reales de frontend/backend todavía.",
-            "artifact_refs": [artifact.get("id")],
+            "summary": summary,
+            "artifact_kind": artifact_kind,
+            "artifact_refs": [item.get("id") for item in artifacts if item.get("id")],
+            "created_files": expected_artifact_paths,
             "architecture_plan_result": {
                 "status": architecture_result.get("status"),
                 "architecture_plan": architecture_result.get("architecture_plan") or {},
@@ -108,6 +114,7 @@ class ExperimentalDAGConsolidator:
                 "status": review_result.get("status"),
                 "artifact_path": review_result.get("artifact_path"),
                 "required_read_satisfied": review_result.get("required_read_satisfied"),
+                "checked_files": review_result.get("checked_files") or [],
             },
             "validation_result": {
                 "status": validation_result.get("status"),
@@ -121,9 +128,12 @@ class ExperimentalDAGConsolidator:
             final_result=final_result,
             final_evidence=final_evidence,
             artifact=artifact,
+            artifacts=artifacts,
             review_result=review_result,
             worker=worker,
             reviewer=reviewer,
+            expected_artifact_paths=expected_artifact_paths,
+            artifact_kind=artifact_kind,
         )
         self._apply_claim_guard(final_result)
 
@@ -143,7 +153,7 @@ class ExperimentalDAGConsolidator:
         self.store.save(swarm)
         return self._response(swarm, status="completed", ok=True)
 
-    def _validate_ready(self, swarm: SwarmState, architecture: TaskNode, frontend: TaskNode, backend: TaskNode, security: TaskNode, worker: TaskNode, reviewer: TaskNode, validation: TaskNode) -> list[dict[str, Any]]:
+    def _validate_ready(self, swarm: SwarmState, architecture: TaskNode, frontend: TaskNode, backend: TaskNode, security: TaskNode, worker: TaskNode, reviewer: TaskNode, validation: TaskNode, *, expected_artifact_paths: list[str]) -> list[dict[str, Any]]:
         errors: list[dict[str, Any]] = []
         if architecture.status != "completed":
             errors.append({"error": "architecture_not_completed", "task_id": architecture.id, "status": architecture.status})
@@ -169,11 +179,25 @@ class ExperimentalDAGConsolidator:
             errors.append({"error": "validation_not_completed", "task_id": validation.id, "status": validation.status})
         if not validation.validations:
             errors.append({"error": "validation_result_missing", "task_id": validation.id})
-        artifact = self._find_readme_artifact(swarm, worker.id)
-        if not artifact:
-            errors.append({"error": "readme_artifact_missing", "task_id": worker.id})
-        elif not self._find_approved_review_result(reviewer, artifact):
-            errors.append({"error": "approved_review_result_missing", "task_id": reviewer.id, "artifact_id": artifact.get("id")})
+        artifacts: list[dict[str, Any]] = []
+        for expected_artifact_path in expected_artifact_paths:
+            artifact = self._find_artifact_by_path(swarm, worker.id, expected_artifact_path)
+            if not artifact:
+                errors.append({"error": "artifact_missing", "task_id": worker.id, "path": expected_artifact_path})
+            else:
+                artifacts.append(artifact)
+        primary_artifact = artifacts[0] if artifacts else None
+        if primary_artifact:
+            review_result = self._find_approved_review_result(reviewer, primary_artifact)
+            if not review_result:
+                errors.append({"error": "approved_review_result_missing", "task_id": reviewer.id, "artifact_id": primary_artifact.get("id")})
+            elif len(expected_artifact_paths) > 1:
+                checked_files = set(review_result.get("checked_files") or [])
+                missing_review_files = [path for path in expected_artifact_paths if path not in checked_files]
+                if missing_review_files:
+                    errors.append({"error": "review_missing_required_files", "paths": missing_review_files})
+                if review_result.get("errors"):
+                    errors.append({"error": "review_contains_errors", "errors": review_result.get("errors")})
         return errors
 
     @staticmethod
@@ -188,6 +212,7 @@ class ExperimentalDAGConsolidator:
         reviewer: TaskNode,
         consolidate: TaskNode,
         artifact: dict[str, Any],
+        artifacts: list[dict[str, Any]],
         review_result: dict[str, Any],
         validation: TaskNode,
     ) -> list[dict[str, Any]]:
@@ -220,6 +245,11 @@ class ExperimentalDAGConsolidator:
                 "kind": "artifact",
                 "task_id": worker.id,
                 "artifact": artifact,
+            },
+            {
+                "kind": "created_artifacts",
+                "task_id": worker.id,
+                "artifacts": artifacts,
             },
             {
                 "kind": "review_result",
@@ -263,7 +293,7 @@ class ExperimentalDAGConsolidator:
 
     @staticmethod
     def _upsert_final_evidence(swarm: SwarmState, evidence: list[dict[str, Any]]) -> None:
-        swarm.final_evidence = [item for item in swarm.final_evidence if item.get("kind") not in {"artifact", "review_result", "task_status", "tool_history_summary"}]
+        swarm.final_evidence = [item for item in swarm.final_evidence if item.get("kind") not in {"artifact", "created_artifacts", "review_result", "validation_result", "task_status", "tool_history_summary"}]
         swarm.final_evidence.extend(evidence)
 
     @staticmethod
@@ -272,27 +302,31 @@ class ExperimentalDAGConsolidator:
         final_result: dict[str, Any],
         final_evidence: list[dict[str, Any]],
         artifact: dict[str, Any],
+        artifacts: list[dict[str, Any]],
         review_result: dict[str, Any],
         worker: TaskNode,
         reviewer: TaskNode,
+        expected_artifact_paths: list[str],
+        artifact_kind: str,
     ) -> dict[str, Any]:
         artifact_refs = set(final_result.get("artifact_refs") or [])
         evidence_by_kind = {item.get("kind"): item for item in final_evidence if isinstance(item, dict)}
         tool_summary = evidence_by_kind.get("tool_history_summary") or {}
         tool_rows = tool_summary.get("tools") or []
 
-        artifact_supported = (
-            bool(artifact.get("id"))
-            and artifact.get("id") in artifact_refs
-            and bool(evidence_by_kind.get("artifact"))
-            and (evidence_by_kind.get("artifact") or {}).get("artifact", {}).get("id") == artifact.get("id")
-        )
+        artifact_ids = {item.get("id") for item in artifacts if item.get("id")}
+        created_artifacts = (evidence_by_kind.get("created_artifacts") or {}).get("artifacts") or [artifact]
+        evidence_artifact_ids = {item.get("id") for item in created_artifacts if isinstance(item, dict) and item.get("id")}
+        artifact_supported = bool(artifact_ids) and artifact_ids.issubset(artifact_refs) and artifact_ids.issubset(evidence_artifact_ids)
         review_supported = (
             review_result.get("status") == "approved"
             and bool(evidence_by_kind.get("review_result"))
             and (evidence_by_kind.get("review_result") or {}).get("review_result", {}).get("status") == "approved"
             and (evidence_by_kind.get("review_result") or {}).get("review_result", {}).get("artifact_id") == artifact.get("id")
         )
+        if len(expected_artifact_paths) > 1:
+            reviewed_files = set(review_result.get("checked_files") or [])
+            review_supported = review_supported and set(expected_artifact_paths).issubset(reviewed_files) and not review_result.get("errors")
         tasks_supported = False
         task_status = evidence_by_kind.get("task_status") or {}
         task_rows = task_status.get("tasks") or []
@@ -300,36 +334,43 @@ class ExperimentalDAGConsolidator:
         if statuses.get(worker.id) == "completed" and statuses.get(reviewer.id) == "completed":
             tasks_supported = True
 
-        tool_history_supported = any(
-            isinstance(row, dict)
+        expected_paths = {path.lower() for path in expected_artifact_paths}
+        write_paths = {
+            str(row.get("path") or "").replace("\\", "/").lower()
+            for row in tool_rows
+            if isinstance(row, dict)
             and row.get("task_id") == worker.id
             and row.get("tool") in {"Write", "Edit"}
             and row.get("ok") is True
-            and str(row.get("path") or "").replace("\\", "/").lower() == "readme.md"
+        }
+        read_paths = {
+            str(row.get("path") or "").replace("\\", "/").lower()
             for row in tool_rows
-        ) and any(
-            isinstance(row, dict)
+            if isinstance(row, dict)
             and row.get("task_id") == reviewer.id
             and row.get("tool") == "Read"
             and row.get("ok") is True
-            and str(row.get("path") or "").replace("\\", "/").lower() == "readme.md"
-            for row in tool_rows
-        )
+        }
+        tool_history_supported = expected_paths.issubset(write_paths) and expected_paths.issubset(read_paths)
+        validation_result = (evidence_by_kind.get("validation_result") or {}).get("validation_result") or {}
+        validation_supported = validation_result.get("status") == "passed"
 
         checks = {
             "artifact_supported": artifact_supported,
             "review_supported": review_supported,
             "tasks_supported": tasks_supported,
             "tool_history_supported": tool_history_supported,
+            "validation_supported": validation_supported,
         }
+        files_desc = ", ".join(expected_artifact_paths)
         return {
             "status": "verified" if all(checks.values()) else "unverified",
             "checks": checks,
             "supported_claims": [
-                "Implementation brief README.md artifact exists and is referenced by final_result.",
-                "Reviewer approved the referenced implementation brief artifact.",
-                "Documentation and Reviewer tasks completed.",
-                "Write/Edit and Read tool history supports the implementation brief create-review claim.",
+                f"{artifact_kind} artifacts {files_desc} exist and are referenced by final_result.",
+                f"Reviewer approved the referenced {artifact_kind} artifact.",
+                "Builder and Reviewer tasks completed.",
+                f"Write/Edit, Read, and validation evidence support the {files_desc} create-review claim.",
             ],
             "unsupported_claims": [] if all(checks.values()) else [name for name, ok in checks.items() if not ok],
         }
@@ -392,6 +433,45 @@ class ExperimentalDAGConsolidator:
             )
         )
 
+
+    @staticmethod
+    def _expected_artifact_paths(artifact_kind: str, expected_artifact_path: str) -> list[str]:
+        if artifact_kind == "static_app":
+            return list(STATIC_APP_REQUIRED_FILES)
+        return [expected_artifact_path]
+
+    def _resolve_build_tasks(self, swarm: SwarmState, security: TaskNode) -> tuple[TaskNode, TaskNode, str, str, str]:
+        try:
+            worker = self._find_task_by_type(swarm, "create_static_app", depends_on=security.id)
+            reviewer = self._find_task_by_type(swarm, "review_static_app", depends_on=worker.id)
+            return (
+                worker,
+                reviewer,
+                "index.html",
+                "static_app",
+                "Se generaron planes de arquitectura, frontend, backend y seguridad. Se creo una app web estatica real con index.html, styles.css y content.json; fue revisada y validada con evidencia.",
+            )
+        except FileNotFoundError:
+            worker = self._find_task_by_type(swarm, "create_readme", depends_on=security.id)
+            reviewer = self._find_task_by_type(swarm, "review_readme", depends_on=worker.id)
+            return (
+                worker,
+                reviewer,
+                "README.md",
+                "implementation_brief",
+                "Se generaron planes de arquitectura, frontend, backend y seguridad. Se creo un README de implementacion preliminar y fue revisado/validado con evidencia. No se crearon archivos reales de frontend/backend todavia.",
+            )
+
+    @staticmethod
+    def _find_artifact_by_path(swarm: SwarmState, source_task_id: str, path: str) -> dict[str, Any] | None:
+        expected = path.replace("\\", "/").lower()
+        for artifact in getattr(swarm, "artifacts", []) or []:
+            if not isinstance(artifact, dict):
+                continue
+            artifact_path = str(artifact.get("path") or "").replace("\\", "/").lower()
+            if artifact.get("task_id") == source_task_id and artifact_path == expected:
+                return artifact
+        return None
 
     def _find_task_by_type(
         self,

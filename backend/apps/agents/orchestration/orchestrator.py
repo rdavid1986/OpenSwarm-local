@@ -285,6 +285,200 @@ class SwarmOrchestrator:
         self._ensure_workspace_path(swarm)
         return self.store.save(swarm)
 
+    def ensure_static_app_dag(self, *, swarm_id: str, generated_plan: dict | None = None) -> SwarmState:
+        swarm = self.store.load(swarm_id)
+        self._ensure_workspace_path(swarm)
+        if swarm.tasks:
+            return self.store.save(swarm)
+
+        plan = generated_plan if isinstance(generated_plan, dict) else {}
+        plan_summary = str(plan.get("summary") or "Plan generated from project intake.")
+        app_type = str(plan.get("app_type") or "web app")
+        main_goal = str(plan.get("main_goal") or "build a static app")
+        frontend = str(plan.get("frontend") or "HTML/CSS")
+        backend = str(plan.get("backend") or "no backend")
+        database = str(plan.get("database") or "no database")
+        mvp_priority = str(plan.get("mvp_priority") or "static MVP")
+        out_of_scope = str(plan.get("out_of_scope") or "out of scope not defined")
+        visual_style = str(plan.get("visual_style") or "clean modern UI")
+
+        architecture_spec = get_experimental_task_spec("architecture_plan_execute")
+        frontend_spec = get_experimental_task_spec("frontend_plan_execute")
+        backend_spec = get_experimental_task_spec("backend_plan_execute")
+        security_spec = get_experimental_task_spec("security_review_execute")
+        create_spec = get_experimental_task_spec("create_static_app")
+        review_spec = get_experimental_task_spec("review_static_app")
+        consolidate_spec = get_experimental_task_spec("consolidate_final")
+        validation_spec = get_experimental_task_spec("validation_execute")
+
+        coordinator = AgentContract(
+            role="CoordinatorAgent",
+            objective="Coordinate the static app build, maintain task state, and consolidate evidence.",
+            allowed_tools=list(consolidate_spec.allowed_tools),
+            acceptance_criteria=["Every completed task has evidence.", "Final result cites created static app artifacts."],
+            output_contract=dict(consolidate_spec.output_contract),
+        )
+        architect = AgentContract(
+            role="ArchitectAgent",
+            objective="Generate a safe architecture plan from the project intake without using tools.",
+            allowed_tools=list(architecture_spec.allowed_tools),
+            acceptance_criteria=["Architecture plan is ready.", "Architecture output includes components, constraints, and risks."],
+            output_contract=dict(architecture_spec.output_contract),
+        )
+        frontend_planner = AgentContract(
+            role="FrontendAgent",
+            objective="Generate a safe frontend plan for a static app from architecture without using tools.",
+            allowed_tools=list(frontend_spec.allowed_tools),
+            acceptance_criteria=["Frontend plan is ready.", "Frontend output includes static routes, content sections, constraints, and risks."],
+            output_contract=dict(frontend_spec.output_contract),
+        )
+        backend_planner = AgentContract(
+            role="BackendAgent",
+            objective="Confirm backend scope for the static app without using tools.",
+            allowed_tools=list(backend_spec.allowed_tools),
+            acceptance_criteria=["Backend plan is ready.", "Backend output confirms no backend work unless intake requires it."],
+            output_contract=dict(backend_spec.output_contract),
+        )
+        security_reviewer = AgentContract(
+            role="SecurityAgent",
+            objective="Generate a safe security review for static app files without using tools.",
+            allowed_tools=list(security_spec.allowed_tools),
+            acceptance_criteria=["Security review is ready.", "Security output includes static-app constraints and risks."],
+            output_contract=dict(security_spec.output_contract),
+        )
+        static_builder = AgentContract(
+            role="FrontendAgent",
+            objective="Create static app files using controlled filesystem tools only.",
+            allowed_tools=list(create_spec.allowed_tools),
+            acceptance_criteria=[
+                "index.html, styles.css, and content.json exist in the workspace.",
+                "index.html references only existing local files.",
+                "Content describes OpenSwarm as local-first agent orchestration without prohibited product claims.",
+                "Static app artifact paths are submitted with evidence.",
+            ],
+            output_contract=dict(create_spec.output_contract),
+        )
+        reviewer = AgentContract(
+            role="ReviewerAgent",
+            objective="Validate created static app files by reading them with real tools and reporting evidence.",
+            allowed_tools=list(review_spec.allowed_tools),
+            acceptance_criteria=[
+                "Reviewer reads index.html, styles.css, and content.json.",
+                "Reviewer rejects missing files, missing referenced files, prohibited claims, or incomplete required sections.",
+                "Reviewer returns approval or rejection with evidence.",
+            ],
+            output_contract=dict(review_spec.output_contract),
+        )
+        tester = AgentContract(
+            role="TesterAgent",
+            objective="Run strictly allowlisted validation checks or safe artifact validation.",
+            allowed_tools=list(validation_spec.allowed_tools),
+            acceptance_criteria=["Validation uses only safe checks.", "Validation produces evidence."],
+            output_contract=dict(validation_spec.output_contract),
+        )
+
+        architecture_task = TaskNode(
+            title=architecture_spec.title,
+            objective=(
+                "Generate an architecture plan from the project intake before creating static app files. "
+                f"Use the intake context: {plan_summary} "
+                f"App type: {app_type}. Main goal: {main_goal}. "
+                f"Stack: {frontend} + {backend} + {database}. "
+                f"MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
+            ),
+            assigned_contract_id=architect.id,
+        )
+        frontend_plan_task = TaskNode(
+            title=frontend_spec.title,
+            objective=(
+                "Generate a frontend plan for the static app before creating files. "
+                f"Use the intake context: {plan_summary} "
+                f"Frontend: {frontend}. Visual style: {visual_style}. "
+                f"MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
+            ),
+            assigned_contract_id=frontend_planner.id,
+            depends_on=[architecture_task.id],
+        )
+        backend_plan_task = TaskNode(
+            title=backend_spec.title,
+            objective=(
+                "Confirm backend scope for this static app before creating files. "
+                f"Backend: {backend}. Database: {database}. MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
+            ),
+            assigned_contract_id=backend_planner.id,
+            depends_on=[frontend_plan_task.id],
+        )
+        security_review_task = TaskNode(
+            title=security_spec.title,
+            objective=(
+                "Generate a security review for the static app before creating files. "
+                f"Stack: {frontend} + {backend} + {database}. MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
+            ),
+            assigned_contract_id=security_reviewer.id,
+            depends_on=[backend_plan_task.id],
+        )
+        create_task = TaskNode(
+            title=create_spec.title,
+            objective=(
+                "Create a real static web app in the workspace using controlled file tools only. "
+                "Create index.html, styles.css, and content.json as mandatory artifacts. "
+                "index.html may reference styles.css and content.json only because those files must also be created. "
+                "Describe OpenSwarm accurately as a local-first application for coordinating AI agents on the user's machine, "
+                "with dashboards/SwarmCard, orchestrator chat, tasks/cards/DAG, controlled tools, approvals, artifacts, evidence, final_result, "
+                "and local models such as Ollama when possible. "
+                "Do not claim generic distributed computing, cloud-first operation, automatic scalability, high availability, cost effectiveness, copyright, or invented years. "
+                "Do not use shell, npm, package managers, external CDNs, network calls, or backend code. "
+                f"Use the intake context: {plan_summary} "
+                f"Main goal: {main_goal}. Frontend: {frontend}. Visual style: {visual_style}. "
+                f"MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
+            ),
+            assigned_contract_id=static_builder.id,
+            depends_on=[security_review_task.id],
+        )
+        review_task = TaskNode(
+            title=review_spec.title,
+            objective=(
+                "Read index.html, styles.css, and content.json with a real read tool. Reject if any required file is missing, "
+                "index.html references a missing file, content uses prohibited product claims or invented years, required sections "
+                "(Características, Ventajas, Próximos pasos) are missing, or required mentions are missing: local-first, agentes de IA, "
+                "dashboards/SwarmCard, tools, evidence, and final_result."
+            ),
+            assigned_contract_id=reviewer.id,
+            depends_on=[create_task.id],
+        )
+        validation_task = TaskNode(
+            title=validation_spec.title,
+            objective="Run safe validation checks before final consolidation.",
+            assigned_contract_id=tester.id,
+            depends_on=[review_task.id],
+        )
+        consolidate_task = TaskNode(
+            title=consolidate_spec.title,
+            objective="Summarize created static app files, reviewer result, validation result, evidence, and claim guard status for the user.",
+            assigned_contract_id=coordinator.id,
+            depends_on=[validation_task.id],
+        )
+
+        swarm.intent = "task"
+        swarm.coordinator_contract_id = coordinator.id
+        swarm.contracts = [coordinator, architect, frontend_planner, backend_planner, security_reviewer, static_builder, reviewer, tester]
+        swarm.tasks = [architecture_task, frontend_plan_task, backend_plan_task, security_review_task, create_task, review_task, validation_task, consolidate_task]
+        swarm.messages.append(
+            AgentToAgentMessage(
+                type="broadcast_to_swarm",
+                from_agent_id=coordinator.id,
+                payload={
+                    "message": "static_app_dag_created",
+                    "source": "start_implementation",
+                    "generated_plan_used": bool(plan),
+                    "generated_plan_summary": plan_summary,
+                },
+                requires_response=False,
+            )
+        )
+        return self.store.save(swarm)
+
+
     def ensure_readme_dag(self, *, swarm_id: str, generated_plan: dict | None = None) -> SwarmState:
         swarm = self.store.load(swarm_id)
         self._ensure_workspace_path(swarm)
@@ -444,8 +638,8 @@ class SwarmOrchestrator:
 
         swarm.intent = "task"
         swarm.coordinator_contract_id = coordinator.id
-        swarm.contracts.extend([coordinator, architect, frontend_planner, backend_planner, security_reviewer, worker, reviewer, tester])
-        swarm.tasks.extend([architecture_task, frontend_plan_task, backend_plan_task, security_review_task, write_task, review_task, validation_task, consolidate_task])
+        swarm.contracts = [coordinator, architect, frontend_planner, backend_planner, security_reviewer, worker, reviewer, tester]
+        swarm.tasks = [architecture_task, frontend_plan_task, backend_plan_task, security_review_task, write_task, review_task, validation_task, consolidate_task]
         swarm.messages.append(
             AgentToAgentMessage(
                 type="broadcast_to_swarm",

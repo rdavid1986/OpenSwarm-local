@@ -7,12 +7,14 @@ only executes the known safe README DAG task types.
 from __future__ import annotations
 
 import os
+import json
+import re
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from backend.apps.agents.orchestration.models import AgentContract, SwarmState, TaskNode, _now_iso
+from backend.apps.agents.orchestration.models import AgentContract, AgentToAgentMessage, SwarmState, TaskNode, _now_iso
 from backend.apps.agents.orchestration.store import SwarmStore, swarm_store
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.runtime.experimental_dag_chain_runner import ExperimentalDAGChainRunner
@@ -39,6 +41,40 @@ from backend.apps.agents.runtime.experimental_task_type_registry import (
 EXPERIMENTAL_DAG_DEPENDENCY_RUNNER_FLAG = "OPENSWARM_EXPERIMENTAL_DAG_DEPENDENCY_RUNNER"
 EXPERIMENTAL_PLANNER_AGENT_RUNTIME_FLAG = "OPENSWARM_EXPERIMENTAL_PLANNER_AGENT_RUNTIME"
 KnownTaskType = ExperimentalTaskType
+STATIC_APP_REQUIRED_FILES = ("index.html", "styles.css", "content.json")
+STATIC_APP_FORBIDDEN_CLAIMS = (
+    "computación distribuida",
+    "computacion distribuida",
+    "plataforma de computación distribuida",
+    "plataforma de computacion distribuida",
+    "computación en la nube",
+    "computacion en la nube",
+    "cloud-first",
+    "cloud first",
+    "cloud",
+    "nube",
+    "escalabilidad automática",
+    "escalabilidad automatica",
+    "alta disponibilidad",
+    "costo efectivo",
+    "cost-effective",
+    "copyright",
+    "©",
+)
+STATIC_APP_REQUIRED_SECTION_GROUPS = (
+    ("características", "caracteristicas"),
+    ("ventajas",),
+    ("próximos pasos", "proximos pasos"),
+)
+STATIC_APP_REQUIRED_MENTION_GROUPS = (
+    ("local-first",),
+    ("agentes de ia", "agentes ia", "agentes de inteligencia artificial"),
+    ("dashboards",),
+    ("swarmcard",),
+    ("tools", "herramientas controladas"),
+    ("evidence", "evidencia"),
+    ("final_result",),
+)
 
 
 class ExperimentalDAGDependencyRunRequest(ExperimentalMiniDAGRunRequest):
@@ -77,6 +113,517 @@ class ExperimentalDAGDependencyRunner:
         self.chain_runner = chain_runner or ExperimentalDAGChainRunner(store=self.store)
         self.consolidator = consolidator or ExperimentalDAGConsolidator(store=self.store)
         self.planner_adapter_factory = planner_adapter_factory or getattr(self.chain_runner, "adapter_factory", OllamaAdapter)
+
+    @staticmethod
+    def _static_app_plan_context(swarm: SwarmState) -> dict[str, Any]:
+        intake = getattr(swarm, "project_intake_state", {}) or {}
+        plan = intake.get("generated_plan") if isinstance(intake, dict) else {}
+        plan = plan if isinstance(plan, dict) else {}
+        return {
+            "summary": str(plan.get("summary") or "OpenSwarm App Builder local-first."),
+            "main_goal": str(plan.get("main_goal") or swarm.user_prompt or "Presentar OpenSwarm con una app estática mínima."),
+            "visual_style": str(plan.get("visual_style") or "interfaz clara, moderna y legible"),
+            "mvp_priority": str(plan.get("mvp_priority") or "explicar el flujo App Builder de forma honesta y verificable"),
+        }
+
+    @staticmethod
+    def _render_static_app_files(swarm: SwarmState) -> dict[str, str]:
+        context = ExperimentalDAGDependencyRunner._static_app_plan_context(swarm)
+        content = {
+            "title": "OpenSwarm App Builder",
+            "subtitle": "Coordina agentes de IA en tu máquina con evidencia verificable.",
+            "description": (
+                "OpenSwarm es una aplicación local-first para coordinar agentes de IA en la máquina del usuario. "
+                "El flujo App Builder combina intake, dashboards con SwarmCard y chat del orquestador, "
+                "tareas/cards/DAG, tools controladas, approvals, artifacts, evidence y final_result."
+            ),
+            "intake_context": {
+                "summary": context["summary"],
+                "main_goal": context["main_goal"],
+                "visual_style": context["visual_style"],
+                "mvp_priority": context["mvp_priority"],
+            },
+            "features": [
+                "Dashboards con SwarmCard y chat del orquestador para seguir el trabajo del swarm.",
+                "Tareas/cards/DAG que separan planificación, ejecución, revisión, validación y consolidación.",
+                "Tools controladas, approvals, artifacts, evidence y final_result para sostener claims verificables.",
+                "Enfoque local-first con soporte para modelos locales como Ollama cuando sea posible.",
+            ],
+            "advantages": [
+                "El usuario conserva el control del workspace local y del momento de iniciar Start Implementation.",
+                "Cada resultado se revisa contra artifacts y evidence antes de mostrarlo como completado.",
+                "El diseño favorece iteraciones pequeñas, auditables y fáciles de depurar.",
+            ],
+            "next_steps": [
+                "Abrir el preview local del artifact estático.",
+                "Revisar evidence, approvals y claim_guard antes de confiar en el resultado.",
+                "Iterar con refinement/debug loop cuando el BrowserCard esté conectado al proyecto levantado.",
+            ],
+        }
+        content_json = json.dumps(content, ensure_ascii=False, indent=2) + "\n"
+        index_html = """<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenSwarm App Builder</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <section class="hero">
+      <p class="eyebrow">local-first · agentes de IA · evidence</p>
+      <h1>OpenSwarm App Builder</h1>
+      <p class="lead">
+        OpenSwarm es una aplicación local-first para coordinar agentes de IA en la máquina del usuario.
+        Sus dashboards con SwarmCard y chat del orquestador muestran tareas/cards/DAG, tools controladas,
+        approvals, artifacts, evidence y final_result.
+      </p>
+    </section>
+
+    <section class="panel">
+      <h2>Características</h2>
+      <ul id="features">
+        <li>Dashboards con SwarmCard y chat del orquestador.</li>
+        <li>Tareas/cards/DAG para planificar, ejecutar, revisar y validar.</li>
+        <li>Tools controladas, approvals, artifacts, evidence y final_result.</li>
+        <li>Enfoque local-first con modelos locales como Ollama cuando sea posible.</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <h2>Ventajas</h2>
+      <ul id="advantages">
+        <li>Control del workspace local y del inicio de Start Implementation.</li>
+        <li>Resultados sostenidos por artifacts, evidence y claim_guard.</li>
+        <li>Iteraciones pequeñas, auditables y fáciles de revisar.</li>
+      </ul>
+    </section>
+
+    <section class="panel accent">
+      <h2>Próximos pasos</h2>
+      <ol id="next-steps">
+        <li>Inspeccionar el preview local del artifact estático.</li>
+        <li>Revisar evidence, approvals y claim_guard.</li>
+        <li>Continuar con refinement/debug loop cuando el BrowserCard esté disponible.</li>
+      </ol>
+    </section>
+  </main>
+
+  <script>
+    const fallbackContent = {
+      features: [
+        "Dashboards con SwarmCard y chat del orquestador.",
+        "Tareas/cards/DAG para planificar, ejecutar, revisar y validar.",
+        "Tools controladas, approvals, artifacts, evidence y final_result.",
+        "Enfoque local-first con modelos locales como Ollama cuando sea posible."
+      ],
+      advantages: [
+        "Control del workspace local y del inicio de Start Implementation.",
+        "Resultados sostenidos por artifacts, evidence y claim_guard.",
+        "Iteraciones pequeñas, auditables y fáciles de revisar."
+      ],
+      next_steps: [
+        "Inspeccionar el preview local del artifact estático.",
+        "Revisar evidence, approvals y claim_guard.",
+        "Continuar con refinement/debug loop cuando el BrowserCard esté disponible."
+      ]
+    };
+
+    function renderList(selector, values) {
+      const element = document.querySelector(selector);
+      if (!element || !Array.isArray(values)) return;
+      element.innerHTML = values.map((item) => `<li>${item}</li>`).join("");
+    }
+
+    function render(content) {
+      renderList("#features", content.features);
+      renderList("#advantages", content.advantages);
+      renderList("#next-steps", content.next_steps);
+    }
+
+    render(fallbackContent);
+    fetch("content.json")
+      .then((response) => response.ok ? response.json() : fallbackContent)
+      .then(render)
+      .catch(() => render(fallbackContent));
+  </script>
+</body>
+</html>
+"""
+        styles_css = """:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f7f8fb;
+  color: #172033;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(88, 166, 255, 0.18), transparent 34rem),
+    linear-gradient(135deg, #f7f8fb 0%, #eef2f7 100%);
+}
+
+.app-shell {
+  width: min(1080px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 56px 0;
+  display: grid;
+  gap: 20px;
+}
+
+.hero,
+.panel {
+  border: 1px solid rgba(23, 32, 51, 0.1);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 22px 70px rgba(20, 33, 61, 0.08);
+  padding: clamp(24px, 4vw, 44px);
+}
+
+.hero {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(233, 241, 255, 0.92));
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: #2f6fed;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+h1,
+h2 {
+  margin: 0;
+  line-height: 1.1;
+}
+
+h1 {
+  max-width: 760px;
+  font-size: clamp(2.2rem, 7vw, 5rem);
+  letter-spacing: -0.06em;
+}
+
+h2 {
+  font-size: clamp(1.35rem, 3vw, 2.15rem);
+}
+
+.lead {
+  max-width: 820px;
+  color: #43506a;
+  font-size: 1.1rem;
+  line-height: 1.75;
+}
+
+ul,
+ol {
+  margin: 20px 0 0;
+  padding-left: 1.2rem;
+  color: #39475f;
+  line-height: 1.7;
+}
+
+li + li {
+  margin-top: 10px;
+}
+
+.accent {
+  border-color: rgba(47, 111, 237, 0.26);
+  background: rgba(239, 245, 255, 0.9);
+}
+"""
+        return {
+            "index.html": index_html,
+            "styles.css": styles_css,
+            "content.json": content_json,
+        }
+
+    @staticmethod
+    def _static_app_referenced_paths(index_html: str) -> list[str]:
+        refs: list[str] = []
+        patterns = (
+            r"\b(?:href|src)\s*=\s*[\"']([^\"']+)[\"']",
+            r"\bfetch\(\s*[\"']([^\"']+)[\"']",
+        )
+        for pattern in patterns:
+            for match in re.finditer(pattern, index_html or "", flags=re.IGNORECASE):
+                ref = match.group(1).strip()
+                if not ref or ref.startswith(("#", "http://", "https://", "data:", "mailto:", "tel:", "javascript:")):
+                    continue
+                ref = ref.split("#", 1)[0].split("?", 1)[0].lstrip("./").replace("\\", "/")
+                if ref and ref not in refs:
+                    refs.append(ref)
+        return refs
+
+    @staticmethod
+    def _validate_static_app_files(files: dict[str, str], *, workspace: Path | None = None) -> dict[str, Any]:
+        errors: list[dict[str, Any]] = []
+        checks: list[dict[str, Any]] = []
+
+        for path in STATIC_APP_REQUIRED_FILES:
+            exists = path in files and bool(str(files.get(path) or "").strip())
+            checks.append({"kind": "required_file", "path": path, "ok": exists})
+            if not exists:
+                errors.append({"error": "required_file_missing", "path": path})
+
+        index_html = files.get("index.html") or ""
+        referenced_paths = ExperimentalDAGDependencyRunner._static_app_referenced_paths(index_html)
+        for ref in referenced_paths:
+            exists = ref in files
+            if workspace is not None:
+                exists = exists or (workspace / ref).is_file()
+            checks.append({"kind": "referenced_file_exists", "path": ref, "ok": exists})
+            if not exists:
+                errors.append({"error": "referenced_file_missing", "path": ref})
+
+        combined = "\n".join(str(files.get(path) or "") for path in STATIC_APP_REQUIRED_FILES).lower()
+        for claim in STATIC_APP_FORBIDDEN_CLAIMS:
+            found = claim in combined
+            checks.append({"kind": "forbidden_claim_absent", "claim": claim, "ok": not found})
+            if found:
+                errors.append({"error": "forbidden_claim_present", "claim": claim})
+        invented_year = re.search(r"\b20\d{2}\b", combined) is not None
+        checks.append({"kind": "invented_year_absent", "ok": not invented_year})
+        if invented_year:
+            errors.append({"error": "invented_year_present"})
+
+        for group in STATIC_APP_REQUIRED_SECTION_GROUPS:
+            ok = any(term in combined for term in group)
+            checks.append({"kind": "required_section_present", "terms": list(group), "ok": ok})
+            if not ok:
+                errors.append({"error": "required_section_missing", "terms": list(group)})
+
+        for group in STATIC_APP_REQUIRED_MENTION_GROUPS:
+            ok = any(term in combined for term in group)
+            checks.append({"kind": "required_mention_present", "terms": list(group), "ok": ok})
+            if not ok:
+                errors.append({"error": "required_mention_missing", "terms": list(group)})
+
+        try:
+            content = json.loads(files.get("content.json") or "")
+            json_ok = isinstance(content, dict) and all(isinstance(content.get(key), list) and content.get(key) for key in ("features", "advantages", "next_steps"))
+        except json.JSONDecodeError:
+            json_ok = False
+        checks.append({"kind": "content_json_structure", "ok": json_ok})
+        if not json_ok:
+            errors.append({"error": "content_json_invalid_structure", "required_keys": ["features", "advantages", "next_steps"]})
+
+        return {"ok": not errors, "checks": checks, "errors": errors, "referenced_paths": referenced_paths}
+
+    @staticmethod
+    def _upsert_artifact(swarm: SwarmState, task: TaskNode, artifact: dict[str, Any]) -> None:
+        swarm.artifacts = [
+            item for item in getattr(swarm, "artifacts", []) or []
+            if not (isinstance(item, dict) and item.get("id") == artifact.get("id"))
+        ]
+        swarm.artifacts.append(artifact)
+        task.artifacts = [
+            item for item in task.artifacts
+            if not (isinstance(item, dict) and item.get("id") == artifact.get("id"))
+        ]
+        task.artifacts.append(artifact)
+        path = str(artifact.get("path") or "")
+        if path and path not in task.touched_files:
+            task.touched_files.append(path)
+
+    @staticmethod
+    def _append_message_once(swarm: SwarmState, message: AgentToAgentMessage) -> None:
+        refs = set(message.artifact_refs)
+        for existing in swarm.messages:
+            if existing.type == message.type and existing.task_id == message.task_id and set(existing.artifact_refs) == refs:
+                existing.payload.update(message.payload)
+                existing.requires_response = message.requires_response
+                return
+        swarm.messages.append(message)
+
+    def _run_create_static_app_task(
+        self,
+        *,
+        swarm: SwarmState,
+        task: TaskNode,
+        body: ExperimentalDAGDependencyRunRequest,
+    ) -> dict[str, Any]:
+        spec = get_experimental_task_spec("create_static_app")
+        validate_experimental_task_contract(swarm=swarm, task=task, task_type="create_static_app")
+        contract = find_assigned_contract(swarm=swarm, task=task)
+        if contract is None:
+            raise FileNotFoundError(f"Assigned contract not found for task: {task.id}")
+
+        workspace = self.chain_runner.single_task_runner._resolve_workspace(body.workspace_path or swarm.workspace_path, swarm_id=swarm.id)
+        files = self._render_static_app_files(swarm)
+        validation = self._validate_static_app_files(files, workspace=workspace)
+        if not validation.get("ok"):
+            task.status = "failed"
+            task.errors.extend(validation.get("errors") or [])
+            task.updated_at = _now_iso()
+            self.store.save(swarm)
+            return {"status": "failed", "errors": validation.get("errors") or []}
+
+        history: list[dict[str, Any]] = []
+        artifacts: list[dict[str, Any]] = []
+        for path, content in files.items():
+            result = self.chain_runner.runtime.tools.execute_tool(
+                ToolCall(name="Write", input={"path": path, "content": content}, raw_name="Write"),
+                ToolExecutionContext(
+                    workspace_path=str(workspace),
+                    session_id="experimental-static-app-builder",
+                    swarm_id=swarm.id,
+                    agent_id=contract.id,
+                    task_id=task.id,
+                    allowed_tools=list(spec.allowed_tools),
+                    metadata={
+                        "task_type": "create_static_app",
+                        "path_scope": {
+                            "allowed_paths": list(STATIC_APP_REQUIRED_FILES),
+                            "forbidden_paths": ["package.json", "vite.config.js", "vite.config.ts", "node_modules", ".env"],
+                        },
+                    },
+                ),
+                history=history,
+            )
+            if not result.ok:
+                task.status = "failed"
+                task.errors.append({"error": "static_app_write_failed", "path": path, "tool_error": result.error})
+                task.updated_at = _now_iso()
+                swarm.tool_history.extend(history)
+                self.store.save(swarm)
+                return {"status": "failed", "errors": task.errors}
+
+            artifact = {
+                "id": f"artifact-{task.id}-{path.replace('/', '__')}",
+                "kind": "static_app" if path == "index.html" else "static_app_asset",
+                "path": path,
+                "absolute_path": str((workspace / path).resolve()),
+                "bytes": len(content.encode("utf-8")),
+                "status": "created",
+                "task_id": task.id,
+                "agent_id": contract.id,
+                "agent_role": contract.role,
+                "evidence_ref": result.call_id,
+                "created_at": _now_iso(),
+            }
+            self._upsert_artifact(swarm, task, artifact)
+            artifacts.append(artifact)
+
+        swarm.tool_history.extend(history)
+        task.evidence = [item for item in task.evidence if item.get("kind") != "static_app_created"]
+        task.evidence.append(
+            {
+                "kind": "static_app_created",
+                "status": "completed",
+                "files": list(STATIC_APP_REQUIRED_FILES),
+                "checks": validation.get("checks") or [],
+                "source": "deterministic_static_app_builder",
+                "created_at": _now_iso(),
+            }
+        )
+        task.status = "completed"
+        task.updated_at = _now_iso()
+
+        artifact_refs = [str(item.get("id")) for item in artifacts if item.get("id")]
+        self._append_message_once(
+            swarm,
+            AgentToAgentMessage(
+                type="submit_artifact",
+                from_agent_id=contract.id,
+                to_agent_id=swarm.coordinator_contract_id,
+                task_id=task.id,
+                payload={"artifacts": artifacts, "files": list(STATIC_APP_REQUIRED_FILES)},
+                artifact_refs=artifact_refs,
+                requires_response=False,
+            ),
+        )
+        review_task = self._find_task_by_type(swarm, "review_static_app")
+        self._append_message_once(
+            swarm,
+            AgentToAgentMessage(
+                type="request_review",
+                from_agent_id=contract.id,
+                to_agent_id=review_task.assigned_contract_id,
+                task_id=review_task.id,
+                payload={"artifact_paths": list(STATIC_APP_REQUIRED_FILES), "source_task_id": task.id},
+                artifact_refs=artifact_refs,
+                requires_response=True,
+            ),
+        )
+        self.store.save(swarm)
+        return {"status": "completed", "files": list(STATIC_APP_REQUIRED_FILES), "artifacts": artifacts}
+
+    def _run_review_static_app_task(
+        self,
+        *,
+        swarm: SwarmState,
+        task: TaskNode,
+        body: ExperimentalDAGDependencyRunRequest,
+    ) -> dict[str, Any]:
+        spec = get_experimental_task_spec("review_static_app")
+        validate_experimental_task_contract(swarm=swarm, task=task, task_type="review_static_app")
+        contract = find_assigned_contract(swarm=swarm, task=task)
+        if contract is None:
+            raise FileNotFoundError(f"Assigned contract not found for task: {task.id}")
+
+        worker = self._find_task_by_type(swarm, "create_static_app")
+        workspace = self.chain_runner.single_task_runner._resolve_workspace(body.workspace_path or swarm.workspace_path, swarm_id=swarm.id)
+        history: list[dict[str, Any]] = []
+        files: dict[str, str] = {}
+        read_errors: list[dict[str, Any]] = []
+        for path in STATIC_APP_REQUIRED_FILES:
+            result = self.chain_runner.runtime.tools.execute_tool(
+                ToolCall(name="Read", input={"path": path}, raw_name="Read"),
+                ToolExecutionContext(
+                    workspace_path=str(workspace),
+                    session_id="experimental-static-app-review",
+                    swarm_id=swarm.id,
+                    agent_id=contract.id,
+                    task_id=task.id,
+                    allowed_tools=list(spec.allowed_tools),
+                    metadata={"task_type": "review_static_app"},
+                ),
+                history=history,
+            )
+            if result.ok:
+                files[path] = str(result.result.get("content") or "")
+            else:
+                read_errors.append({"error": "static_app_read_failed", "path": path, "tool_error": result.error})
+
+        swarm.tool_history.extend(history)
+        validation = self._validate_static_app_files(files, workspace=workspace)
+        errors = read_errors + list(validation.get("errors") or [])
+        approved = not errors
+        artifact = self._find_artifact_by_path(swarm, source_task_id=worker.id, path="index.html") or {}
+        review_result = {
+            "kind": "review_result",
+            "status": "approved" if approved else "rejected",
+            "artifact_id": artifact.get("id"),
+            "artifact_path": "index.html",
+            "required_read_satisfied": all(path in files for path in STATIC_APP_REQUIRED_FILES),
+            "checked_files": list(STATIC_APP_REQUIRED_FILES),
+            "checks": validation.get("checks") or [],
+            "errors": errors,
+            "evidence": [f"read:{path}" for path in STATIC_APP_REQUIRED_FILES if path in files],
+            "created_at": _now_iso(),
+        }
+        task.validations = [item for item in task.validations if item.get("kind") != "review_result"]
+        task.validations.append(review_result)
+        task.evidence = [item for item in task.evidence if item.get("kind") != "review_result"]
+        task.evidence.append(review_result)
+        if approved:
+            task.status = "completed"
+            task.errors = [item for item in task.errors if item.get("error") not in {"static_app_review_rejected", "static_app_read_failed"}]
+        else:
+            task.status = "failed"
+            task.errors.append({"error": "static_app_review_rejected", "errors": errors})
+        task.updated_at = _now_iso()
+        self.store.save(swarm)
+        return review_result
 
     def _run_architecture_plan_execute_task(
         self,
@@ -266,19 +813,55 @@ class ExperimentalDAGDependencyRunner:
 
         workspace = Path(workspace_path).expanduser().resolve()
         if not (workspace / ".git").exists():
-            readme = workspace / "README.md"
-            readme_exists = readme.exists() and readme.is_file()
-            readme_bytes = readme.stat().st_size if readme_exists else 0
-            passed = readme_exists and readme_bytes > 0
+            if self._find_task_by_type_optional(swarm, "create_static_app") is not None:
+                files: dict[str, str] = {}
+                for required_path in STATIC_APP_REQUIRED_FILES:
+                    artifact_file = workspace / required_path
+                    if artifact_file.exists() and artifact_file.is_file():
+                        files[required_path] = artifact_file.read_text(encoding="utf-8")
+                static_validation = self._validate_static_app_files(files, workspace=workspace)
+                passed = bool(static_validation.get("ok"))
+                validation_result = {
+                    "status": "passed" if passed else "failed",
+                    "commands": [],
+                    "checks": static_validation.get("checks") or [],
+                    "errors": static_validation.get("errors") or [],
+                    "evidence": ["static_app_workspace_validated"] if passed else [],
+                    "note": "Workspace is not a Git repository; validation checked index.html, styles.css, content.json, references, content claims, and required sections.",
+                }
+                task.validations.append(validation_result)
+                if passed:
+                    task.evidence.append({
+                        "kind": "static_app_workspace_validated",
+                        "paths": list(STATIC_APP_REQUIRED_FILES),
+                        "status": "passed",
+                        "created_at": _now_iso(),
+                    })
+                else:
+                    task.errors.append({
+                        "error": "static_app_workspace_validation_failed",
+                        "workspace_path": str(workspace),
+                        "details": static_validation.get("errors") or [],
+                    })
+                task.status = "completed" if passed else "failed"
+                task.updated_at = _now_iso()
+                return validation_result
+
+            candidate_paths = ["index.html", "README.md"]
+            selected_path = next((candidate for candidate in candidate_paths if (workspace / candidate).exists()), candidate_paths[0])
+            artifact_file = workspace / selected_path
+            artifact_exists = artifact_file.exists() and artifact_file.is_file()
+            artifact_bytes = artifact_file.stat().st_size if artifact_exists else 0
+            passed = artifact_exists and artifact_bytes > 0
             validation_result = {
                 "status": "passed" if passed else "failed",
                 "commands": [],
                 "checks": [
                     {
                         "kind": "workspace_artifact_exists",
-                        "path": "README.md",
-                        "ok": readme_exists,
-                        "bytes": readme_bytes,
+                        "path": selected_path,
+                        "ok": artifact_exists,
+                        "bytes": artifact_bytes,
                     }
                 ],
                 "evidence": ["workspace_artifact_validated"] if passed else [],
@@ -288,14 +871,14 @@ class ExperimentalDAGDependencyRunner:
             if passed:
                 task.evidence.append({
                     "kind": "workspace_artifact_validated",
-                    "path": "README.md",
+                    "path": selected_path,
                     "status": "passed",
                     "created_at": _now_iso(),
                 })
             else:
                 task.errors.append({
                     "error": "workspace_artifact_validation_failed",
-                    "path": "README.md",
+                    "path": selected_path,
                     "workspace_path": str(workspace),
                 })
             task.status = "completed" if passed else "failed"
@@ -498,6 +1081,45 @@ class ExperimentalDAGDependencyRunner:
                     return self._response(swarm_id, status="failed", execution_order=execution_order, errors=review_result.get("errors") or [], ok=False)
                 continue
 
+            if task_type == "create_static_app":
+                current.status = "running"
+                self.store.save(swarm)
+                result = self._run_create_static_app_task(swarm=swarm, task=current, body=body)
+                execution_order[-1]["action"] = "executed"
+                execution_order[-1]["status"] = result.get("status")
+                if result.get("status") == "completed":
+                    self._trace_event(swarm_id, "task_completed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": result.get("status"), "files": result.get("files")})
+                if result.get("status") != "completed":
+                    errors = result.get("errors") or []
+                    self._trace_event(swarm_id, "task_failed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": result.get("status"), "errors": errors})
+                    self._trace_event(swarm_id, "dag_failed", task_id=current.id, payload={"error": "task_failed", "type": task_type, "errors": errors})
+                    return self._response(swarm_id, status="failed", execution_order=execution_order, errors=errors, ok=False)
+                continue
+
+            if task_type == "review_static_app":
+                swarm = self.store.load(swarm_id)
+                current = self._task_by_id(swarm, current.id)
+                worker = self._find_task_by_type(swarm, "create_static_app")
+                missing_artifacts = [
+                    path for path in STATIC_APP_REQUIRED_FILES
+                    if not self._find_artifact_by_path(swarm, source_task_id=worker.id, path=path)
+                ]
+                if missing_artifacts:
+                    return self._response(swarm_id, status="failed", execution_order=execution_order, errors=[{"error": "static_app_artifacts_missing_before_review", "paths": missing_artifacts}], ok=False)
+                current.status = "running"
+                self.store.save(swarm)
+                review_result = self._run_review_static_app_task(swarm=swarm, task=current, body=body)
+                execution_order[-1]["action"] = "executed"
+                execution_order[-1]["status"] = review_result.get("status")
+                if review_result.get("status") == "approved":
+                    self._trace_event(swarm_id, "review_completed", task_id=current.id, payload=review_result)
+                    self._trace_event(swarm_id, "task_completed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": review_result.get("status")})
+                if review_result.get("status") != "approved":
+                    self._trace_event(swarm_id, "task_failed", task_id=current.id, payload={"title": current.title, "type": task_type, "status": review_result.get("status"), "errors": review_result.get("errors") or []})
+                    self._trace_event(swarm_id, "dag_failed", task_id=current.id, payload={"error": "review_failed", "errors": review_result.get("errors") or []})
+                    return self._response(swarm_id, status="failed", execution_order=execution_order, errors=review_result.get("errors") or [], ok=False)
+                continue
+
             if task_type == "inspect_readme":
                 result = self._run_inspect_readme(swarm_id=swarm_id, task=current, body=body)
                 execution_order[-1]["action"] = "executed"
@@ -654,7 +1276,35 @@ class ExperimentalDAGDependencyRunner:
     def _classify_task(self, task: TaskNode) -> KnownTaskType:
         return classify_experimental_task(task)
 
+    @staticmethod
+    def _find_artifact_by_path(swarm: SwarmState, *, source_task_id: str, path: str) -> dict[str, Any] | None:
+        normalized = path.replace("\\", "/").lower()
+        for artifact in getattr(swarm, "artifacts", []) or []:
+            if not isinstance(artifact, dict):
+                continue
+            artifact_path = str(artifact.get("path") or "").replace("\\", "/").lower()
+            if artifact.get("task_id") == source_task_id and artifact_path == normalized:
+                return artifact
+        return None
+
     def _has_valid_completion(self, swarm: SwarmState, task: TaskNode, task_type: KnownTaskType) -> bool:
+        if task_type == "create_static_app":
+            return all(
+                self._find_artifact_by_path(swarm, source_task_id=task.id, path=path) is not None
+                for path in STATIC_APP_REQUIRED_FILES
+            )
+        if task_type == "review_static_app":
+            try:
+                worker = self._find_task_by_type(swarm, "create_static_app")
+            except FileNotFoundError:
+                return False
+            artifact = self._find_artifact_by_path(swarm, source_task_id=worker.id, path="index.html")
+            if not artifact:
+                return False
+            review = self._find_approved_review_result(task, artifact)
+            return bool(artifact and review and not review.get("errors"))
+        if task_type == "validation_execute" and self._find_task_by_type_optional(swarm, "create_static_app") is not None:
+            return bool(task.validations and task.validations[-1].get("status") == "passed")
         return validate_experimental_task_completion(
             swarm=swarm,
             task=task,
@@ -897,6 +1547,15 @@ class ExperimentalDAGDependencyRunner:
             if self._classify_task(task) == task_type:
                 return task
         raise FileNotFoundError(f"Task not found for type: {task_type}")
+
+    def _find_task_by_type_optional(self, swarm: SwarmState, task_type: KnownTaskType) -> TaskNode | None:
+        for task in swarm.tasks:
+            try:
+                if self._classify_task(task) == task_type:
+                    return task
+            except ValueError:
+                continue
+        return None
 
     @staticmethod
     def _find_approved_review_result(reviewer: TaskNode, artifact: dict[str, Any]) -> dict[str, Any] | None:
