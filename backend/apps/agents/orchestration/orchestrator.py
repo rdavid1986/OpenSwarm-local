@@ -848,6 +848,51 @@ class SwarmOrchestrator:
 
         return self.store.save(swarm)
 
+    def _materialize_dag_proposal_state(
+        self,
+        *,
+        base_swarm: SwarmState,
+        proposal: dict,
+    ) -> SwarmState:
+        contracts_by_key: dict[str, AgentContract] = {}
+        tasks: list[TaskNode] = []
+
+        for item in proposal.get("tasks") or []:
+            task_type = str(item.get("task_type") or "")
+            role = str(item.get("role") or "")
+            if not task_type:
+                raise ValueError("DAG proposal task is missing task_type")
+            if not role:
+                raise ValueError("DAG proposal task is missing role")
+
+            spec = get_experimental_task_spec(task_type)
+            contract_key = str(item.get("contract_key") or role)
+            contract = contracts_by_key.get(contract_key)
+            if contract is None:
+                contract = AgentContract(
+                    role=role,
+                    objective=str(item.get("contract_objective") or item.get("objective") or spec.title),
+                    allowed_tools=list(spec.allowed_tools),
+                    acceptance_criteria=list(item.get("acceptance_criteria") or []),
+                    output_contract=dict(spec.output_contract),
+                )
+                contracts_by_key[contract_key] = contract
+
+            task_kwargs = {
+                "title": str(item.get("title") or spec.title),
+                "objective": str(item.get("objective") or spec.title),
+                "assigned_contract_id": contract.id,
+                "depends_on": [str(dep) for dep in (item.get("depends_on") or [])],
+            }
+            if item.get("id"):
+                task_kwargs["id"] = str(item.get("id"))
+            tasks.append(TaskNode(**task_kwargs))
+
+        materialized = base_swarm.model_copy(deep=True)
+        materialized.contracts = list(contracts_by_key.values())
+        materialized.tasks = tasks
+        return materialized
+
     def _validate_dag_proposal_state(self, swarm: SwarmState) -> list[dict]:
         errors: list[dict] = []
 

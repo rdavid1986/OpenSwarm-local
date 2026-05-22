@@ -101,3 +101,66 @@ def test_record_dag_proposal_decision_marks_accepted_or_rejected():
     assert rejected.decisions[-2]["metadata"]["template"] == "dynamic"
     assert rejected.decisions[-1]["status"] == "rejected"
     assert rejected.decisions[-1]["validation_errors"][0]["error"] == "unknown_dependency"
+
+
+def test_materialize_dag_proposal_uses_registry_tools_and_contract():
+    orchestrator = SwarmOrchestrator()
+    base = SwarmState(title="Test", user_prompt="Test")
+
+    materialized = orchestrator._materialize_dag_proposal_state(
+        base_swarm=base,
+        proposal={
+            "tasks": [
+                {
+                    "id": "create-readme",
+                    "task_type": "create_readme",
+                    "role": "DocumentationAgent",
+                    "title": "Create implementation brief README.md",
+                    "objective": "Create README.md from the model generated DAG proposal.",
+                    "allowed_tools": ["SafeShell"],
+                    "output_contract": {"unsafe": True},
+                }
+            ]
+        },
+    )
+
+    assert len(materialized.tasks) == 1
+    assert len(materialized.contracts) == 1
+    contract = materialized.contracts[0]
+    spec = get_experimental_task_spec("create_readme")
+    assert contract.allowed_tools == spec.allowed_tools
+    assert contract.output_contract == spec.output_contract
+    assert "SafeShell" not in contract.allowed_tools
+    assert orchestrator._validate_dag_proposal_state(materialized) == []
+
+
+def test_materialize_dag_proposal_preserves_declared_dependencies():
+    orchestrator = SwarmOrchestrator()
+    base = SwarmState(title="Test", user_prompt="Test")
+
+    materialized = orchestrator._materialize_dag_proposal_state(
+        base_swarm=base,
+        proposal={
+            "tasks": [
+                {
+                    "id": "architecture",
+                    "task_type": "architecture_plan_execute",
+                    "role": "ArchitectAgent",
+                    "title": "Execute architecture plan",
+                    "objective": "Plan architecture.",
+                },
+                {
+                    "id": "frontend",
+                    "task_type": "frontend_plan_execute",
+                    "role": "FrontendAgent",
+                    "title": "Execute frontend plan",
+                    "objective": "Plan frontend.",
+                    "depends_on": ["architecture"],
+                },
+            ]
+        },
+    )
+
+    tasks_by_id = {task.id: task for task in materialized.tasks}
+    assert tasks_by_id["frontend"].depends_on == ["architecture"]
+    assert orchestrator._validate_dag_proposal_state(materialized) == []
