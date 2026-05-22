@@ -1091,6 +1091,25 @@ class SwarmOrchestrator:
 
         return errors
 
+    def _build_validated_template_dag_state(
+        self,
+        *,
+        base_swarm: SwarmState,
+        template: str,
+        generated_plan: dict | None = None,
+    ) -> tuple[SwarmState, list[dict]]:
+        proposal = self._build_template_dag_proposal(template=template, generated_plan=generated_plan)
+        materialized = self._materialize_dag_proposal_state(base_swarm=base_swarm, proposal=proposal)
+        validation_errors = self._validate_dag_proposal_state(materialized)
+        materialized = self._record_dag_proposal_decision(
+            swarm=materialized,
+            source="template_pipeline",
+            proposal_kind=str(proposal.get("kind") or "template_dag_proposal"),
+            validation_errors=validation_errors,
+            metadata={"template": template},
+        )
+        return materialized, validation_errors
+
     def _record_dag_proposal_decision(
         self,
         *,

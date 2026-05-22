@@ -222,3 +222,25 @@ def test_template_dag_proposal_implementation_brief_materializes_and_validates()
         "consolidate",
     ]
     assert orchestrator._validate_dag_proposal_state(materialized) == []
+
+
+def test_validated_template_dag_pipeline_records_accepted_decision():
+    orchestrator = SwarmOrchestrator()
+    base = SwarmState(title="Test", user_prompt="Test")
+
+    materialized, errors = orchestrator._build_validated_template_dag_state(
+        base_swarm=base,
+        template="implementation_brief",
+        generated_plan={
+            "app_type": "web app",
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        },
+    )
+
+    assert errors == []
+    assert materialized.decisions[-1]["kind"] == "dag_proposal_validation"
+    assert materialized.decisions[-1]["status"] == "accepted"
+    assert materialized.decisions[-1]["metadata"]["template"] == "implementation_brief"
+    assert [task.id for task in materialized.tasks][-2:] == ["validation", "consolidate"]
