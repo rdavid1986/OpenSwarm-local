@@ -848,6 +848,147 @@ class SwarmOrchestrator:
 
         return self.store.save(swarm)
 
+    def _build_template_dag_proposal(self, *, template: str, generated_plan: dict | None = None) -> dict:
+        plan = self._normalize_generated_plan(generated_plan)
+        plan_summary = plan["summary"]
+        app_type = plan["app_type"]
+        main_goal = plan["main_goal"]
+        frontend = plan["frontend"]
+        backend = plan["backend"]
+        database = plan["database"]
+        mvp_priority = plan["mvp_priority"]
+        out_of_scope = plan["out_of_scope"]
+        visual_style = plan["visual_style"]
+
+        common_prefix = [
+            {
+                "id": "architecture",
+                "task_type": "architecture_plan_execute",
+                "role": "ArchitectAgent",
+                "title": get_experimental_task_spec("architecture_plan_execute").title,
+                "objective": (
+                    "Generate an architecture plan from the project intake before creating artifacts. "
+                    f"Use the intake context: {plan_summary} "
+                    f"App type: {app_type}. Main goal: {main_goal}. "
+                    f"Stack: {frontend} + {backend} + {database}. "
+                    f"MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
+                ),
+            },
+            {
+                "id": "frontend_plan",
+                "task_type": "frontend_plan_execute",
+                "role": "FrontendAgent",
+                "title": get_experimental_task_spec("frontend_plan_execute").title,
+                "objective": (
+                    "Generate a frontend plan from the architecture plan before creating artifacts. "
+                    f"Frontend: {frontend}. Visual style: {visual_style}. "
+                    f"MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
+                ),
+                "depends_on": ["architecture"],
+            },
+            {
+                "id": "backend_plan",
+                "task_type": "backend_plan_execute",
+                "role": "BackendAgent",
+                "title": get_experimental_task_spec("backend_plan_execute").title,
+                "objective": (
+                    "Generate or confirm backend scope from the architecture plan before creating artifacts. "
+                    f"Backend: {backend}. Database: {database}. MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
+                ),
+                "depends_on": ["frontend_plan"],
+            },
+            {
+                "id": "security_review",
+                "task_type": "security_review_execute",
+                "role": "SecurityAgent",
+                "title": get_experimental_task_spec("security_review_execute").title,
+                "objective": (
+                    "Generate a security review from architecture, frontend plan, and backend plan before creating artifacts. "
+                    f"Stack: {frontend} + {backend} + {database}. MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
+                ),
+                "depends_on": ["backend_plan"],
+            },
+        ]
+
+        if template == "static_app":
+            implementation_tasks = [
+                {
+                    "id": "create_static_app",
+                    "task_type": "create_static_app",
+                    "role": "FrontendAgent",
+                    "title": get_experimental_task_spec("create_static_app").title,
+                    "objective": (
+                        "Create a real static web app in the workspace using controlled file tools only. "
+                        "Create index.html, styles.css, and content.json as mandatory artifacts. "
+                        "Do not use shell, npm, package managers, external CDNs, network calls, or backend code. "
+                        f"Main goal: {main_goal}. Frontend: {frontend}. Visual style: {visual_style}. "
+                        f"MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
+                    ),
+                    "depends_on": ["security_review"],
+                },
+                {
+                    "id": "review_static_app",
+                    "task_type": "review_static_app",
+                    "role": "ReviewerAgent",
+                    "title": get_experimental_task_spec("review_static_app").title,
+                    "objective": "Read and review created static app files with real read tools.",
+                    "depends_on": ["create_static_app"],
+                },
+            ]
+        elif template == "implementation_brief":
+            implementation_tasks = [
+                {
+                    "id": "create_readme",
+                    "task_type": "create_readme",
+                    "role": "DocumentationAgent",
+                    "title": get_experimental_task_spec("create_readme").title,
+                    "objective": (
+                        "Create an implementation brief README.md in the workspace using a real write tool. "
+                        "This is documentation only; do not claim that frontend/backend app files were implemented. "
+                        f"Use the project intake plan as source context: {plan_summary} "
+                        f"App type: {app_type}. Main goal: {main_goal}. "
+                        f"Stack: {frontend} + {backend} + {database}. "
+                        f"MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
+                    ),
+                    "depends_on": ["security_review"],
+                },
+                {
+                    "id": "review_readme",
+                    "task_type": "review_readme",
+                    "role": "ReviewerAgent",
+                    "title": get_experimental_task_spec("review_readme").title,
+                    "objective": "Read the implementation brief README.md with a real read tool and validate that it reflects the project intake plan.",
+                    "depends_on": ["create_readme"],
+                },
+            ]
+        else:
+            raise ValueError(f"Unknown DAG template: {template}")
+
+        suffix = [
+            {
+                "id": "validation",
+                "task_type": "validation_execute",
+                "role": "TesterAgent",
+                "title": get_experimental_task_spec("validation_execute").title,
+                "objective": "Run safe validation checks before final consolidation.",
+                "depends_on": [implementation_tasks[-1]["id"]],
+            },
+            {
+                "id": "consolidate",
+                "task_type": "consolidate_final",
+                "role": "CoordinatorAgent",
+                "title": get_experimental_task_spec("consolidate_final").title,
+                "objective": "Summarize work, artifacts, reviewer result, validation result, evidence, and claim guard status for the user.",
+                "depends_on": ["validation"],
+            },
+        ]
+
+        return {
+            "kind": "template_dag_proposal",
+            "template": template,
+            "tasks": [*common_prefix, *implementation_tasks, *suffix],
+        }
+
     def _materialize_dag_proposal_state(
         self,
         *,

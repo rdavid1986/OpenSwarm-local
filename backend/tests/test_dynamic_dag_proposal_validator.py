@@ -164,3 +164,61 @@ def test_materialize_dag_proposal_preserves_declared_dependencies():
     tasks_by_id = {task.id: task for task in materialized.tasks}
     assert tasks_by_id["frontend"].depends_on == ["architecture"]
     assert orchestrator._validate_dag_proposal_state(materialized) == []
+
+
+def test_template_dag_proposal_static_app_materializes_and_validates():
+    orchestrator = SwarmOrchestrator()
+    base = SwarmState(title="Test", user_prompt="Test")
+    proposal = orchestrator._build_template_dag_proposal(
+        template="static_app",
+        generated_plan={
+            "app_type": "static tutorial",
+            "frontend": "HTML/CSS",
+            "backend": "no backend",
+            "database": "no database",
+        },
+    )
+
+    materialized = orchestrator._materialize_dag_proposal_state(base_swarm=base, proposal=proposal)
+
+    assert proposal["template"] == "static_app"
+    assert [task.id for task in materialized.tasks] == [
+        "architecture",
+        "frontend_plan",
+        "backend_plan",
+        "security_review",
+        "create_static_app",
+        "review_static_app",
+        "validation",
+        "consolidate",
+    ]
+    assert orchestrator._validate_dag_proposal_state(materialized) == []
+
+
+def test_template_dag_proposal_implementation_brief_materializes_and_validates():
+    orchestrator = SwarmOrchestrator()
+    base = SwarmState(title="Test", user_prompt="Test")
+    proposal = orchestrator._build_template_dag_proposal(
+        template="implementation_brief",
+        generated_plan={
+            "app_type": "web app",
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        },
+    )
+
+    materialized = orchestrator._materialize_dag_proposal_state(base_swarm=base, proposal=proposal)
+
+    assert proposal["template"] == "implementation_brief"
+    assert [task.id for task in materialized.tasks] == [
+        "architecture",
+        "frontend_plan",
+        "backend_plan",
+        "security_review",
+        "create_readme",
+        "review_readme",
+        "validation",
+        "consolidate",
+    ]
+    assert orchestrator._validate_dag_proposal_state(materialized) == []
