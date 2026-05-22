@@ -6,6 +6,7 @@ import Chip from '@mui/material/Chip';
 import Button from '@mui/material/Button';
 import CloseIcon from '@mui/icons-material/Close';
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import {
@@ -910,7 +911,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
         onPointerCancel={handlePointerUp}
         sx={{
           px: 2,
-          py: 1.25,
+          py: 1.15,
           display: 'flex',
           alignItems: 'center',
           gap: 1,
@@ -920,10 +921,28 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
           userSelect: 'none',
         }}
       >
+        <Box
+          className="drag-handle"
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            color: c.text.ghost,
+            flexShrink: 0,
+          }}
+        >
+          <DragIndicatorIcon sx={{ fontSize: 16 }} />
+        </Box>
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography sx={{ fontWeight: 650, fontSize: '0.98rem' }}>Swarm</Typography>
-          <Typography sx={{ color: c.text.muted, fontSize: '0.78rem' }}>
-            Local-first experimental swarm runtime
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+            <Typography sx={{ fontWeight: 650, fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              Swarm
+            </Typography>
+            <Typography sx={{ color: c.text.tertiary, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {getSwarmModeOption(activeSwarmMode).label}
+            </Typography>
+          </Box>
+          <Typography sx={{ color: c.text.tertiary, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {activeSwarmModel || 'No model selected'}
           </Typography>
         </Box>
         <Chip
