@@ -1184,13 +1184,24 @@ def _build_project_intake_plan(state: dict[str, Any]) -> dict[str, Any]:
 
 def _build_orchestration_canvas_nodes(plan: dict[str, Any]) -> list[dict[str, Any]]:
     plan_summary = str(plan.get("summary") or "Preview generated from project intake.")
+    normalized_plan = swarm_orchestrator._normalize_generated_plan(plan)
+    dag_template = swarm_orchestrator._select_dag_template(normalized_plan)
+    if dag_template == "static_app":
+        create_label = "Create Static App"
+        create_role = "Frontend Implementation"
+        create_description = "Creates index.html, styles.css, and content.json when execution is enabled."
+    else:
+        create_label = "Create README"
+        create_role = "Implementation Brief"
+        create_description = "Creates a controlled implementation brief README when execution is enabled."
+
     node_specs = [
         ("plan", "Plan", "Planning", "Turns the intake answers into an implementation breakdown.", 40, 120),
         ("architecture", "Architecture", "Architecture", "Plans the safe implementation architecture.", 280, 120),
         ("frontend_plan", "Frontend Plan", "Frontend Planning", f"Plans UI for {plan.get('frontend') or 'the selected frontend'}.", 520, 120),
         ("backend_plan", "Backend Plan", "Backend Planning", f"Plans services and persistence for {plan.get('backend') or 'the selected backend'}.", 760, 120),
         ("security_review", "Security Review", "Security Review", "Reviews risks before implementation tasks run.", 1000, 120),
-        ("create_worker", "Create / Worker", "Implementation", "Creates the controlled implementation artifact when execution is enabled.", 1240, 120),
+        ("create_worker", create_label, create_role, create_description, 1240, 120),
         ("reviewer", "Reviewer", "Review", "Reviews implementation quality and scope fit.", 1480, 120),
         ("validation", "Validation", "Validation", "Runs validation checks when execution is enabled.", 1720, 120),
         ("consolidator", "Consolidator", "Consolidation", "Summarizes results and links real artifacts/evidence.", 1960, 120),
@@ -1242,6 +1253,7 @@ def _build_orchestration_canvas_state(swarm) -> dict[str, Any]:
         "source": "project_intake",
         "linked_swarm_id": getattr(swarm, "id", None),
         "linked_project_intake_status": intake_state.get("status"),
+        "dag_template": swarm_orchestrator._select_dag_template(swarm_orchestrator._normalize_generated_plan(plan)),
         "linked_project_intake_state": {
             "status": intake_state.get("status"),
             "answers": dict(intake_state.get("answers") or {}),
@@ -1276,7 +1288,7 @@ def _sync_specialized_contract_nodes(swarm) -> None:
         "frontend_plan": "FrontendAgent",
         "backend_plan": "BackendAgent",
         "security_review": "SecurityAgent",
-        "create_worker": "DocumentationAgent",
+        "create_worker": "FrontendAgent" if state.get("dag_template") == "static_app" else "DocumentationAgent",
         "reviewer": "ReviewerAgent",
         "validation": "TesterAgent",
         "consolidator": "CoordinatorAgent",
