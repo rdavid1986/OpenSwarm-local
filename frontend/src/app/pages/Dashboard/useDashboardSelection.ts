@@ -204,6 +204,14 @@ export function useDashboardSelection(
     [cards, viewCards, browserCards, notes, plansCards, swarmCards],
   );
 
+  const clearMarqueeState = useCallback(() => {
+    marqueeOriginRef.current = null;
+    isDraggingMarqueeRef.current = false;
+    setMarquee(null);
+    document.body.style.userSelect = '';
+    document.body.classList.remove('dashboard-marquee-active');
+  }, []);
+
   const handleCanvasMouseDown = useCallback(
     (e: MouseEvent) => {
       if (e.button !== 0 && e.button !== 2) return;
@@ -260,24 +268,36 @@ export function useDashboardSelection(
         }
       }
 
-      marqueeOriginRef.current = null;
-      isDraggingMarqueeRef.current = false;
-      setMarquee(null);
-      document.body.style.userSelect = '';
-      document.body.classList.remove('dashboard-marquee-active');
+      clearMarqueeState();
     },
-    [deselectAll],
+    [clearMarqueeState, deselectAll],
   );
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        clearMarqueeState();
         deselectAll();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [deselectAll]);
+  }, [clearMarqueeState, deselectAll]);
+
+  useEffect(() => {
+    const onWindowMouseUp = (e: MouseEvent) => {
+      if (!marqueeOriginRef.current && !document.body.classList.contains('dashboard-marquee-active')) return;
+      handleCanvasMouseUp(e);
+    };
+    const onWindowBlur = () => clearMarqueeState();
+
+    window.addEventListener('mouseup', onWindowMouseUp, true);
+    window.addEventListener('blur', onWindowBlur);
+    return () => {
+      window.removeEventListener('mouseup', onWindowMouseUp, true);
+      window.removeEventListener('blur', onWindowBlur);
+    };
+  }, [clearMarqueeState, handleCanvasMouseUp]);
 
   // Inject (once) a global CSS rule that makes browser webviews and iframes
   // transparent to mouse events while a marquee drag is active. Without this,

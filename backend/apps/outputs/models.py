@@ -32,6 +32,11 @@ class Output(BaseModel):
     # (which would orphan the running agent + lose chat history on every navigate).
     session_id: Optional[str] = None
     workspace_id: Optional[str] = None
+    source_swarm_id: Optional[str] = None
+    source_task_id: Optional[str] = None
+    artifact_refs: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    validation_status: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     # Usage stats: bumped by RenderOutput dispatch + OutputActivate. Drives
@@ -83,6 +88,11 @@ class OutputCreate(BaseModel):
     thumbnail: Optional[str] = None
     session_id: Optional[str] = None
     workspace_id: Optional[str] = None
+    source_swarm_id: Optional[str] = None
+    source_task_id: Optional[str] = None
+    artifact_refs: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    validation_status: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -115,6 +125,11 @@ class OutputUpdate(BaseModel):
     thumbnail: Optional[str] = None
     session_id: Optional[str] = None
     workspace_id: Optional[str] = None
+    source_swarm_id: Optional[str] = None
+    source_task_id: Optional[str] = None
+    artifact_refs: Optional[list[str]] = None
+    evidence_refs: Optional[list[str]] = None
+    validation_status: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod

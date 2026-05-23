@@ -29,6 +29,11 @@ export interface Output {
   // and reuses the on-disk workspace folder instead of seeding a fresh one.
   session_id?: string | null;
   workspace_id?: string | null;
+  source_swarm_id?: string | null;
+  source_task_id?: string | null;
+  artifact_refs?: string[];
+  evidence_refs?: string[];
+  validation_status?: string | null;
   created_at: string;
   updated_at: string;
 }

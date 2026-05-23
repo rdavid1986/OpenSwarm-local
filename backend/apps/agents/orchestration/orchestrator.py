@@ -1750,12 +1750,36 @@ class SwarmOrchestrator:
         if not swarm.workspace_path:
             return swarm, [{"error": "source_workspace_path_required"}], metadata
 
+        artifact_refs = [str(ref) for ref in (final_result.get("artifact_refs") or []) if ref]
+        evidence_refs = []
+        for item in getattr(swarm, "final_evidence", []) or []:
+            if isinstance(item, dict):
+                evidence_id = item.get("id") or item.get("evidence_id") or item.get("evidence_ref")
+                if evidence_id:
+                    evidence_refs.append(str(evidence_id))
+
+        source_task_id = None
+        for task in getattr(swarm, "tasks", []) or []:
+            if getattr(task, "task_type", None) == "create_static_app":
+                source_task_id = task.id
+                break
+
+        validation_status = None
+        validation_result = final_result.get("validation_result")
+        if isinstance(validation_result, dict):
+            validation_status = validation_result.get("status")
+
         from backend.apps.outputs.outputs import build_output_from_workspace
 
         output, validation_errors, output_metadata = build_output_from_workspace(
             workspace_path=swarm.workspace_path,
             name=name,
             description=description,
+            source_swarm_id=swarm_id,
+            source_task_id=source_task_id,
+            artifact_refs=artifact_refs,
+            evidence_refs=evidence_refs,
+            validation_status=validation_status,
         )
         metadata.update(output_metadata)
 

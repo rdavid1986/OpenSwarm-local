@@ -70,6 +70,8 @@ interface Props {
     height?: number;
   }) => void;
   onAddPreviewCard?: (outputId: string) => void;
+  draftPrompt?: string | null;
+  onDraftPromptConsumed?: () => void;
   dashboardId?: string;
 }
 
@@ -364,6 +366,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   onDoubleClick,
   onSwarmBound,
   onAddPreviewCard,
+  draftPrompt,
+  onDraftPromptConsumed,
   dashboardId,
 }) => {
   const c = useClaudeTokens();
@@ -426,6 +430,14 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
   const activeSwarmMode = getSwarmModeOption(swarmMode).id;
   const activeSwarmModel = swarmModel || defaultModel || null;
+
+  useEffect(() => {
+    if (!draftPrompt) return;
+    setPrompt(draftPrompt);
+    setCustomIntakeMode(false);
+    window.setTimeout(() => promptInputRef.current?.focus(), 0);
+    onDraftPromptConsumed?.();
+  }, [draftPrompt, onDraftPromptConsumed]);
 
   const handleSwarmModeChange = useCallback((nextMode: SwarmMode) => {
     dispatch(setSwarmCardMode({ swarmCardId, swarmMode: nextMode }));
@@ -1022,6 +1034,40 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             {activeSwarmModel || 'No model selected'}
           </Typography>
         </Box>
+        {outputBridgeOutputId && (
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleAddOutputBridgePreview();
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            sx={{
+              minHeight: 28,
+              px: 1.2,
+              py: 0.25,
+              borderRadius: `${c.radius.md}px`,
+              bgcolor: c.bg.surface,
+              color: c.text.primary,
+              borderColor: c.border.medium,
+              boxShadow: c.shadow.sm,
+              fontSize: '0.74rem',
+              fontWeight: 500,
+              textTransform: 'none',
+              flexShrink: 0,
+              cursor: 'pointer',
+              '&:hover': {
+                bgcolor: c.bg.secondary,
+                borderColor: c.border.strong,
+                boxShadow: c.shadow.md,
+              },
+            }}
+          >
+            Open Preview
+          </Button>
+        )}
+
         <Chip
           size="small"
           label={implementationMeta.label}
@@ -1665,35 +1711,6 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                       size="small"
                       label={`unsupported: ${(finalResult as any).claim_guard.unsupported_claims.length}`}
                     />
-                  )}
-                </Box>
-              )}
-              {(outputBridgeOutputId || canCreateOutputBridge) && (
-                <Box sx={{ mb: 1, display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
-                  {canCreateOutputBridge && (
-                    <Button
-                      size="small"
-                      variant="contained"
-                      disabled={swarmState.actionLoading}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleCreateOutputBridge();
-                      }}
-                    >
-                      Create output
-                    </Button>
-                  )}
-                  {outputBridgeOutputId && (
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleAddOutputBridgePreview();
-                      }}
-                    >
-                      Add preview card
-                    </Button>
                   )}
                 </Box>
               )}

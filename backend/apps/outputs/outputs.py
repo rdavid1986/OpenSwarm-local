@@ -227,11 +227,21 @@ def build_output_from_workspace(
     workspace_path: str,
     name: str | None = None,
     description: str | None = None,
+    source_swarm_id: str | None = None,
+    source_task_id: str | None = None,
+    artifact_refs: list[str] | None = None,
+    evidence_refs: list[str] | None = None,
+    validation_status: str | None = None,
 ) -> tuple[Output | None, list[dict], dict]:
     workspace = Path(workspace_path).expanduser().resolve()
     allowed_root = (Path.home() / ".openswarm" / "workspaces").resolve()
     metadata: dict = {
         "workspace_path": str(workspace),
+        "source_swarm_id": source_swarm_id,
+        "source_task_id": source_task_id,
+        "artifact_refs": artifact_refs or [],
+        "evidence_refs": evidence_refs or [],
+        "validation_status": validation_status,
         "allowed_files": [],
         "file_hashes": {},
         "file_sizes": {},
@@ -314,6 +324,11 @@ def build_output_from_workspace(
         icon="view_quilt",
         input_schema=input_schema,
         files=files,
+        source_swarm_id=source_swarm_id,
+        source_task_id=source_task_id,
+        artifact_refs=artifact_refs or [],
+        evidence_refs=evidence_refs or [],
+        validation_status=validation_status,
         created_at=now,
         updated_at=now,
     )

@@ -5,6 +5,7 @@ import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import CircularProgress from '@mui/material/CircularProgress';
+import Button from '@mui/material/Button';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import BoltIcon from '@mui/icons-material/Bolt';
 import CloseIcon from '@mui/icons-material/Close';
@@ -61,6 +62,11 @@ const CURSOR_MAP: Record<ResizeDir, string> = {
   nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize',
 };
 
+function isPreviewHeaderInteractiveTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return Boolean(target.closest('button, select, input, textarea, a, [role="button"], [data-preview-control="true"]'));
+}
+
 const HANDLE_DEFS: { dir: ResizeDir; sx: Record<string, any> }[] = [
   { dir: 'n',  sx: { top: -EDGE_THICKNESS / 2, left: CORNER_SIZE, right: CORNER_SIZE, height: EDGE_THICKNESS } },
   { dir: 's',  sx: { bottom: -EDGE_THICKNESS / 2, left: CORNER_SIZE, right: CORNER_SIZE, height: EDGE_THICKNESS } },
@@ -92,12 +98,13 @@ interface Props {
   cardZOrder?: number;
   onDoubleClick?: (id: string, type: 'agent' | 'view' | 'browser') => void;
   onBringToFront?: (id: string, type: 'agent' | 'view' | 'browser') => void;
+  onRefineOutput?: (output: Output, preset: DevicePresetKey) => void;
 }
 
 const DashboardViewCard: React.FC<Props> = ({
   output, cardX, cardY, cardWidth, cardHeight, zoom = 1, panX = 0, panY = 0, cmdHeld = false,
   isSelected = false, isHighlighted = false, multiDragDelta, onCardSelect, onDragStart, onDragMove, onDragEnd,
-  cardZOrder = 0, onDoubleClick, onBringToFront,
+  cardZOrder = 0, onDoubleClick, onBringToFront, onRefineOutput,
 }) => {
   const c = useClaudeTokens();
   const dispatch = useAppDispatch();
@@ -147,6 +154,7 @@ const DashboardViewCard: React.FC<Props> = ({
   const handleDragPointerDown = useCallback((e: React.PointerEvent) => {
     if (isMaximized) return;
     if (e.button !== 0) return;
+    if (isPreviewHeaderInteractiveTarget(e.target)) return;
     e.preventDefault();
     e.stopPropagation();
     dragState.current = { startX: e.clientX, startY: e.clientY, origX: cardX, origY: cardY, startPanX: panRef.current.panX, startPanY: panRef.current.panY };
@@ -306,6 +314,11 @@ const DashboardViewCard: React.FC<Props> = ({
     setIsMaximized((prev) => !prev);
   };
 
+  const handleRefineOutput = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onRefineOutput?.(output, selectedPreset);
+  };
+
   const handleAutoRun = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!output.auto_run_config?.prompt) return;
@@ -438,26 +451,7 @@ const DashboardViewCard: React.FC<Props> = ({
         }),
       }}
     >
-      {/* Selection overlay – blocks click interaction while selected, enabling drag from anywhere */}
-      {isSelected && !isMaximized && (
-        <Box
-          ref={scrollOverlayRef}
-          onPointerDown={handleDragPointerDown}
-          onPointerMove={handleDragPointerMove}
-          onPointerUp={handleDragPointerUp}
-          onClick={(e: React.MouseEvent) => {
-            if (justDraggedRef.current) return;
-            onCardSelect?.(output.id, 'view', e.shiftKey);
-          }}
-          sx={{
-            position: 'absolute',
-            inset: 0,
-            zIndex: 15,
-            cursor: isDragging ? 'grabbing' : 'grab',
-            touchAction: 'none',
-          }}
-        />
-      )}
+      {/* Selection overlay removed for ViewCard interaction: preview controls and iframe must remain immediately clickable. */}
 
       {/* Browser/devtools header */}
       <Box
@@ -506,6 +500,7 @@ const DashboardViewCard: React.FC<Props> = ({
 
         <Box
           component="select"
+          data-preview-control="true"
           value={selectedPreset}
           onChange={handlePresetChange}
           onClick={(e: React.MouseEvent) => e.stopPropagation()}
@@ -537,11 +532,42 @@ const DashboardViewCard: React.FC<Props> = ({
 
         <Box sx={{ flex: 1 }} />
 
+        {output.source_swarm_id && (
+          <Tooltip title="Refine this app in the source Swarm" placement="top">
+            <Button
+              size="small"
+              data-preview-control="true"
+              onClick={handleRefineOutput}
+              onPointerDown={(e) => e.stopPropagation()}
+              sx={{
+                minWidth: 0,
+                px: 1,
+                py: 0.25,
+                borderRadius: `${c.radius.md}px`,
+                color: c.status.info,
+                border: `1px solid ${c.status.info}55`,
+                bgcolor: `${c.status.info}08`,
+                fontSize: '0.7rem',
+                textTransform: 'none',
+                cursor: 'pointer',
+                '&:hover': {
+                  bgcolor: `${c.status.info}18`,
+                  borderColor: c.status.info,
+                  color: c.status.info,
+                },
+              }}
+            >
+              Refine
+            </Button>
+          </Tooltip>
+        )}
+
         {hasAutoRun && (
           <Tooltip title={autoRunning ? 'Running output automation...' : 'Run output automation'} placement="top">
             <span>
               <IconButton
                 size="small"
+                data-preview-control="true"
                 onClick={handleAutoRun}
                 onPointerDown={(e) => e.stopPropagation()}
                 disabled={autoRunning}
@@ -556,6 +582,7 @@ const DashboardViewCard: React.FC<Props> = ({
         <Tooltip title="Reload iframe preview" placement="top">
           <IconButton
             size="small"
+            data-preview-control="true"
             onClick={handleRefresh}
             onPointerDown={(e) => e.stopPropagation()}
             sx={{ color: c.text.muted, p: 0.5, '&:hover': { color: c.text.primary } }}
@@ -567,6 +594,7 @@ const DashboardViewCard: React.FC<Props> = ({
         <Tooltip title={isMaximized ? 'Restore canvas preview' : 'Open full-screen preview'} placement="top">
           <IconButton
             size="small"
+            data-preview-control="true"
             onClick={handleMaximizeToggle}
             onPointerDown={(e) => e.stopPropagation()}
             sx={{ color: c.text.muted, p: 0.5, '&:hover': { color: c.text.primary } }}
@@ -579,6 +607,7 @@ const DashboardViewCard: React.FC<Props> = ({
         <Tooltip title="Close preview card" placement="top">
           <IconButton
             size="small"
+            data-preview-control="true"
             onClick={handleRemove}
             onPointerDown={(e) => e.stopPropagation()}
             sx={{ color: c.text.ghost, p: 0.5, '&:hover': { color: c.status.error } }}
@@ -599,9 +628,6 @@ const DashboardViewCard: React.FC<Props> = ({
           p: `${PREVIEW_BODY_PAD}px`,
         }}
       >
-        {cmdHeld && !isSelected && (
-          <Box sx={{ position: 'absolute', inset: 0, zIndex: 12 }} />
-        )}
         <Box
           sx={{
             width: isMaximized ? 'max-content' : scaledFrameW,

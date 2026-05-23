@@ -56,6 +56,7 @@ import {
 } from '@/shared/state/dashboardLayoutSlice';
 import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
 import { fetchOutputs } from '@/shared/state/outputsSlice';
+import type { Output } from '@/shared/state/outputsSlice';
 import {
   chatExperimentalSwarm,
   createExperimentalSwarm,
@@ -215,6 +216,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   const [autoFocusSessionId, setAutoFocusSessionId] = useState<string | null>(null);
   const [pendingSelectSessionId, setPendingSelectSessionId] = useState<string | null>(null);
   const [focusedCardId, setFocusedCardId] = useState<string | null>(null);
+  const [swarmDraftPrompts, setSwarmDraftPrompts] = useState<Record<string, string>>({});
   const [dashboardWorkspacePath, setDashboardWorkspacePath] = useState<string | null>(null);
   const [dashboardWorkspaceLoading, setDashboardWorkspaceLoading] = useState(false);
   const [canvasViewportSize, setCanvasViewportSize] = useState({ width: 0, height: 0 });
@@ -1511,10 +1513,15 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
       if (card && viewport) {
         const targetZoom = 0.9;
         const targetPanX = (viewport.clientWidth - card.width * targetZoom) / 2 - card.x * targetZoom;
-        const targetPanY = (viewport.clientHeight - card.height * targetZoom) / 2 - card.y * targetZoom;
+        const visualCardH = card.height * targetZoom;
+        const preferredTop = (viewport.clientHeight - visualCardH) / 2;
+        const safeTop = Math.max(96, preferredTop);
+        const targetPanY = safeTop - card.y * targetZoom;
         dispatch(bringToFront({ id: outputId, type: 'view' }));
-        selection.selectCard(outputId, 'view', false);
+        selection.deselectAll();
         setFocusedCardId(outputId);
+        document.body.classList.remove('dashboard-marquee-active');
+        document.body.style.userSelect = '';
         canvas.actions.setState({ panX: targetPanX, panY: targetPanY, zoom: targetZoom });
         handleHighlightCard(outputId);
       }
@@ -1613,6 +1620,53 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     canvas.actions.setState({ panX: targetPanX, panY: targetPanY, zoom: targetZoom });
     handleHighlightCard(card.swarm_card_id);
   }, [canvas.actions, canvas.viewportRef, dispatch, handleHighlightCard, selection]);
+
+  const buildRefinementDraft = useCallback((output: Output, preset: string, sourceSwarmId: string) => {
+    const presetLabel = preset || 'current';
+    const artifactRefs = (output.artifact_refs || []).join(', ') || 'none';
+    const evidenceRefs = (output.evidence_refs || []).join(', ') || 'none';
+
+    return [
+      'Quiero refinar la app generada desde esta Preview.',
+      '',
+      `Output ID: ${output.id}`,
+      `Output name: ${output.name}`,
+      `Preset actual: ${presetLabel}`,
+      `Source swarm: ${sourceSwarmId}`,
+      `Source task: ${output.source_task_id || 'unknown'}`,
+      `Validation status: ${output.validation_status || 'unknown'}`,
+      `Artifacts: ${artifactRefs}`,
+      `Evidence: ${evidenceRefs}`,
+      '',
+      'Cambio solicitado:',
+    ].join('\n');
+  }, []);
+
+  const handleRefineOutput = useCallback((output: Output, preset: string) => {
+    const sourceSwarmId = output.source_swarm_id;
+    if (!sourceSwarmId) return;
+
+    let sourceSwarmCard = Object.values(store.getState().dashboardLayout.swarmCards)
+      .find((card) => card.swarm_id === sourceSwarmId && !card.hidden);
+
+    if (!sourceSwarmCard) {
+      dispatch(addSwarmCard({ expandedSessionIds, swarmMode: 'app_builder', swarmModel: null }));
+      window.setTimeout(() => {
+        const nextCards = store.getState().dashboardLayout.swarmCards;
+        const fallbackCard = nextCards['swarm-main'] || Object.values(nextCards).find((card) => !card.hidden);
+        if (!fallbackCard) return;
+        dispatch(setSwarmCardSwarmId({ swarmCardId: fallbackCard.swarm_card_id, swarmId: sourceSwarmId }));
+        setSwarmDraftPrompts((prev) => ({ ...prev, [fallbackCard.swarm_card_id]: buildRefinementDraft(output, preset, sourceSwarmId) }));
+        focusSwarmCard(fallbackCard.swarm_card_id);
+      }, 80);
+      return;
+    }
+
+    const draft = buildRefinementDraft(output, preset, sourceSwarmId);
+
+    setSwarmDraftPrompts((prev) => ({ ...prev, [sourceSwarmCard.swarm_card_id]: draft }));
+    focusSwarmCard(sourceSwarmCard.swarm_card_id);
+  }, [buildRefinementDraft, dispatch, expandedSessionIds, focusSwarmCard]);
 
   const handleToolbarSwarmSend = useCallback(async (
     prompt: string,
@@ -2533,6 +2587,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                   onDragEnd={handleCardDragEnd}
                   onDoubleClick={handleCardDoubleClick}
                   onBringToFront={handleBringToFront}
+                  onRefineOutput={handleRefineOutput}
                 />
               );
             })}
@@ -2591,6 +2646,15 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                 onDoubleClick={handleCardDoubleClick}
                 onSwarmBound={persistLayoutNow}
                 onAddPreviewCard={handleAddView}
+                draftPrompt={swarmDraftPrompts[sc.swarm_card_id] || null}
+                onDraftPromptConsumed={() => {
+                  setSwarmDraftPrompts((prev) => {
+                    if (!prev[sc.swarm_card_id]) return prev;
+                    const next = { ...prev };
+                    delete next[sc.swarm_card_id];
+                    return next;
+                  });
+                }}
                 dashboardId={dashboardId}
               />
             ))}
