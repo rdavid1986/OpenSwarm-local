@@ -57,6 +57,16 @@ class ExperimentalDAGConsolidator:
         frontend = self._find_task_by_type(swarm, "frontend_plan_execute", depends_on=architecture.id)
         backend = self._find_task_by_type(swarm, "backend_plan_execute", depends_on=frontend.id)
         security = self._find_task_by_type(swarm, "security_review_execute", depends_on=backend.id)
+
+        if self._is_planning_only_dag(swarm):
+            return self._consolidate_planning_only(
+                swarm=swarm,
+                architecture=architecture,
+                frontend=frontend,
+                backend=backend,
+                security=security,
+            )
+
         worker, reviewer, expected_artifact_path, artifact_kind, summary = self._resolve_build_tasks(swarm, security)
         validation = self._find_task_by_type(swarm, "validation_execute", depends_on=reviewer.id)
         consolidate = self._find_task_by_type(swarm, "consolidate_final")
@@ -433,6 +443,186 @@ class ExperimentalDAGConsolidator:
             )
         )
 
+
+    def _is_planning_only_dag(self, swarm: SwarmState) -> bool:
+        has_static_app = self._find_task_by_type_optional(swarm, "create_static_app") is not None
+        has_readme = self._find_task_by_type_optional(swarm, "create_readme") is not None
+        return not has_static_app and not has_readme
+
+    def _consolidate_planning_only(
+        self,
+        *,
+        swarm: SwarmState,
+        architecture: TaskNode,
+        frontend: TaskNode,
+        backend: TaskNode,
+        security: TaskNode,
+    ) -> ExperimentalConsolidateFinalResponse:
+        validation = self._find_task_by_type(swarm, "validation_execute")
+        consolidate = self._find_task_by_type(swarm, "consolidate_final")
+        errors = self._validate_planning_only_ready(
+            architecture=architecture,
+            frontend=frontend,
+            backend=backend,
+            security=security,
+            validation=validation,
+        )
+        if errors:
+            return self._response(swarm, status="not_ready", errors=errors, ok=False)
+
+        architecture_result = self._find_architecture_plan_result(architecture) or {}
+        frontend_result = self._find_frontend_plan_result(frontend) or {}
+        backend_result = self._find_backend_plan_result(backend) or {}
+        security_result = self._find_security_review_result(security) or {}
+        validation_result = validation.validations[-1] if validation.validations else {}
+
+        final_evidence = [
+            {
+                "kind": "architecture_plan_result",
+                "task_id": architecture.id,
+                "architecture_plan_result": architecture_result,
+            },
+            {
+                "kind": "frontend_plan_result",
+                "task_id": frontend.id,
+                "frontend_plan_result": frontend_result,
+            },
+            {
+                "kind": "backend_plan_result",
+                "task_id": backend.id,
+                "backend_plan_result": backend_result,
+            },
+            {
+                "kind": "security_review_result",
+                "task_id": security.id,
+                "security_review_result": security_result,
+            },
+            {
+                "kind": "validation_result",
+                "task_id": validation.id,
+                "validation_result": validation_result,
+            },
+            {
+                "kind": "task_status",
+                "tasks": [
+                    {"id": architecture.id, "title": architecture.title, "status": architecture.status},
+                    {"id": frontend.id, "title": frontend.title, "status": frontend.status},
+                    {"id": backend.id, "title": backend.title, "status": backend.status},
+                    {"id": security.id, "title": security.title, "status": security.status},
+                    {"id": validation.id, "title": validation.title, "status": validation.status},
+                    {"id": consolidate.id, "title": consolidate.title, "status": "completed"},
+                ],
+            },
+        ]
+
+        final_result = {
+            "status": "completed",
+            "summary": "Se completó la planificación, revisión de seguridad y validación del DAG. No se implementó ni se creó una app o artifact ejecutable.",
+            "artifact_kind": "planning_summary",
+            "implementation_performed": False,
+            "created_files": [],
+            "artifact_refs": [],
+            "architecture_plan_result": {
+                "status": architecture_result.get("status"),
+                "architecture_plan": architecture_result.get("architecture_plan") or {},
+            },
+            "frontend_plan_result": {
+                "status": frontend_result.get("status"),
+                "frontend_plan": frontend_result.get("frontend_plan") or {},
+            },
+            "backend_plan_result": {
+                "status": backend_result.get("status"),
+                "backend_plan": backend_result.get("backend_plan") or {},
+            },
+            "security_review_result": {
+                "status": security_result.get("status"),
+                "security_review": security_result.get("security_review") or {},
+            },
+            "validation_result": {
+                "status": validation_result.get("status"),
+                "commands": validation_result.get("commands") or [],
+                "evidence": validation_result.get("evidence") or [],
+            },
+            "completed_tasks": [architecture.id, frontend.id, backend.id, security.id, validation.id, consolidate.id],
+            "created_at": _now_iso(),
+            "claim_guard": {
+                "status": "verified_planning_only",
+                "implementation_performed": False,
+                "checks": {
+                    "architecture_plan_present": bool(architecture_result),
+                    "frontend_plan_present": bool(frontend_result),
+                    "backend_plan_present": bool(backend_result),
+                    "security_review_present": bool(security_result),
+                    "validation_present": bool(validation_result),
+                    "no_created_files_claimed": True,
+                    "no_artifacts_claimed": True,
+                },
+                "supported_claims": [
+                    "Planning evidence exists for architecture, frontend, backend, security, and validation.",
+                    "No implementation artifacts or created files are claimed.",
+                ],
+                "unsupported_claims": [],
+            },
+        }
+
+        swarm.final_evidence = [item for item in swarm.final_evidence if item.get("kind") not in {"architecture_plan_result", "frontend_plan_result", "backend_plan_result", "security_review_result", "validation_result", "task_status"}]
+        swarm.final_evidence.extend(final_evidence)
+        swarm.final_result = final_result
+        consolidate.status = "completed"
+        consolidate.evidence = [item for item in consolidate.evidence if item.get("kind") != "final_consolidation"]
+        consolidate.evidence.append({"kind": "final_consolidation", "final_result": final_result, "final_evidence_count": len(final_evidence)})
+        consolidate.updated_at = _now_iso()
+        self._append_consolidation_message_once(
+            swarm,
+            consolidate=consolidate,
+            final_result=final_result,
+            from_agent_id=consolidate.assigned_contract_id or "",
+        )
+        swarm.status = "completed"
+        self.store.save(swarm)
+        return self._response(swarm, status="completed", ok=True)
+
+    def _validate_planning_only_ready(
+        self,
+        *,
+        architecture: TaskNode,
+        frontend: TaskNode,
+        backend: TaskNode,
+        security: TaskNode,
+        validation: TaskNode,
+    ) -> list[dict[str, Any]]:
+        errors: list[dict[str, Any]] = []
+        if architecture.status != "completed":
+            errors.append({"error": "architecture_not_completed", "task_id": architecture.id, "status": architecture.status})
+        if not self._find_architecture_plan_result(architecture):
+            errors.append({"error": "architecture_plan_result_missing", "task_id": architecture.id})
+        if frontend.status != "completed":
+            errors.append({"error": "frontend_not_completed", "task_id": frontend.id, "status": frontend.status})
+        if not self._find_frontend_plan_result(frontend):
+            errors.append({"error": "frontend_plan_result_missing", "task_id": frontend.id})
+        if backend.status != "completed":
+            errors.append({"error": "backend_not_completed", "task_id": backend.id, "status": backend.status})
+        if not self._find_backend_plan_result(backend):
+            errors.append({"error": "backend_plan_result_missing", "task_id": backend.id})
+        if security.status != "completed":
+            errors.append({"error": "security_not_completed", "task_id": security.id, "status": security.status})
+        if not self._find_security_review_result(security):
+            errors.append({"error": "security_review_result_missing", "task_id": security.id})
+        if validation.status != "completed":
+            errors.append({"error": "validation_not_completed", "task_id": validation.id, "status": validation.status})
+        if not validation.validations:
+            errors.append({"error": "validation_result_missing", "task_id": validation.id})
+        return errors
+
+    def _find_task_by_type_optional(
+        self,
+        swarm: SwarmState,
+        task_type: ExperimentalTaskType,
+    ) -> TaskNode | None:
+        try:
+            return self._find_task_by_type(swarm, task_type)
+        except FileNotFoundError:
+            return None
 
     @staticmethod
     def _expected_artifact_paths(artifact_kind: str, expected_artifact_path: str) -> list[str]:
