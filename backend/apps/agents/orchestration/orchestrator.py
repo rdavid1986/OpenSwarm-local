@@ -1007,7 +1007,7 @@ class SwarmOrchestrator:
                 raise ValueError("DAG proposal task is missing role")
 
             spec = get_experimental_task_spec(task_type)
-            contract_key = str(item.get("contract_key") or role)
+            contract_key = str(item.get("contract_key") or f"{role}:{task_type}")
             contract = contracts_by_key.get(contract_key)
             if contract is None:
                 contract = AgentContract(
