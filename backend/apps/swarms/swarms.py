@@ -2134,21 +2134,26 @@ async def experimental_start_implementation(swarm_id: str, body: ExperimentalDAG
         })
         swarm_orchestrator.store.save(swarm)
 
-        proposal_swarm, proposal_errors = swarm_orchestrator._build_validated_template_dag_state(
-            base_swarm=swarm,
+        _, proposal_errors = swarm_orchestrator.ensure_template_proposal_dag(
+            swarm_id=swarm_id,
             template=dag_template,
             generated_plan=generated_plan,
         )
-        swarm = swarm_orchestrator.store.load(swarm_id)
-        swarm.decisions = proposal_swarm.decisions
-        swarm_orchestrator.store.save(swarm)
         if proposal_errors:
-            raise ValueError(f"Template DAG proposal validation failed: {proposal_errors}")
-
-        if dag_template == "static_app":
-            swarm_orchestrator.ensure_static_app_dag(swarm_id=swarm_id, generated_plan=generated_plan)
-        else:
-            swarm_orchestrator.ensure_readme_dag(swarm_id=swarm_id, generated_plan=generated_plan)
+            swarm = swarm_orchestrator.store.load(swarm_id)
+            swarm.decisions.append({
+                "kind": "dag_template_fallback",
+                "source": "start_implementation",
+                "template": dag_template,
+                "reason": "Validated template proposal DAG failed; falling back to legacy DAG builder.",
+                "errors": proposal_errors,
+                "created_at": _project_intake_now(),
+            })
+            swarm_orchestrator.store.save(swarm)
+            if dag_template == "static_app":
+                swarm_orchestrator.ensure_static_app_dag(swarm_id=swarm_id, generated_plan=generated_plan)
+            else:
+                swarm_orchestrator.ensure_readme_dag(swarm_id=swarm_id, generated_plan=generated_plan)
         swarm_orchestrator.ensure_specialized_agent_contracts(swarm_id=swarm_id, generated_plan=generated_plan)
 
         result = await experimental_dag_dependency_runner.run_dag_dependencies(swarm_id=swarm_id, body=body)
