@@ -334,3 +334,155 @@ def test_dag_proposal_preview_endpoint_rejects_invalid_output(monkeypatch, tmp_p
     assert stored.tasks == []
     assert stored.contracts == []
     assert stored.decisions[-1]["status"] == "rejected"
+
+
+def test_dag_proposal_preview_generate_endpoint_uses_service(monkeypatch, tmp_path: Path):
+    store = SwarmStore(root=tmp_path / "swarms")
+    orchestrator = SwarmOrchestrator(store=store)
+    monkeypatch.setattr(swarms_module, "swarm_orchestrator", orchestrator)
+
+    class FakeGenerateService:
+        def __init__(self):
+            self.calls = []
+
+        async def generate_preview(self, *, swarm_id, request):
+            self.calls.append((swarm_id, request))
+            swarm = store.load(swarm_id)
+            swarm.decisions.append({
+                "kind": "dag_proposal_validation",
+                "source": "model_dag_proposal",
+                "proposal_kind": "model_generated_dag",
+                "status": "accepted",
+                "validation_errors": [],
+                "metadata": {"fake": True},
+            })
+            store.save(swarm)
+
+            class Response:
+                ok = True
+                status = "accepted"
+                validation_errors = []
+                decision = swarm.decisions[-1]
+                final_message = {"content": "{\"kind\":\"model_generated_dag\",\"tasks\":[]}"}
+                provider_events = []
+                errors = []
+                turns = 1
+                swarm = swarm.model_dump(mode="json")
+
+            return Response()
+
+    fake_service = FakeGenerateService()
+    monkeypatch.setattr(swarms_module, "model_dag_proposal_preview_service", fake_service)
+
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.include_router(swarms_module.swarms.router, prefix="/api/swarms")
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/swarms/create",
+        json={"user_prompt": "Crear app desde modelo", "dashboard_id": "dash-preview", "intent": "chat"},
+    )
+    assert created.status_code == 200
+    swarm_id = created.json()["id"]
+
+    response = client.post(
+        f"/api/swarms/{swarm_id}/experimental/dag-proposal-preview/generate",
+        json={
+            "model": "qwen2.5-coder:14b",
+            "generated_plan": {"app_type": "web app", "frontend": "React"},
+            "max_turns": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["status"] == "accepted"
+    assert body["decision"]["source"] == "model_dag_proposal"
+    assert body["turns"] == 1
+    assert fake_service.calls[0][0] == swarm_id
+    assert fake_service.calls[0][1].model == "qwen2.5-coder:14b"
+    assert fake_service.calls[0][1].generated_plan["frontend"] == "React"
+
+    stored = store.load(swarm_id)
+    assert stored.tasks == []
+    assert stored.contracts == []
+    assert stored.decisions[-1]["status"] == "accepted"
+
+
+def test_dag_proposal_preview_generate_endpoint_uses_service(monkeypatch, tmp_path: Path):
+    store = SwarmStore(root=tmp_path / "swarms")
+    orchestrator = SwarmOrchestrator(store=store)
+    monkeypatch.setattr(swarms_module, "swarm_orchestrator", orchestrator)
+
+    class FakeGenerateService:
+        def __init__(self):
+            self.calls = []
+
+        async def generate_preview(self, *, swarm_id, request):
+            self.calls.append((swarm_id, request))
+            swarm = store.load(swarm_id)
+            swarm.decisions.append({
+                "kind": "dag_proposal_validation",
+                "source": "model_dag_proposal",
+                "proposal_kind": "model_generated_dag",
+                "status": "accepted",
+                "validation_errors": [],
+                "metadata": {"fake": True},
+            })
+            store.save(swarm)
+
+            class Response:
+                ok = True
+                status = "accepted"
+                validation_errors = []
+                decision = swarm.decisions[-1]
+                final_message = {"content": "{\"kind\":\"model_generated_dag\",\"tasks\":[]}"}
+                provider_events = []
+                errors = []
+                turns = 1
+                swarm = swarm.model_dump(mode="json")
+
+            return Response()
+
+    fake_service = FakeGenerateService()
+    monkeypatch.setattr(swarms_module, "model_dag_proposal_preview_service", fake_service)
+
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.include_router(swarms_module.swarms.router, prefix="/api/swarms")
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/swarms/create",
+        json={"user_prompt": "Crear app desde modelo", "dashboard_id": "dash-preview", "intent": "chat"},
+    )
+    assert created.status_code == 200
+    swarm_id = created.json()["id"]
+
+    response = client.post(
+        f"/api/swarms/{swarm_id}/experimental/dag-proposal-preview/generate",
+        json={
+            "model": "qwen2.5-coder:14b",
+            "generated_plan": {"app_type": "web app", "frontend": "React"},
+            "max_turns": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["status"] == "accepted"
+    assert body["decision"]["source"] == "model_dag_proposal"
+    assert body["turns"] == 1
+    assert fake_service.calls[0][0] == swarm_id
+    assert fake_service.calls[0][1].model == "qwen2.5-coder:14b"
+    assert fake_service.calls[0][1].generated_plan["frontend"] == "React"
+
+    stored = store.load(swarm_id)
+    assert stored.tasks == []
+    assert stored.contracts == []
+    assert stored.decisions[-1]["status"] == "accepted"

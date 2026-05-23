@@ -48,6 +48,10 @@ from backend.apps.agents.runtime.experimental_dag_dependency_runner import (
     experimental_dag_dependency_runner,
     experimental_dag_dependency_runner_enabled,
 )
+from backend.apps.agents.runtime.model_dag_proposal_preview import (
+    ModelDAGProposalPreviewRequest,
+    model_dag_proposal_preview_service,
+)
 from backend.apps.agents.runtime.approvals import approval_runtime
 from backend.apps.agents.runtime.events import event_trace_runtime
 from backend.apps.agents.orchestration.models import AgentToAgentMessage
@@ -110,6 +114,13 @@ class OrchestrationNodePositionRequest(BaseModel):
 
 class ExperimentalDAGProposalPreviewRequest(BaseModel):
     final_message: dict[str, Any] | str | None = None
+
+
+class ExperimentalDAGProposalPreviewGenerateRequest(BaseModel):
+    model: str = "qwen2.5-coder:14b"
+    base_url: str | None = None
+    generated_plan: dict[str, Any] | None = None
+    max_turns: int = 1
 
 
 def _dump(swarm):
@@ -2131,6 +2142,36 @@ async def experimental_dag_proposal_preview(swarm_id: str, body: ExperimentalDAG
         "validation_errors": validation_errors,
         "decision": last_decision,
         "swarm": _dump(swarm),
+    }
+
+
+@swarms.router.post("/{swarm_id}/experimental/dag-proposal-preview/generate")
+async def experimental_dag_proposal_preview_generate(swarm_id: str, body: ExperimentalDAGProposalPreviewGenerateRequest):
+    try:
+        response = await model_dag_proposal_preview_service.generate_preview(
+            swarm_id=swarm_id,
+            request=ModelDAGProposalPreviewRequest(
+                model=body.model,
+                base_url=body.base_url,
+                generated_plan=body.generated_plan,
+                max_turns=body.max_turns,
+            ),
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "ok": response.ok,
+        "status": response.status,
+        "validation_errors": response.validation_errors,
+        "decision": response.decision,
+        "final_message": response.final_message,
+        "provider_events": response.provider_events,
+        "errors": response.errors,
+        "turns": response.turns,
+        "swarm": response.swarm,
     }
 
 
