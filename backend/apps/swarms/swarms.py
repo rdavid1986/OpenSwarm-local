@@ -567,6 +567,40 @@ def _is_refinement_confirmation(user_message: str, swarm) -> bool:
     return normalized in confirmation_phrases
 
 
+def _build_refinement_request_message(refinement: dict[str, Any]) -> str:
+    output_id = str(refinement.get("output_id") or "").strip()
+    requested_change = str(refinement.get("requested_change") or "").strip()
+    status = str(refinement.get("status") or "received").strip()
+    next_action = str(refinement.get("next_action") or "refinement_pipeline_pending").strip()
+
+    if status == "confirmed":
+        lines = [
+            "Confirmación recibida. Mantengo el refinamiento asociado al Output existente.",
+            "",
+            f"Output objetivo: {output_id or 'no identificado'}",
+            f"Cambio pedido: {requested_change or 'no especificado'}",
+            "",
+            "Estado real: el pedido está confirmado, pero todavía no se modificó la app ni se generaron nuevos artifacts.",
+            f"Siguiente acción interna: {next_action}.",
+            "",
+            "No voy a reiniciar el intake ni crear un proyecto nuevo para este pedido.",
+        ]
+        return "\n".join(lines)
+
+    lines = [
+        "Refinamiento recibido desde la Preview.",
+        "",
+        f"Output objetivo: {output_id or 'no identificado'}",
+        f"Cambio pedido: {requested_change or 'no especificado'}",
+        "",
+        "Estado real: el pedido quedó registrado y vinculado al Output actual. Todavía no se ejecutaron cambios sobre la app.",
+        f"Siguiente acción interna: {next_action}.",
+        "",
+        "No voy a reiniciar el intake. Este flujo continúa como iteración del Output existente.",
+    ]
+    return "\n".join(lines)
+
+
 def _refinement_request_response(user_message: str, swarm=None) -> tuple[str, dict[str, Any]]:
     if _looks_like_output_refinement_request(user_message):
         refinement = _extract_output_refinement_request(user_message)
@@ -574,26 +608,9 @@ def _refinement_request_response(user_message: str, swarm=None) -> tuple[str, di
         refinement = dict(_get_pending_refinement_request(swarm) or {})
         if refinement:
             refinement["status"] = "confirmed"
-            refinement["next_action"] = "refinement_pipeline_pending"
+            refinement["next_action"] = "run_refinement_pipeline"
 
-    requested_change = str(refinement.get("requested_change") or "").strip()
-    status = str(refinement.get("status") or "received")
-
-    if status == "confirmed":
-        assistant_content = (
-            "Confirmado. No voy a reiniciar el intake. "
-            "El refinamiento sigue asociado al Output existente. "
-            "La ejecución real del refinement pipeline todavía está pendiente de implementación."
-        )
-    else:
-        assistant_content = (
-            "Recibí el refinamiento de la Preview. "
-            "No voy a reiniciar el intake. "
-            "Este pedido queda asociado al Output existente y será usado para una iteración controlada."
-        )
-
-    if requested_change:
-        assistant_content += f"\n\nCambio solicitado: {requested_change}"
+    assistant_content = _build_refinement_request_message(refinement)
 
     payload = {
         "route": "refinement_request",
