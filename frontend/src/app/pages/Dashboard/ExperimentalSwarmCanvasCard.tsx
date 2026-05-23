@@ -10,6 +10,7 @@ import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import {
+  addViewCard,
   removeSwarmCard,
   setSwarmCardMode,
   setSwarmCardModel,
@@ -28,6 +29,7 @@ import {
   startExperimentalImplementation,
 } from '@/shared/state/experimentalSwarmsSlice';
 import { renameDashboard } from '@/shared/state/dashboardsSlice';
+import { fetchOutputs } from '@/shared/state/outputsSlice';
 import { useAppDispatch, useAppSelector } from '@/shared/hooks';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import type { CardType } from './useDashboardSelection';
@@ -461,6 +463,14 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const finalRoute = typeof finalResult === 'object' && finalResult ? (finalResult as any).route : null;
   const finalAnswerGuardApplied = typeof finalResult === 'object' && finalResult ? (finalResult as any).answer_guard_applied : null;
   const finalResponseSource = finalRoute && finalRoute !== 'normal_chat' ? 'local' : finalRoute === 'normal_chat' ? 'model' : null;
+  const outputBridgeDecision = Array.isArray((activeSwarm as any)?.decisions)
+    ? [...((activeSwarm as any).decisions || [])].reverse().find((decision: any) => (
+      decision?.kind === 'output_bridge_created'
+      && decision?.status === 'accepted'
+      && decision?.metadata?.output_id
+    ))
+    : null;
+  const outputBridgeOutputId = outputBridgeDecision?.metadata?.output_id || null;
   const lastSubmittedAlreadyPersisted = !!activeSwarmId && !!lastSubmittedPrompt && chatMessages.some((message: any) => {
     const role = getSwarmMessageRole(message);
     return (role === 'user' || role === 'human') && getSwarmMessageText(message) === lastSubmittedPrompt;
@@ -600,6 +610,12 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       maybeRenameDashboardFromSwarmTitle(activeSwarm.title);
     }
   }, [activeSwarm, activeSwarm?.title, maybeRenameDashboardFromSwarmTitle]);
+
+  const handleAddOutputBridgePreview = useCallback(async () => {
+    if (!outputBridgeOutputId) return;
+    await dispatch(fetchOutputs());
+    dispatch(addViewCard({ outputId: outputBridgeOutputId }));
+  }, [dispatch, outputBridgeOutputId]);
 
   const handleProjectIntakeOption = useCallback(async (option: any) => {
     const label = renderText(option?.label ?? option?.value, '').trim();
@@ -1615,6 +1631,20 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                       label={`unsupported: ${(finalResult as any).claim_guard.unsupported_claims.length}`}
                     />
                   )}
+                </Box>
+              )}
+              {outputBridgeOutputId && (
+                <Box sx={{ mb: 1 }}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleAddOutputBridgePreview();
+                    }}
+                  >
+                    Add preview card
+                  </Button>
                 </Box>
               )}
               <Typography sx={{ color: finalResult ? c.text.primary : c.text.tertiary, fontSize: '0.78rem', lineHeight: 1.45 }}>
