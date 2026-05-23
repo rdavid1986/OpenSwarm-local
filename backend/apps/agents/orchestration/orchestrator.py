@@ -1367,6 +1367,96 @@ class SwarmOrchestrator:
         )
         return materialized, validation_errors
 
+    def prepare_implementation_bridge_from_planning(
+        self,
+        *,
+        source_swarm_id: str,
+        approve: bool = False,
+        target: str = "auto",
+        generated_plan: dict | None = None,
+    ) -> tuple[SwarmState, list[dict], dict]:
+        source_swarm = self.store.load(source_swarm_id)
+        metadata: dict = {
+            "source_swarm_id": source_swarm_id,
+            "next_action": None,
+        }
+
+        if not approve:
+            return source_swarm, [{"error": "approval_required"}], metadata
+
+        final_result = source_swarm.final_result if isinstance(source_swarm.final_result, dict) else {}
+        if not final_result:
+            return source_swarm, [{"error": "source_final_result_required"}], metadata
+
+        if final_result.get("status") != "completed":
+            return source_swarm, [{"error": "source_final_result_not_completed", "status": final_result.get("status")}], metadata
+
+        if final_result.get("implementation_performed") is True:
+            return source_swarm, [{"error": "source_already_implemented"}], metadata
+
+        artifact_kind = str(final_result.get("artifact_kind") or "")
+        if artifact_kind not in {"planning_summary", "implementation_brief"}:
+            return source_swarm, [{"error": "unsupported_source_artifact_kind", "artifact_kind": artifact_kind}], metadata
+
+        claim_guard = final_result.get("claim_guard") if isinstance(final_result.get("claim_guard"), dict) else {}
+        claim_guard_status = str(claim_guard.get("status") or "")
+        if claim_guard_status not in {"verified", "verified_planning_only"}:
+            return source_swarm, [{"error": "source_claim_guard_not_verified", "claim_guard_status": claim_guard_status}], metadata
+
+        normalized_plan = self._normalize_generated_plan(generated_plan or final_result.get("generated_plan") or {})
+        selected_template = self._select_dag_template(normalized_plan)
+        requested_target = (target or "auto").strip().lower()
+        target_template = selected_template if requested_target == "auto" else requested_target
+
+        metadata.update(
+            {
+                "source_final_result_artifact_kind": artifact_kind,
+                "source_plan_fingerprint": self._fingerprint_model_dag_plan(normalized_plan),
+                "target_template": target_template,
+                "normalized_plan": normalized_plan,
+            }
+        )
+
+        if target_template != "static_app":
+            return source_swarm, [{"error": "unsupported_implementation_target", "target_template": target_template}], metadata
+
+        implementation_swarm = self.create_swarm(
+            user_prompt=f"Implement approved plan from swarm {source_swarm_id}",
+            dashboard_id=source_swarm.dashboard_id,
+            intent="chat",
+        )
+        implementation_swarm.intent = "task"
+        self.store.save(implementation_swarm)
+
+        materialized, validation_errors = self.ensure_template_proposal_dag(
+            swarm_id=implementation_swarm.id,
+            template=target_template,
+            generated_plan=normalized_plan,
+        )
+        if validation_errors:
+            materialized.decisions.append(
+                {
+                    "kind": "implementation_bridge_prepared",
+                    "source": "implementation_bridge",
+                    "status": "rejected",
+                    "validation_errors": validation_errors,
+                    "metadata": metadata,
+                }
+            )
+            return self.store.save(materialized), validation_errors, metadata
+
+        materialized.decisions.append(
+            {
+                "kind": "implementation_bridge_prepared",
+                "source": "implementation_bridge",
+                "status": "accepted",
+                "validation_errors": [],
+                "metadata": metadata,
+            }
+        )
+        metadata["next_action"] = "run_dag_dependencies"
+        return self.store.save(materialized), [], metadata
+
     def ensure_template_proposal_dag(
         self,
         *,

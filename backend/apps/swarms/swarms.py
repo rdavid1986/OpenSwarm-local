@@ -129,6 +129,12 @@ class ExperimentalDAGProposalPreviewMaterializeRequest(BaseModel):
     generated_plan: dict[str, Any] | None = None
 
 
+class ExperimentalImplementationBridgePrepareRequest(BaseModel):
+    approve: bool = False
+    target: str = "auto"
+    generated_plan: dict[str, Any] | None = None
+
+
 def _dump(swarm):
     return swarm.model_dump(mode="json")
 
@@ -2205,6 +2211,33 @@ async def experimental_dag_proposal_preview_materialize(
         "validation_errors": validation_errors,
         "decision": last_decision,
         "swarm": _dump(swarm),
+    }
+
+
+@swarms.router.post("/{swarm_id}/experimental/implementation-bridge/prepare")
+async def experimental_implementation_bridge_prepare(swarm_id: str, body: ExperimentalImplementationBridgePrepareRequest):
+    try:
+        implementation_swarm, validation_errors, metadata = swarm_orchestrator.prepare_implementation_bridge_from_planning(
+            source_swarm_id=swarm_id,
+            approve=body.approve,
+            target=body.target,
+            generated_plan=body.generated_plan,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Swarm not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    status = "accepted" if not validation_errors else "rejected"
+    return {
+        "ok": not validation_errors,
+        "status": status,
+        "validation_errors": validation_errors,
+        "source_swarm_id": swarm_id,
+        "implementation_swarm_id": implementation_swarm.id if not validation_errors else None,
+        "next_action": metadata.get("next_action"),
+        "metadata": metadata,
+        "swarm": _dump(implementation_swarm),
     }
 
 
