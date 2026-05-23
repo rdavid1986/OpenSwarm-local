@@ -509,7 +509,7 @@ const DashboardViewCard: React.FC<Props> = ({
           onChange={handlePresetChange}
           onClick={(e: React.MouseEvent) => e.stopPropagation()}
           onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
-          aria-label="Device preset"
+          aria-label="Preview device preset"
           sx={{
             position: 'absolute',
             left: '50%',
@@ -537,7 +537,7 @@ const DashboardViewCard: React.FC<Props> = ({
         <Box sx={{ flex: 1 }} />
 
         {hasAutoRun && (
-          <Tooltip title={autoRunning ? 'Running...' : 'Auto Run'} placement="top">
+          <Tooltip title={autoRunning ? 'Running output automation...' : 'Run output automation'} placement="top">
             <span>
               <IconButton
                 size="small"
@@ -552,7 +552,7 @@ const DashboardViewCard: React.FC<Props> = ({
           </Tooltip>
         )}
 
-        <Tooltip title="Reload preview" placement="top">
+        <Tooltip title="Reload iframe preview" placement="top">
           <IconButton
             size="small"
             onClick={handleRefresh}
@@ -563,7 +563,7 @@ const DashboardViewCard: React.FC<Props> = ({
           </IconButton>
         </Tooltip>
 
-        <Tooltip title={isMaximized ? 'Restore preview' : 'Maximize preview'} placement="top">
+        <Tooltip title={isMaximized ? 'Restore canvas preview' : 'Open full-screen preview'} placement="top">
           <IconButton
             size="small"
             onClick={handleMaximizeToggle}
@@ -574,7 +574,7 @@ const DashboardViewCard: React.FC<Props> = ({
           </IconButton>
         </Tooltip>
 
-        <Tooltip title="Remove from dashboard" placement="top">
+        <Tooltip title="Close preview card" placement="top">
           <IconButton
             size="small"
             onClick={handleRemove}
