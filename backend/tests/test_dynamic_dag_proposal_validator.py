@@ -898,3 +898,97 @@ def test_model_dag_prompt_separates_planning_from_implementation_language():
     assert "do not pretend the app is implemented" in prompt
     assert "use backend_plan_execute only to plan schema/data model/API integration" in prompt
     assert "validation_execute must validate available artifacts or plans only" in prompt
+
+
+def test_model_dag_semantic_policy_rejects_incompatible_role_for_task_type():
+    orchestrator = SwarmOrchestrator()
+    base = SwarmState(title="Test", user_prompt="Test")
+    output = {
+        "content": """
+        {
+          "kind": "model_generated_dag",
+          "tasks": [
+            {
+              "id": "validation",
+              "task_type": "validation_execute",
+              "role": "ReviewerAgent",
+              "title": "Validation",
+              "objective": "Validate plans."
+            }
+          ]
+        }
+        """
+    }
+
+    materialized, errors = orchestrator._build_validated_model_dag_proposal_state(
+        base_swarm=base,
+        final_message=output,
+        generated_plan={
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        },
+    )
+
+    assert any(error["error"] == "semantically_incompatible_role" for error in errors)
+    assert materialized.decisions[-1]["status"] == "rejected"
+
+
+def test_model_dag_prompt_includes_exact_role_mappings():
+    orchestrator = SwarmOrchestrator()
+    prompt = orchestrator._build_model_dag_proposal_prompt(
+        generated_plan={
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        }
+    )
+
+    assert "validation_execute=TesterAgent" in prompt
+    assert "consolidate_final=CoordinatorAgent" in prompt
+    assert "create_readme=DocumentationAgent" in prompt
+
+
+def test_model_dag_semantic_policy_rejects_incompatible_role_for_task_type():
+    orchestrator = SwarmOrchestrator()
+    base = SwarmState(title="Test", user_prompt="Test")
+    output = {
+        "content": """
+        {
+          "kind": "model_generated_dag",
+          "tasks": [
+            {
+              "id": "validation",
+              "task_type": "validation_execute",
+              "role": "ReviewerAgent",
+              "title": "Validation",
+              "objective": "Validate plans."
+            }
+          ]
+        }
+        """
+    }
+
+    materialized, errors = orchestrator._build_validated_model_dag_proposal_state(
+        base_swarm=base,
+        final_message=output,
+        generated_plan={
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        },
+    )
+
+    assert any(error["error"] == "semantically_incompatible_role" for error in errors)
+    assert materialized.decisions[-1]["status"] == "rejected"
+
+
+def test_model_dag_prompt_includes_exact_role_mappings():
+    orchestrator = SwarmOrchestrator()
+    prompt = orchestrator._build_model_dag_proposal_prompt(
+        generated_plan={
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        }
+    )
+
+    assert "validation_execute=TesterAgent" in prompt
+    assert "consolidate_final=CoordinatorAgent" in prompt
+    assert "create_readme=DocumentationAgent" in prompt

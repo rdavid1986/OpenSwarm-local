@@ -894,6 +894,7 @@ class SwarmOrchestrator:
                 else "This plan is static/no-backend, so create_static_app and review_static_app are allowed. "
             )
             + "Use only these role values: " + ', '.join(allowed_roles) + ". "
+            "Use these exact role mappings: architecture_plan_execute=ArchitectAgent, frontend_plan_execute=FrontendAgent, backend_plan_execute=BackendAgent, security_review_execute=SecurityAgent, create_readme=DocumentationAgent, review_readme=ReviewerAgent, validation_execute=TesterAgent, consolidate_final=CoordinatorAgent, create_static_app=FrontendAgent, review_static_app=ReviewerAgent. "
             "Each task must include id, task_type, role, title, objective, and optional depends_on array of existing task ids. "
             "Dependencies must form an acyclic graph. "
             "Use registry-compatible titles when possible. "
@@ -976,6 +977,19 @@ class SwarmOrchestrator:
         has_real_backend = backend not in no_backend_signals
         has_real_database = database not in no_database_signals
 
+        expected_roles = {
+            "architecture_plan_execute": "ArchitectAgent",
+            "frontend_plan_execute": "FrontendAgent",
+            "backend_plan_execute": "BackendAgent",
+            "security_review_execute": "SecurityAgent",
+            "create_readme": "DocumentationAgent",
+            "review_readme": "ReviewerAgent",
+            "validation_execute": "TesterAgent",
+            "consolidate_final": "CoordinatorAgent",
+            "create_static_app": "FrontendAgent",
+            "review_static_app": "ReviewerAgent",
+        }
+
         errors: list[dict] = []
         if (has_real_backend or has_real_database) and "create_static_app" in task_types:
             errors.append(
@@ -987,6 +1001,23 @@ class SwarmOrchestrator:
                     "database": plan.get("database"),
                 }
             )
+
+        for item in (proposal.get("tasks") or []):
+            if not isinstance(item, dict):
+                continue
+            task_type = str(item.get("task_type") or "")
+            role = str(item.get("role") or "")
+            expected_role = expected_roles.get(task_type)
+            if expected_role and role != expected_role:
+                errors.append(
+                    {
+                        "error": "semantically_incompatible_role",
+                        "task_type": task_type,
+                        "role": role,
+                        "expected_role": expected_role,
+                        "reason": "Model proposed a role that does not match the expected role for this task type.",
+                    }
+                )
 
         return errors
 
