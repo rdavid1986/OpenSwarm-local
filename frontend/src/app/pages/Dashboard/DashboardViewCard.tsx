@@ -362,8 +362,10 @@ const DashboardViewCard: React.FC<Props> = ({
   const noTransition = isDragging || isResizing || (isSelected && !!multiDragDelta);
   const fallbackBodyW = isMaximized ? window.innerWidth - 24 : displayW;
   const fallbackBodyH = isMaximized ? window.innerHeight - 24 - PREVIEW_HEADER_H : displayH - PREVIEW_HEADER_H;
-  const availableW = Math.max(1, (bodySize.width || fallbackBodyW) - PREVIEW_BODY_PAD * 2);
-  const availableH = Math.max(1, (bodySize.height || fallbackBodyH) - PREVIEW_BODY_PAD * 2);
+  const measuredBodyW = bodySize.width || fallbackBodyW;
+  const measuredBodyH = bodySize.height || fallbackBodyH;
+  const availableW = Math.max(1, (isMaximized ? measuredBodyW : displayW) - PREVIEW_BODY_PAD * 2);
+  const availableH = Math.max(1, (isMaximized ? measuredBodyH : displayH - PREVIEW_HEADER_H) - PREVIEW_BODY_PAD * 2);
   const previewScale = isMaximized
     ? 1
     : Math.min(
@@ -600,11 +602,13 @@ const DashboardViewCard: React.FC<Props> = ({
         )}
         <Box
           sx={{
-            minWidth: '100%',
-            minHeight: '100%',
+            width: isMaximized ? 'max-content' : scaledFrameW,
+            height: isMaximized ? 'max-content' : scaledFrameH,
+            minWidth: isMaximized ? '100%' : scaledFrameW,
+            minHeight: isMaximized ? '100%' : scaledFrameH,
             display: 'flex',
-            alignItems: scaledFrameH < availableH ? 'center' : 'flex-start',
-            justifyContent: 'center',
+            alignItems: isMaximized && scaledFrameH < availableH ? 'center' : 'flex-start',
+            justifyContent: isMaximized && scaledFrameW < availableW ? 'center' : 'flex-start',
           }}
         >
           <Box

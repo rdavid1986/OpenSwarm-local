@@ -23,6 +23,7 @@ import {
   allowExperimentalApproval,
   chatExperimentalSwarm,
   createExperimentalSwarm,
+  createOutputBridgeFromSwarm,
   denyExperimentalApproval,
   fetchExperimentalSwarm,
   resumeExperimentalApproval,
@@ -471,6 +472,15 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     ))
     : null;
   const outputBridgeOutputId = outputBridgeDecision?.metadata?.output_id || null;
+  const canCreateOutputBridge = Boolean(
+    activeSwarmId
+    && !outputBridgeOutputId
+    && finalResult
+    && typeof finalResult === 'object'
+    && (finalResult as any).artifact_kind === 'static_app'
+    && (finalResult as any).implementation_performed === true
+    && (finalResult as any).claim_guard?.status === 'verified'
+  );
   const lastSubmittedAlreadyPersisted = !!activeSwarmId && !!lastSubmittedPrompt && chatMessages.some((message: any) => {
     const role = getSwarmMessageRole(message);
     return (role === 'user' || role === 'human') && getSwarmMessageText(message) === lastSubmittedPrompt;
@@ -610,6 +620,23 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       maybeRenameDashboardFromSwarmTitle(activeSwarm.title);
     }
   }, [activeSwarm, activeSwarm?.title, maybeRenameDashboardFromSwarmTitle]);
+
+  const handleCreateOutputBridge = useCallback(async () => {
+    if (!activeSwarmId || !activeSwarm) return;
+    const action = await dispatch(createOutputBridgeFromSwarm({
+      swarmId: activeSwarmId,
+      name: `${renderText(activeSwarm.title, 'OpenSwarm App')}`,
+      description: 'Static safe Output generated from verified Swarm static_app.',
+    }));
+    if (createOutputBridgeFromSwarm.fulfilled.match(action)) {
+      const outputId = action.payload?.output_id;
+      await dispatch(fetchExperimentalSwarm(activeSwarmId));
+      await dispatch(fetchOutputs());
+      if (outputId) {
+        dispatch(addViewCard({ outputId }));
+      }
+    }
+  }, [activeSwarm, activeSwarmId, dispatch]);
 
   const handleAddOutputBridgePreview = useCallback(async () => {
     if (!outputBridgeOutputId) return;
@@ -1633,18 +1660,33 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                   )}
                 </Box>
               )}
-              {outputBridgeOutputId && (
-                <Box sx={{ mb: 1 }}>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleAddOutputBridgePreview();
-                    }}
-                  >
-                    Add preview card
-                  </Button>
+              {(outputBridgeOutputId || canCreateOutputBridge) && (
+                <Box sx={{ mb: 1, display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+                  {canCreateOutputBridge && (
+                    <Button
+                      size="small"
+                      variant="contained"
+                      disabled={swarmState.actionLoading}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCreateOutputBridge();
+                      }}
+                    >
+                      Create output
+                    </Button>
+                  )}
+                  {outputBridgeOutputId && (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleAddOutputBridgePreview();
+                      }}
+                    >
+                      Add preview card
+                    </Button>
+                  )}
                 </Box>
               )}
               <Typography sx={{ color: finalResult ? c.text.primary : c.text.tertiary, fontSize: '0.78rem', lineHeight: 1.45 }}>

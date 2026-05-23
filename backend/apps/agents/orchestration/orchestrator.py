@@ -316,9 +316,41 @@ class SwarmOrchestrator:
         backend = normalized_plan.get("backend", "").lower()
         database = normalized_plan.get("database", "").lower()
 
-        static_signals = ["static", "html", "css", "landing", "tutorial", "brochure"]
-        no_backend_signals = ["no backend", "none", "static", "sin backend"]
-        no_database_signals = ["no database", "none", "static", "sin database"]
+        static_signals = [
+            "static",
+            "html",
+            "css",
+            "landing",
+            "tutorial",
+            "brochure",
+            "estática",
+            "estatico",
+            "estático",
+            "simple",
+        ]
+        no_backend_signals = [
+            "no backend",
+            "none",
+            "static",
+            "sin backend",
+            "sin backend por ahora",
+            "no necesita backend",
+            "no requiere backend",
+        ]
+        no_database_signals = [
+            "no database",
+            "none",
+            "static",
+            "sin database",
+            "sin base",
+            "sin base de datos",
+            "sin database por ahora",
+            "no necesita base",
+            "no necesita base por ahora",
+            "no necesita base de datos",
+            "no requiere base",
+            "no requiere base de datos",
+        ]
 
         if (
             any(signal in app_type or signal in frontend for signal in static_signals)
@@ -1398,15 +1430,31 @@ class SwarmOrchestrator:
             return source_swarm, [{"error": "source_already_implemented"}], metadata
 
         artifact_kind = str(final_result.get("artifact_kind") or "")
-        if artifact_kind not in {"planning_summary", "implementation_brief"}:
+        route = str(final_result.get("route") or "")
+        project_intake_state = final_result.get("project_intake_state") if isinstance(final_result.get("project_intake_state"), dict) else {}
+        source_generated_plan = (
+            generated_plan
+            or final_result.get("generated_plan")
+            or project_intake_state.get("generated_plan")
+            or {}
+        )
+
+        if route == "project_plan_ready":
+            if project_intake_state.get("status") != "ready_to_implement":
+                return source_swarm, [{"error": "project_intake_not_ready", "status": project_intake_state.get("status")}], metadata
+            if not isinstance(source_generated_plan, dict) or not source_generated_plan:
+                return source_swarm, [{"error": "project_intake_generated_plan_required"}], metadata
+            artifact_kind = "project_plan_ready"
+        elif artifact_kind not in {"planning_summary", "implementation_brief"}:
             return source_swarm, [{"error": "unsupported_source_artifact_kind", "artifact_kind": artifact_kind}], metadata
 
-        claim_guard = final_result.get("claim_guard") if isinstance(final_result.get("claim_guard"), dict) else {}
-        claim_guard_status = str(claim_guard.get("status") or "")
-        if claim_guard_status not in {"verified", "verified_planning_only"}:
-            return source_swarm, [{"error": "source_claim_guard_not_verified", "claim_guard_status": claim_guard_status}], metadata
+        if artifact_kind != "project_plan_ready":
+            claim_guard = final_result.get("claim_guard") if isinstance(final_result.get("claim_guard"), dict) else {}
+            claim_guard_status = str(claim_guard.get("status") or "")
+            if claim_guard_status not in {"verified", "verified_planning_only"}:
+                return source_swarm, [{"error": "source_claim_guard_not_verified", "claim_guard_status": claim_guard_status}], metadata
 
-        normalized_plan = self._normalize_generated_plan(generated_plan or final_result.get("generated_plan") or {})
+        normalized_plan = self._normalize_generated_plan(source_generated_plan)
         selected_template = self._select_dag_template(normalized_plan)
         requested_target = (target or "auto").strip().lower()
         target_template = selected_template if requested_target == "auto" else requested_target

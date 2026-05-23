@@ -278,9 +278,10 @@ body {
 }
 
 .app-shell {
-  width: min(1080px, calc(100% - 32px));
-  margin: 0 auto;
-  padding: 56px 0;
+  width: 100%;
+  margin: 0;
+  padding: 56px 32px;
+  box-sizing: border-box;
   display: grid;
   gap: 20px;
 }
@@ -314,7 +315,7 @@ h2 {
 }
 
 h1 {
-  max-width: 760px;
+  max-width: none;
   font-size: clamp(2.2rem, 7vw, 5rem);
   letter-spacing: -0.06em;
 }
@@ -324,7 +325,7 @@ h2 {
 }
 
 .lead {
-  max-width: 820px;
+  max-width: none;
   color: #43506a;
   font-size: 1.1rem;
   line-height: 1.75;

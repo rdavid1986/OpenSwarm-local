@@ -100,6 +100,22 @@ export const startExperimentalImplementation = createAsyncThunk(
   },
 );
 
+export const createOutputBridgeFromSwarm = createAsyncThunk(
+  'experimentalSwarms/createOutputBridge',
+  async ({ swarmId, name, description }: { swarmId: string; name?: string; description?: string }) => {
+    const res = await fetch(`${SWARMS_API}/${swarmId}/experimental/output-bridge/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        approve: true,
+        name,
+        description,
+      }),
+    });
+    return await readJson(res);
+  },
+);
+
 export const chatExperimentalSwarm = createAsyncThunk(
   'experimentalSwarms/chat',
   async ({ swarmId, message, swarmMode, model }: {
