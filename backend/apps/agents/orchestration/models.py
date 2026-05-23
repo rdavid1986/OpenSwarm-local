@@ -92,6 +92,7 @@ class TaskNode(BaseModel):
     id: str = Field(default_factory=lambda: uuid4().hex)
     title: str
     objective: str
+    task_type: str | None = None
     assigned_contract_id: str | None = None
     depends_on: list[str] = Field(default_factory=list)
     status: TaskStatus = "pending"

@@ -477,6 +477,12 @@ TASK_TYPE_REGISTRY: dict[ExperimentalTaskType, ExperimentalTaskTypeSpec] = {
 
 
 def classify_experimental_task(task: TaskNode) -> ExperimentalTaskType:
+    explicit_task_type = getattr(task, "task_type", None)
+    if explicit_task_type:
+        if explicit_task_type in TASK_TYPE_REGISTRY:
+            return explicit_task_type
+        raise ValueError(f"Unknown safe task type: {explicit_task_type}")
+
     for task_type, spec in TASK_TYPE_REGISTRY.items():
         if spec.matcher and spec.matcher(task):
             return task_type

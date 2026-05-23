@@ -1271,6 +1271,7 @@ class SwarmOrchestrator:
             task_kwargs = {
                 "title": spec.title,
                 "objective": str(item.get("objective") or spec.title),
+                "task_type": task_type,
                 "assigned_contract_id": contract.id,
                 "depends_on": [str(dep) for dep in (item.get("depends_on") or [])],
             }

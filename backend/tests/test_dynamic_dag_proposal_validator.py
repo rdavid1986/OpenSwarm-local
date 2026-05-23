@@ -1244,3 +1244,51 @@ def test_materialize_model_dag_proposal_preview_rejects_existing_tasks(tmp_path)
 
     assert errors[0]["error"] == "swarm_already_has_tasks"
     assert len(second.tasks) == len(first.tasks)
+
+
+def test_materialized_dag_proposal_persists_task_type_on_task_nodes():
+    orchestrator = SwarmOrchestrator()
+    base = SwarmState(title="Test", user_prompt="Test")
+
+    materialized = orchestrator._materialize_dag_proposal_state(
+        base_swarm=base,
+        proposal={
+            "kind": "model_generated_dag",
+            "tasks": [
+                {
+                    "id": "architecture",
+                    "task_type": "architecture_plan_execute",
+                    "role": "ArchitectAgent",
+                    "title": "Unexpected custom title",
+                    "objective": "Plan architecture.",
+                }
+            ],
+        },
+    )
+
+    assert materialized.tasks[0].task_type == "architecture_plan_execute"
+
+
+def test_classify_experimental_task_prefers_explicit_task_type():
+    task = TaskNode(
+        title="Completely custom title",
+        objective="No matcher text here.",
+        task_type="validation_execute",
+    )
+
+    assert classify_experimental_task(task) == "validation_execute"
+
+
+def test_classify_experimental_task_rejects_unknown_explicit_task_type():
+    task = TaskNode(
+        title="Create README.md",
+        objective="Create README.md",
+        task_type="not_registered",
+    )
+
+    try:
+        classify_experimental_task(task)
+    except ValueError as exc:
+        assert "not_registered" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for unknown explicit task_type")
