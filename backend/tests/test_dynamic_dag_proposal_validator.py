@@ -714,3 +714,38 @@ def test_model_dag_prompt_to_preview_decision_flow_without_persisting_tasks(tmp_
     assert saved.decisions[-1]["source"] == "model_dag_proposal"
     assert saved.decisions[-1]["status"] == "accepted"
     assert saved.decisions[-1]["metadata"]["task_ids"] == ["architecture", "frontend_plan", "create_readme"]
+
+
+def test_materialize_dag_proposal_uses_registry_title_instead_of_model_title():
+    orchestrator = SwarmOrchestrator()
+    base = SwarmState(title="Test", user_prompt="Test")
+
+    materialized = orchestrator._materialize_dag_proposal_state(
+        base_swarm=base,
+        proposal={
+            "kind": "model_generated_dag",
+            "tasks": [
+                {
+                    "id": "architecture",
+                    "task_type": "architecture_plan_execute",
+                    "role": "ArchitectAgent",
+                    "title": "Architecture Design",
+                    "objective": "Plan architecture from model proposal.",
+                },
+                {
+                    "id": "frontend_plan",
+                    "task_type": "frontend_plan_execute",
+                    "role": "FrontendAgent",
+                    "title": "Frontend Development Plan",
+                    "objective": "Plan frontend from model proposal.",
+                    "depends_on": ["architecture"],
+                },
+            ],
+        },
+    )
+
+    assert [task.title for task in materialized.tasks] == [
+        get_experimental_task_spec("architecture_plan_execute").title,
+        get_experimental_task_spec("frontend_plan_execute").title,
+    ]
+    assert orchestrator._validate_dag_proposal_state(materialized) == []
