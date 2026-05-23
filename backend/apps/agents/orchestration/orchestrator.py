@@ -851,6 +851,13 @@ class SwarmOrchestrator:
 
     def _build_model_dag_proposal_prompt(self, *, generated_plan: dict | None = None) -> str:
         plan = self._normalize_generated_plan(generated_plan)
+        backend = plan.get("backend", "").lower()
+        database = plan.get("database", "").lower()
+        no_backend_signals = {"", "none", "no backend", "sin backend", "static", "backend not defined"}
+        no_database_signals = {"", "none", "no database", "sin database", "static", "database not defined"}
+        has_real_backend = backend not in no_backend_signals
+        has_real_database = database not in no_database_signals
+
         allowed_task_types = [
             "architecture_plan_execute",
             "frontend_plan_execute",
@@ -858,11 +865,11 @@ class SwarmOrchestrator:
             "security_review_execute",
             "create_readme",
             "review_readme",
-            "create_static_app",
-            "review_static_app",
             "validation_execute",
             "consolidate_final",
         ]
+        if not has_real_backend and not has_real_database:
+            allowed_task_types.extend(["create_static_app", "review_static_app"])
         allowed_roles = [
             "CoordinatorAgent",
             "PlannerAgent",
@@ -881,7 +888,12 @@ class SwarmOrchestrator:
             "The backend will validate and may reject the proposal. "
             "You must not include allowed_tools or output_contract; backend derives those from TASK_TYPE_REGISTRY. "
             "Use only these task_type values: " + ', '.join(allowed_task_types) + ". "
-            "Use only these role values: " + ', '.join(allowed_roles) + ". "
+            + (
+                "Because this plan has backend or database requirements, do not use create_static_app or review_static_app. "
+                if has_real_backend or has_real_database
+                else "This plan is static/no-backend, so create_static_app and review_static_app are allowed. "
+            )
+            + "Use only these role values: " + ', '.join(allowed_roles) + ". "
             "Each task must include id, task_type, role, title, objective, and optional depends_on array of existing task ids. "
             "Dependencies must form an acyclic graph. "
             "Use registry-compatible titles when possible. "

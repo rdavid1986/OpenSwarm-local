@@ -831,3 +831,34 @@ def test_model_dag_semantic_policy_allows_static_app_for_static_plan():
 
     assert errors == []
     assert materialized.decisions[-1]["status"] == "accepted"
+
+
+def test_model_dag_prompt_excludes_static_app_for_backend_database_plan():
+    orchestrator = SwarmOrchestrator()
+    prompt = orchestrator._build_model_dag_proposal_prompt(
+        generated_plan={
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        }
+    )
+
+    allowed_segment = prompt.split("Use only these task_type values:", 1)[1].split("Use only these role values:", 1)[0]
+    assert "create_static_app" not in allowed_segment
+    assert "review_static_app" not in allowed_segment
+    assert "do not use create_static_app or review_static_app" in prompt
+
+
+def test_model_dag_prompt_allows_static_app_for_static_plan():
+    orchestrator = SwarmOrchestrator()
+    prompt = orchestrator._build_model_dag_proposal_prompt(
+        generated_plan={
+            "frontend": "HTML/CSS",
+            "backend": "no backend",
+            "database": "no database",
+        }
+    )
+
+    allowed_segment = prompt.split("Use only these task_type values:", 1)[1].split("Use only these role values:", 1)[0]
+    assert "create_static_app" in allowed_segment
+    assert "review_static_app" in allowed_segment
