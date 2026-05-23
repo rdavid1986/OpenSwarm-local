@@ -1,8 +1,8 @@
 """Response Intelligence helpers for Swarm chat.
 
-This module is intentionally state-only for RI-1.A.
-It summarizes Swarm state into a small semantic snapshot without executing tools,
-calling providers, mutating files, or changing routing behavior.
+It summarizes Swarm state into small semantic snapshots/results and builds
+deterministic grounded local responses without executing tools, calling
+providers, mutating files, or changing routing behavior.
 """
 
 from __future__ import annotations
@@ -433,4 +433,107 @@ def build_ri_result(
         answer_guard_applied=answer_guard_applied,
         answer_guard_reason=answer_guard_reason,
         state=state,
+    )
+
+
+def _build_grounded_refinement_content(
+    *,
+    refinement_request: dict[str, Any],
+    state: RIStateSnapshot | None,
+) -> str:
+    output_id = _safe_preview(
+        (state.target_output_id if state else None) or refinement_request.get("output_id"),
+        limit=120,
+    )
+    requested_change = _safe_preview(refinement_request.get("requested_change"), limit=900)
+    status = str(refinement_request.get("status") or "received").strip().lower()
+    pending_action = _safe_preview((state.pending_action if state else None), limit=120)
+    next_action = pending_action or _safe_preview(refinement_request.get("next_action"), limit=120)
+
+    if not output_id:
+        return "\n".join([
+            "Recibí un pedido de refinamiento, pero no encuentro un Output ID válido.",
+            "",
+            "No puedo asociarlo de forma segura a una Preview existente ni iniciar una iteración controlada sin ese identificador.",
+            "No ejecuté cambios ni reinicié el intake.",
+        ])
+
+    if pending_action == "run_refinement_pipeline" and status != "confirmed":
+        return "\n".join([
+            f"El refinamiento está registrado y pendiente para el Output {output_id}.",
+            "",
+            "Cambio solicitado:",
+            requested_change or "No especificado.",
+            "",
+            "Siguiente acción interna: run_refinement_pipeline.",
+            "Todavía no existe ejecución real del pipeline en este paso, así que no voy a afirmar que la app fue modificada.",
+        ])
+
+    if status == "confirmed" or pending_action == "run_refinement_pipeline":
+        return "\n".join([
+            f"Confirmación recibida para el Output {output_id}.",
+            "",
+            "Cambio a aplicar:",
+            requested_change or "No especificado.",
+            "",
+            "Estado real: el refinamiento quedó confirmado, pero todavía no ejecuté tools ni modifiqué la app.",
+            f"Siguiente acción interna: {next_action or 'run_refinement_pipeline'}.",
+            "No voy a reiniciar el intake; este pedido continúa como iteración del Output existente.",
+        ])
+
+    return "\n".join([
+        f"Refinamiento registrado para el Output {output_id}.",
+        "",
+        "Cambio solicitado:",
+        requested_change or "No especificado.",
+        "",
+        "Estado real: el pedido quedó asociado al Output existente, pero todavía no se modificó la app ni se generaron nuevos artifacts.",
+        f"Siguiente acción interna: {next_action or 'confirm_refinement'}.",
+        "No voy a reiniciar el intake ni crear un proyecto nuevo.",
+    ])
+
+
+def build_grounded_refinement_response(
+    swarm: Any,
+    *,
+    user_message: str,
+    refinement_request: dict[str, Any],
+    swarm_mode: str | None = None,
+) -> RIResult:
+    """Build the RI-3 local grounded response for Output refinements.
+
+    This generator is deterministic: it does not execute tools, call providers,
+    or run the refinement pipeline. It only explains the current registered
+    state and the next internal action derived from RIStateSnapshot.
+    """
+
+    payload = {
+        "route": "refinement_request",
+        "refinement_request": dict(_as_dict(refinement_request)),
+    }
+
+    base_result = build_ri_result(
+        swarm,
+        route="refinement_request",
+        user_message=user_message,
+        swarm_mode=swarm_mode,
+        source="local",
+        response_source="local_grounded",
+        requires_provider=False,
+        payload=payload,
+    )
+    assistant_content = _build_grounded_refinement_content(
+        refinement_request=payload["refinement_request"],
+        state=base_result.state,
+    )
+    return build_ri_result(
+        swarm,
+        route="refinement_request",
+        user_message=user_message,
+        swarm_mode=swarm_mode,
+        source="local",
+        response_source="local_grounded",
+        requires_provider=False,
+        assistant_content=assistant_content,
+        payload=payload,
     )

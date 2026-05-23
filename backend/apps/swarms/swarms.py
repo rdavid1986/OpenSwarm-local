@@ -57,7 +57,11 @@ from backend.apps.agents.runtime.events import event_trace_runtime
 from backend.apps.agents.orchestration.models import AgentToAgentMessage
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.runtime.provider import ProviderTurnContext
-from backend.apps.swarms.response_intelligence import build_ri_state_snapshot, snapshot_payload
+from backend.apps.swarms.response_intelligence import (
+    build_grounded_refinement_response,
+    build_ri_state_snapshot,
+    snapshot_payload,
+)
 
 
 @asynccontextmanager
@@ -567,41 +571,7 @@ def _is_refinement_confirmation(user_message: str, swarm) -> bool:
     return normalized in confirmation_phrases
 
 
-def _build_refinement_request_message(refinement: dict[str, Any]) -> str:
-    output_id = str(refinement.get("output_id") or "").strip()
-    requested_change = str(refinement.get("requested_change") or "").strip()
-    status = str(refinement.get("status") or "received").strip()
-    next_action = str(refinement.get("next_action") or "refinement_pipeline_pending").strip()
-
-    if status == "confirmed":
-        lines = [
-            "Confirmación recibida. Mantengo el refinamiento asociado al Output existente.",
-            "",
-            f"Output objetivo: {output_id or 'no identificado'}",
-            f"Cambio pedido: {requested_change or 'no especificado'}",
-            "",
-            "Estado real: el pedido está confirmado, pero todavía no se modificó la app ni se generaron nuevos artifacts.",
-            f"Siguiente acción interna: {next_action}.",
-            "",
-            "No voy a reiniciar el intake ni crear un proyecto nuevo para este pedido.",
-        ]
-        return "\n".join(lines)
-
-    lines = [
-        "Refinamiento recibido desde la Preview.",
-        "",
-        f"Output objetivo: {output_id or 'no identificado'}",
-        f"Cambio pedido: {requested_change or 'no especificado'}",
-        "",
-        "Estado real: el pedido quedó registrado y vinculado al Output actual. Todavía no se ejecutaron cambios sobre la app.",
-        f"Siguiente acción interna: {next_action}.",
-        "",
-        "No voy a reiniciar el intake. Este flujo continúa como iteración del Output existente.",
-    ]
-    return "\n".join(lines)
-
-
-def _refinement_request_response(user_message: str, swarm=None) -> tuple[str, dict[str, Any]]:
+def _refinement_request_response(user_message: str, swarm=None, swarm_mode: str | None = None) -> tuple[str, dict[str, Any]]:
     if _looks_like_output_refinement_request(user_message):
         refinement = _extract_output_refinement_request(user_message)
     else:
@@ -610,13 +580,13 @@ def _refinement_request_response(user_message: str, swarm=None) -> tuple[str, di
             refinement["status"] = "confirmed"
             refinement["next_action"] = "run_refinement_pipeline"
 
-    assistant_content = _build_refinement_request_message(refinement)
-
-    payload = {
-        "route": "refinement_request",
-        "refinement_request": refinement,
-    }
-    return assistant_content, payload
+    ri_result = build_grounded_refinement_response(
+        swarm,
+        user_message=user_message,
+        refinement_request=refinement,
+        swarm_mode=swarm_mode,
+    )
+    return ri_result.assistant_content or "", ri_result.payload
 
 
 def _implementation_request_explanation() -> str:
@@ -1880,7 +1850,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
 
     project_intake_payload: dict[str, Any] | None = None
     if swarm_mode == "app_builder" and route == "refinement_request":
-        assistant_content, project_intake_payload = _refinement_request_response(user_message, swarm)
+        assistant_content, project_intake_payload = _refinement_request_response(user_message, swarm, swarm_mode=swarm_mode)
     elif swarm_mode == "app_builder" and _is_project_intake_collecting(swarm):
         assistant_content, project_intake_payload = _advance_project_intake(swarm, user_message)
     elif swarm_mode == "app_builder" and route == "implementation_request":
