@@ -201,14 +201,28 @@ function getSwarmMessageRole(message: any): string {
   ).toLowerCase();
 }
 
-function getSwarmMessageMetadata(message: any): { route: string; source: string; guard: boolean; reason: string } {
+function getSwarmMessageMetadata(message: any): {
+  route: string;
+  source: string;
+  guard: boolean;
+  reason: string;
+  pendingAction: string;
+  targetOutputId: string;
+  availableActions: string[];
+} {
   const payload = message?.payload || {};
   const route = renderText(payload.route ?? payload.message?.route ?? payload.response?.route, '').trim();
   const source = renderText(payload.source ?? payload.message?.source ?? payload.response?.source, '').trim();
   const guard = Boolean(payload.answer_guard_applied ?? payload.message?.answer_guard_applied ?? payload.response?.answer_guard_applied);
   const reason = renderText(payload.answer_guard_reason ?? payload.message?.answer_guard_reason ?? payload.response?.answer_guard_reason, '').trim();
+  const riState = payload.ri_state || payload.message?.ri_state || payload.response?.ri_state || {};
+  const pendingAction = renderText(riState.pending_action, '').trim();
+  const targetOutputId = renderText(riState.target_output_id, '').trim();
+  const availableActions = Array.isArray(riState.available_actions)
+    ? riState.available_actions.map((action: any) => renderText(action, '').trim()).filter(Boolean)
+    : [];
 
-  return { route, source, guard, reason };
+  return { route, source, guard, reason, pendingAction, targetOutputId, availableActions };
 }
 
 function getSwarmProjectIntake(message: any): {
@@ -1169,6 +1183,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                   metadata.route,
                   metadata.source,
                   metadata.guard ? `guard${metadata.reason ? `: ${metadata.reason}` : ''}` : '',
+                  metadata.pendingAction ? `pending: ${metadata.pendingAction}` : '',
+                  metadata.targetOutputId ? `target: ${metadata.targetOutputId}` : '',
+                  metadata.availableActions.length ? `actions: ${metadata.availableActions.join(', ')}` : '',
                 ].filter(Boolean).join(' · ');
 
                 return (
