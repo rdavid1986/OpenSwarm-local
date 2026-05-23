@@ -1117,6 +1117,47 @@ class SwarmOrchestrator:
         )
         return materialized, validation_errors
 
+    def ensure_template_proposal_dag(
+        self,
+        *,
+        swarm_id: str,
+        template: str,
+        generated_plan: dict | None = None,
+    ) -> tuple[SwarmState, list[dict]]:
+        swarm = self.store.load(swarm_id)
+        self._ensure_workspace_path(swarm)
+        if swarm.tasks:
+            return self.store.save(swarm), []
+
+        materialized, validation_errors = self._build_validated_template_dag_state(
+            base_swarm=swarm,
+            template=template,
+            generated_plan=generated_plan,
+        )
+        if validation_errors:
+            return materialized, validation_errors
+
+        plan = self._normalize_generated_plan(generated_plan)
+        coordinator = next((contract for contract in materialized.contracts if contract.role == "CoordinatorAgent"), None)
+        materialized.intent = "task"
+        materialized.coordinator_contract_id = coordinator.id if coordinator else None
+        message = "static_app_dag_created" if template == "static_app" else "implementation_dag_created"
+        materialized.messages.append(
+            AgentToAgentMessage(
+                type="broadcast_to_swarm",
+                from_agent_id=materialized.coordinator_contract_id or materialized.contracts[0].id,
+                payload={
+                    "message": message,
+                    "source": "template_proposal_pipeline",
+                    "template": template,
+                    "generated_plan_used": bool(generated_plan if isinstance(generated_plan, dict) else {}),
+                    "generated_plan_summary": plan["summary"],
+                },
+                requires_response=False,
+            )
+        )
+        return self.store.save(materialized), []
+
     def _record_dag_proposal_decision(
         self,
         *,

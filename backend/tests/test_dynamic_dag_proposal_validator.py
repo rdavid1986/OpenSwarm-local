@@ -244,3 +244,80 @@ def test_validated_template_dag_pipeline_records_accepted_decision():
     assert materialized.decisions[-1]["status"] == "accepted"
     assert materialized.decisions[-1]["metadata"]["template"] == "implementation_brief"
     assert [task.id for task in materialized.tasks][-2:] == ["validation", "consolidate"]
+
+
+def test_ensure_template_proposal_dag_persists_validated_template_tasks(tmp_path):
+    orchestrator = SwarmOrchestrator()
+    orchestrator.store.root = tmp_path
+
+    swarm = orchestrator.create_swarm(
+        user_prompt="crear app con backend",
+        dashboard_id="dashboard-test",
+        intent="chat",
+    )
+
+    updated, errors = orchestrator.ensure_template_proposal_dag(
+        swarm_id=swarm.id,
+        template="implementation_brief",
+        generated_plan={
+            "app_type": "web app",
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        },
+    )
+
+    assert errors == []
+    assert updated.intent == "task"
+    assert updated.coordinator_contract_id
+    assert [task.id for task in updated.tasks] == [
+        "architecture",
+        "frontend_plan",
+        "backend_plan",
+        "security_review",
+        "create_readme",
+        "review_readme",
+        "validation",
+        "consolidate",
+    ]
+    assert updated.decisions[-1]["kind"] == "dag_proposal_validation"
+    assert updated.decisions[-1]["status"] == "accepted"
+    assert updated.messages[-1].payload["message"] == "implementation_dag_created"
+    assert updated.messages[-1].payload["source"] == "template_proposal_pipeline"
+
+
+def test_ensure_template_proposal_dag_is_idempotent_when_tasks_exist(tmp_path):
+    orchestrator = SwarmOrchestrator()
+    orchestrator.store.root = tmp_path
+
+    swarm = orchestrator.create_swarm(
+        user_prompt="crear app estática",
+        dashboard_id="dashboard-test",
+        intent="chat",
+    )
+
+    first, first_errors = orchestrator.ensure_template_proposal_dag(
+        swarm_id=swarm.id,
+        template="static_app",
+        generated_plan={
+            "app_type": "static tutorial",
+            "frontend": "HTML/CSS",
+            "backend": "no backend",
+            "database": "no database",
+        },
+    )
+    second, second_errors = orchestrator.ensure_template_proposal_dag(
+        swarm_id=swarm.id,
+        template="static_app",
+        generated_plan={
+            "app_type": "static tutorial",
+            "frontend": "HTML/CSS",
+            "backend": "no backend",
+            "database": "no database",
+        },
+    )
+
+    assert first_errors == []
+    assert second_errors == []
+    assert [task.id for task in second.tasks] == [task.id for task in first.tasks]
+    assert len(second.tasks) == len(first.tasks)
