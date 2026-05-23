@@ -321,3 +321,45 @@ def test_ensure_template_proposal_dag_is_idempotent_when_tasks_exist(tmp_path):
     assert second_errors == []
     assert [task.id for task in second.tasks] == [task.id for task in first.tasks]
     assert len(second.tasks) == len(first.tasks)
+
+
+def test_parse_model_dag_proposal_accepts_direct_json():
+    proposal, error = SwarmOrchestrator._parse_model_dag_proposal(
+        '{"kind":"model_generated_dag","tasks":[{"id":"architecture","task_type":"architecture_plan_execute","role":"ArchitectAgent"}]}'
+    )
+
+    assert error is None
+    assert proposal["kind"] == "model_generated_dag"
+    assert proposal["tasks"][0]["task_type"] == "architecture_plan_execute"
+
+
+def test_parse_model_dag_proposal_accepts_embedded_json():
+    proposal, error = SwarmOrchestrator._parse_model_dag_proposal(
+        'Texto antes {"kind":"model_generated_dag","tasks":[{"id":"architecture","task_type":"architecture_plan_execute","role":"ArchitectAgent"}]} texto después'
+    )
+
+    assert error is None
+    assert proposal["kind"] == "model_generated_dag"
+
+
+def test_parse_model_dag_proposal_rejects_invalid_json():
+    proposal, error = SwarmOrchestrator._parse_model_dag_proposal("no hay json válido")
+
+    assert proposal is None
+    assert error["error"] == "model_dag_proposal_response_not_json"
+
+
+def test_parse_model_dag_proposal_rejects_missing_tasks():
+    proposal, error = SwarmOrchestrator._parse_model_dag_proposal('{"kind":"model_generated_dag","tasks":[]}')
+
+    assert proposal is None
+    assert error["error"] == "model_dag_proposal_missing_tasks"
+
+
+def test_parse_model_dag_proposal_accepts_wrapped_dag_proposal():
+    proposal, error = SwarmOrchestrator._parse_model_dag_proposal(
+        '{"dag_proposal":{"kind":"model_generated_dag","tasks":[{"id":"architecture","task_type":"architecture_plan_execute","role":"ArchitectAgent"}]}}'
+    )
+
+    assert error is None
+    assert proposal["kind"] == "model_generated_dag"

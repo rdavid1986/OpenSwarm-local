@@ -6,6 +6,7 @@ for the mandatory README-review MVP shape. It does not launch sessions yet.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -847,6 +848,51 @@ class SwarmOrchestrator:
             )
 
         return self.store.save(swarm)
+
+    @staticmethod
+    def _parse_model_dag_proposal(final_message: dict | str | None) -> tuple[dict | None, dict | None]:
+        if isinstance(final_message, dict):
+            content = str(final_message.get("content") or "").strip()
+        else:
+            content = str(final_message or "").strip()
+
+        if not content:
+            return None, {"error": "empty_model_dag_proposal_response"}
+
+        try:
+            data = json.loads(content)
+        except Exception:
+            match = re.search(r"\{.*\}", content, flags=re.S)
+            if not match:
+                return None, {
+                    "error": "model_dag_proposal_response_not_json",
+                    "raw": content[:500],
+                }
+            try:
+                data = json.loads(match.group(0))
+            except Exception:
+                return None, {
+                    "error": "model_dag_proposal_json_parse_failed",
+                    "raw": content[:500],
+                }
+
+        if isinstance(data, dict) and isinstance(data.get("dag_proposal"), dict):
+            data = data["dag_proposal"]
+
+        if not isinstance(data, dict):
+            return None, {"error": "model_dag_proposal_not_object"}
+
+        if data.get("kind") not in {"model_generated_dag", "template_dag_proposal"}:
+            return None, {
+                "error": "model_dag_proposal_invalid_kind",
+                "kind": data.get("kind"),
+            }
+
+        tasks = data.get("tasks")
+        if not isinstance(tasks, list) or not tasks:
+            return None, {"error": "model_dag_proposal_missing_tasks"}
+
+        return data, None
 
     def _build_template_dag_proposal(self, *, template: str, generated_plan: dict | None = None) -> dict:
         plan = self._normalize_generated_plan(generated_plan)
