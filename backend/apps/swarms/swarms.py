@@ -108,6 +108,10 @@ class OrchestrationNodePositionRequest(BaseModel):
     expanded: bool | None = None
 
 
+class ExperimentalDAGProposalPreviewRequest(BaseModel):
+    final_message: dict[str, Any] | str | None = None
+
+
 def _dump(swarm):
     return swarm.model_dump(mode="json")
 
@@ -2106,6 +2110,28 @@ async def experimental_run_dag_dependencies(swarm_id: str, body: ExperimentalDAG
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return result.model_dump(mode="json")
+
+
+@swarms.router.post("/{swarm_id}/experimental/dag-proposal-preview")
+async def experimental_dag_proposal_preview(swarm_id: str, body: ExperimentalDAGProposalPreviewRequest):
+    try:
+        swarm, validation_errors = swarm_orchestrator.record_model_dag_proposal_preview(
+            swarm_id=swarm_id,
+            final_message=body.final_message,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    last_decision = swarm.decisions[-1] if swarm.decisions else None
+    return {
+        "ok": not validation_errors,
+        "status": "accepted" if not validation_errors else "rejected",
+        "validation_errors": validation_errors,
+        "decision": last_decision,
+        "swarm": _dump(swarm),
+    }
 
 
 @swarms.router.post("/{swarm_id}/experimental/start-implementation")

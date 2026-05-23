@@ -140,3 +140,197 @@ def test_orchestration_canvas_enriches_existing_nodes_with_evidence(tmp_path: Pa
     assert nodes["test_runner"]["evidence_ref"] == "2/2 tools ok"
     assert nodes["consolidator"]["evidence_ref"] == "claim_guard:verified"
     assert nodes["consolidator"]["status"] == "completed"
+
+
+def test_dag_proposal_preview_endpoint_persists_decision_only(monkeypatch, tmp_path: Path):
+    store = SwarmStore(root=tmp_path / "swarms")
+    orchestrator = SwarmOrchestrator(store=store)
+    monkeypatch.setattr(swarms_module, "swarm_orchestrator", orchestrator)
+
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.include_router(swarms_module.swarms.router, prefix="/api/swarms")
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/swarms/create",
+        json={"user_prompt": "Crear app desde proposal", "dashboard_id": "dash-preview", "intent": "chat"},
+    )
+    assert created.status_code == 200
+    swarm_id = created.json()["id"]
+
+    response = client.post(
+        f"/api/swarms/{swarm_id}/experimental/dag-proposal-preview",
+        json={
+            "final_message": {
+                "content": """
+                {
+                  "kind": "model_generated_dag",
+                  "tasks": [
+                    {
+                      "id": "architecture",
+                      "task_type": "architecture_plan_execute",
+                      "role": "ArchitectAgent",
+                      "title": "Execute architecture plan",
+                      "objective": "Plan architecture."
+                    },
+                    {
+                      "id": "create_readme",
+                      "task_type": "create_readme",
+                      "role": "DocumentationAgent",
+                      "title": "Create implementation brief README.md",
+                      "objective": "Create README.",
+                      "depends_on": ["architecture"]
+                    }
+                  ]
+                }
+                """
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["status"] == "accepted"
+    assert body["validation_errors"] == []
+    assert body["decision"]["kind"] == "dag_proposal_validation"
+    assert body["decision"]["source"] == "model_dag_proposal"
+
+    stored = store.load(swarm_id)
+    assert stored.tasks == []
+    assert stored.contracts == []
+    assert stored.decisions[-1]["status"] == "accepted"
+
+
+def test_dag_proposal_preview_endpoint_rejects_invalid_output(monkeypatch, tmp_path: Path):
+    store = SwarmStore(root=tmp_path / "swarms")
+    orchestrator = SwarmOrchestrator(store=store)
+    monkeypatch.setattr(swarms_module, "swarm_orchestrator", orchestrator)
+
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.include_router(swarms_module.swarms.router, prefix="/api/swarms")
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/swarms/create",
+        json={"user_prompt": "Crear app desde proposal inválido", "dashboard_id": "dash-preview", "intent": "chat"},
+    )
+    assert created.status_code == 200
+    swarm_id = created.json()["id"]
+
+    response = client.post(
+        f"/api/swarms/{swarm_id}/experimental/dag-proposal-preview",
+        json={"final_message": "no hay json"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["status"] == "rejected"
+    assert body["validation_errors"][0]["error"] == "model_dag_proposal_response_not_json"
+
+    stored = store.load(swarm_id)
+    assert stored.tasks == []
+    assert stored.contracts == []
+    assert stored.decisions[-1]["status"] == "rejected"
+
+
+def test_dag_proposal_preview_endpoint_persists_decision_only(monkeypatch, tmp_path: Path):
+    store = SwarmStore(root=tmp_path / "swarms")
+    orchestrator = SwarmOrchestrator(store=store)
+    monkeypatch.setattr(swarms_module, "swarm_orchestrator", orchestrator)
+
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.include_router(swarms_module.swarms.router, prefix="/api/swarms")
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/swarms/create",
+        json={"user_prompt": "Crear app desde proposal", "dashboard_id": "dash-preview", "intent": "chat"},
+    )
+    assert created.status_code == 200
+    swarm_id = created.json()["id"]
+
+    response = client.post(
+        f"/api/swarms/{swarm_id}/experimental/dag-proposal-preview",
+        json={
+            "final_message": {
+                "content": """
+                {
+                  "kind": "model_generated_dag",
+                  "tasks": [
+                    {
+                      "id": "architecture",
+                      "task_type": "architecture_plan_execute",
+                      "role": "ArchitectAgent",
+                      "title": "Execute architecture plan",
+                      "objective": "Plan architecture."
+                    },
+                    {
+                      "id": "create_readme",
+                      "task_type": "create_readme",
+                      "role": "DocumentationAgent",
+                      "title": "Create implementation brief README.md",
+                      "objective": "Create README.",
+                      "depends_on": ["architecture"]
+                    }
+                  ]
+                }
+                """
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["status"] == "accepted"
+    assert body["validation_errors"] == []
+    assert body["decision"]["kind"] == "dag_proposal_validation"
+    assert body["decision"]["source"] == "model_dag_proposal"
+
+    stored = store.load(swarm_id)
+    assert stored.tasks == []
+    assert stored.contracts == []
+    assert stored.decisions[-1]["status"] == "accepted"
+
+
+def test_dag_proposal_preview_endpoint_rejects_invalid_output(monkeypatch, tmp_path: Path):
+    store = SwarmStore(root=tmp_path / "swarms")
+    orchestrator = SwarmOrchestrator(store=store)
+    monkeypatch.setattr(swarms_module, "swarm_orchestrator", orchestrator)
+
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.include_router(swarms_module.swarms.router, prefix="/api/swarms")
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/swarms/create",
+        json={"user_prompt": "Crear app desde proposal inválido", "dashboard_id": "dash-preview", "intent": "chat"},
+    )
+    assert created.status_code == 200
+    swarm_id = created.json()["id"]
+
+    response = client.post(
+        f"/api/swarms/{swarm_id}/experimental/dag-proposal-preview",
+        json={"final_message": "no hay json"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["status"] == "rejected"
+    assert body["validation_errors"][0]["error"] == "model_dag_proposal_response_not_json"
+
+    stored = store.load(swarm_id)
+    assert stored.tasks == []
+    assert stored.contracts == []
+    assert stored.decisions[-1]["status"] == "rejected"
