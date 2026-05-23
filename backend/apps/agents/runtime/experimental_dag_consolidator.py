@@ -54,9 +54,9 @@ class ExperimentalDAGConsolidator:
 
         swarm = self.store.load(swarm_id)
         architecture = self._find_task_by_type(swarm, "architecture_plan_execute")
-        frontend = self._find_task_by_type(swarm, "frontend_plan_execute", depends_on=architecture.id)
-        backend = self._find_task_by_type(swarm, "backend_plan_execute", depends_on=frontend.id)
-        security = self._find_task_by_type(swarm, "security_review_execute", depends_on=backend.id)
+        frontend = self._find_task_by_type(swarm, "frontend_plan_execute")
+        backend = self._find_task_by_type(swarm, "backend_plan_execute")
+        security = self._find_task_by_type(swarm, "security_review_execute")
 
         if self._is_planning_only_dag(swarm):
             return self._consolidate_planning_only(
@@ -68,7 +68,7 @@ class ExperimentalDAGConsolidator:
             )
 
         worker, reviewer, expected_artifact_path, artifact_kind, summary = self._resolve_build_tasks(swarm, security)
-        validation = self._find_task_by_type(swarm, "validation_execute", depends_on=reviewer.id)
+        validation = self._find_task_by_type(swarm, "validation_execute")
         consolidate = self._find_task_by_type(swarm, "consolidate_final")
         expected_artifact_paths = self._expected_artifact_paths(artifact_kind, expected_artifact_path)
         errors = self._validate_ready(swarm, architecture, frontend, backend, security, worker, reviewer, validation, expected_artifact_paths=expected_artifact_paths)

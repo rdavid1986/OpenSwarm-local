@@ -136,3 +136,33 @@ def test_planning_only_consolidator_requires_validation_result(monkeypatch, tmp_
     assert response.status == "not_ready"
     assert any(error["error"] == "validation_result_missing" for error in response.errors)
     assert store.load(swarm.id).final_result == {}
+
+
+def test_planning_only_consolidator_accepts_non_linear_model_dag_dependencies(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENSWARM_EXPERIMENTAL_MINI_RUNTIME", "1")
+    monkeypatch.setenv("OPENSWARM_EXPERIMENTAL_DAG_TASK_RUNTIME", "1")
+    monkeypatch.setenv("OPENSWARM_EXPERIMENTAL_DAG_CHAIN_RUNTIME", "1")
+    monkeypatch.setenv("OPENSWARM_EXPERIMENTAL_DAG_CONSOLIDATE_RUNTIME", "1")
+
+    store, swarm = _planning_swarm(tmp_path)
+
+    frontend = next(task for task in swarm.tasks if task.task_type == "frontend_plan_execute")
+    backend = next(task for task in swarm.tasks if task.task_type == "backend_plan_execute")
+    security = next(task for task in swarm.tasks if task.task_type == "security_review_execute")
+    validation = next(task for task in swarm.tasks if task.task_type == "validation_execute")
+
+    frontend.depends_on = ["architecture_plan_execute"]
+    backend.depends_on = ["architecture_plan_execute"]
+    security.depends_on = ["architecture_plan_execute", "frontend_plan_execute", "backend_plan_execute"]
+    validation.depends_on = ["frontend_plan_execute", "backend_plan_execute", "security_review_execute"]
+
+    store.save(swarm)
+
+    consolidator = ExperimentalDAGConsolidator(store=store)
+    response = consolidator.consolidate_final(swarm_id=swarm.id)
+
+    assert response.ok is True
+    assert response.status == "completed"
+    final_result = store.load(swarm.id).final_result
+    assert final_result["artifact_kind"] == "planning_summary"
+    assert final_result["implementation_performed"] is False
