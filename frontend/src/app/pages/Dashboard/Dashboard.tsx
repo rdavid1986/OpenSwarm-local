@@ -2498,6 +2498,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                   cardY={vc.y}
                   cardWidth={vc.width}
                   cardHeight={vc.height}
+                  devicePreset={vc.device_preset ?? null}
                   cardZOrder={vc.zOrder ?? 0}
                   zoom={canvas.zoom}
                   panX={canvas.panX}

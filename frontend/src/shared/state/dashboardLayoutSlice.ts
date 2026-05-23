@@ -1187,6 +1187,7 @@ export const {
   addViewCard,
   setViewCardPosition,
   setViewCardSize,
+  setViewCardDevicePreset,
   removeViewCard,
   addBrowserCard,
   addBrowserCardFromBackend,
