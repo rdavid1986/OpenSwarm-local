@@ -723,6 +723,16 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
     return ids;
   }, [renderItems]);
 
+  const latestAssistantMessageId = useMemo(() => {
+    for (let i = renderItems.length - 1; i >= 0; i -= 1) {
+      const item = renderItems[i];
+      if (isToolGroup(item) || isToolPair(item)) continue;
+      const msg = item as AgentMessage;
+      if (msg.role === 'assistant') return msg.id;
+    }
+    return null;
+  }, [renderItems]);
+
   const groupMetaRequestedRef = useRef<Set<string>>(new Set());
   const groupMetaRefinedRef = useRef<Set<string>>(new Set());
 
@@ -1148,6 +1158,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                     editing={isEditing}
                     onSaveEdit={handleSaveEdit}
                     onCancelEdit={handleCancelEdit}
+                    animateText={msg.role === 'assistant' && msg.id === latestAssistantMessageId}
                   />
                   {!isEditing && (msg.role === 'user' || (msg.role === 'assistant' && lastAssistantIdsInTurn.has(msg.id))) && (
                     <MessageActionBar
@@ -1198,6 +1209,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                 <MessageBubble
                   key={`streaming-${session.streamingMessage.id}`}
                   isStreaming
+                  animateText
                   dynamicTurnLabel={session.turn_label?.label}
                   message={{
                     id: session.streamingMessage.id,

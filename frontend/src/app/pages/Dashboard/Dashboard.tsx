@@ -136,7 +136,6 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   const zoomSensitivity = useAppSelector((state) => state.settings.data.zoom_sensitivity);
   const newAgentShortcut = useAppSelector((state) => state.settings.data.new_agent_shortcut);
   const browserHomepage = useAppSelector((state) => state.settings.data.browser_homepage);
-  const expandNewChats = useAppSelector((state) => state.settings.data.expand_new_chats_in_dashboard);
   const autoRevealSubAgents = useAppSelector((state) => state.settings.data.auto_reveal_sub_agents);
   const outputs = useAppSelector((state) => state.outputs.items);
   const outputsLoaded = useAppSelector((state) => state.outputs.loaded);
@@ -218,6 +217,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   const [focusedCardId, setFocusedCardId] = useState<string | null>(null);
   const [dashboardWorkspacePath, setDashboardWorkspacePath] = useState<string | null>(null);
   const [dashboardWorkspaceLoading, setDashboardWorkspaceLoading] = useState(false);
+  const [canvasViewportSize, setCanvasViewportSize] = useState({ width: 0, height: 0 });
   const [showWalkthrough, setShowWalkthrough] = useState(() => {
     if (localStorage.getItem('openswarm_walkthrough_pending') === 'true') {
       return true;
@@ -1446,7 +1446,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
           contextPaths: contextPaths?.map((cp) => ({ path: cp.path, type: cp.type })),
           forcedTools,
           attachedSkills,
-          expand: expandNewChats,
+          expand: true,
         }),
       ).then((action) => {
         if (launchAndSendFirstMessage.fulfilled.match(action)) {
@@ -1469,12 +1469,8 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
           spawnOriginsRef.current[realId] = spawnOriginsRef.current[draftId];
           delete spawnOriginsRef.current[draftId];
 
-          if (expandNewChats) {
-            setAutoFocusSessionId(realId);
-            dispatch(expandSession(realId));
-          } else {
-            setPendingSelectSessionId(realId);
-          }
+          setAutoFocusSessionId(realId);
+          dispatch(expandSession(realId));
 
           setTimeout(() => {
             const card = store.getState().dashboardLayout.cards[realId];
@@ -1504,19 +1500,26 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
         }
       });
     },
-    [canvas.viewportRef, canvas.actions, dispatch, dashboardId, expandNewChats, handleHighlightCard],
+    [canvas.viewportRef, canvas.actions, dispatch, dashboardId, handleHighlightCard],
   );
 
   const handleAddView = useCallback((outputId: string) => {
     dispatch(addViewCard({ outputId, expandedSessionIds }));
     setTimeout(() => {
       const card = store.getState().dashboardLayout.viewCards[outputId];
-      if (card) {
-        canvas.actions.fitToCards([{ x: card.x, y: card.y, width: card.width, height: card.height }], 1.15, true);
+      const viewport = canvas.viewportRef.current;
+      if (card && viewport) {
+        const targetZoom = 0.9;
+        const targetPanX = (viewport.clientWidth - card.width * targetZoom) / 2 - card.x * targetZoom;
+        const targetPanY = (viewport.clientHeight - card.height * targetZoom) / 2 - card.y * targetZoom;
+        dispatch(bringToFront({ id: outputId, type: 'view' }));
+        selection.selectCard(outputId, 'view', false);
+        setFocusedCardId(outputId);
+        canvas.actions.setState({ panX: targetPanX, panY: targetPanY, zoom: targetZoom });
         handleHighlightCard(outputId);
       }
     }, 200);
-  }, [dispatch, expandedSessionIds, canvas.actions, handleHighlightCard]);
+  }, [dispatch, expandedSessionIds, canvas.actions, canvas.viewportRef, handleHighlightCard, selection]);
 
   const handleAddBrowser = useCallback(() => {
     report('dashboard', 'browser_added');
@@ -2119,6 +2122,24 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   const crispPanX = Math.round(canvas.panX * dpr) / dpr;
   const crispPanY = Math.round(canvas.panY * dpr) / dpr;
 
+  useEffect(() => {
+    const el = canvas.viewportRef.current;
+    if (!el) return;
+
+    const update = () => {
+      setCanvasViewportSize({
+        width: el.clientWidth,
+        height: el.clientHeight,
+      });
+    };
+
+    update();
+
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [canvas.viewportRef]);
+
   const handleRenameDashboard = useCallback((name: string) => {
     if (!dashboardId || !dashboard) return;
     dispatch(renameDashboard({
@@ -2152,7 +2173,6 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
           pointerEvents: 'none',
           p: 3,
           pb: 0,
-          background: `linear-gradient(to bottom, ${c.bg.page} 60%, transparent)`,
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', pointerEvents: 'auto' }}>
@@ -2530,6 +2550,10 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                 zoom={canvas.zoom}
                 panX={canvas.panX}
                 panY={canvas.panY}
+                renderPanX={crispPanX}
+                renderPanY={crispPanY}
+                viewportWidth={canvasViewportSize.width}
+                viewportHeight={canvasViewportSize.height}
                 cmdHeld={canvas.cmdHeld}
                 isSelected={selection.isSelected(bc.browser_id)}
                 isHighlighted={highlightedCardId === bc.browser_id}
@@ -2566,6 +2590,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                 onBringToFront={handleBringToFront}
                 onDoubleClick={handleCardDoubleClick}
                 onSwarmBound={persistLayoutNow}
+                onAddPreviewCard={handleAddView}
                 dashboardId={dashboardId}
               />
             ))}

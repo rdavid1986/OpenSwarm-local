@@ -300,6 +300,7 @@ const DashboardViewCard: React.FC<Props> = ({
     }
   };
 
+
   const handleMaximizeToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
     setIsMaximized((prev) => !prev);
@@ -573,6 +574,7 @@ const DashboardViewCard: React.FC<Props> = ({
             {isMaximized ? <CloseFullscreenIcon sx={{ fontSize: 16 }} /> : <OpenInFullIcon sx={{ fontSize: 16 }} />}
           </IconButton>
         </Tooltip>
+
 
         <Tooltip title="Close preview card" placement="top">
           <IconButton

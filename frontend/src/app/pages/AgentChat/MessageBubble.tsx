@@ -62,6 +62,39 @@ const StreamingCursor: React.FC = () => {
   );
 };
 
+function renderAnimatedText(value: string, baseDelayMs = 0): React.ReactNode {
+  let visibleIndex = 0;
+
+  return Array.from(value).map((char, idx) => {
+    if (char === '\n') {
+      return <br key={`line-${idx}`} />;
+    }
+
+    const delay = baseDelayMs + visibleIndex * 14;
+    visibleIndex += 1;
+
+    return (
+      <Box
+        key={`char-${idx}-${visibleIndex}`}
+        component="span"
+        sx={{
+          display: 'inline',
+          whiteSpace: char === ' ' ? 'pre' : 'normal',
+          opacity: 0,
+          animation: 'agentCharReveal 0.16s ease-out forwards',
+          animationDelay: `${delay}ms`,
+          '@keyframes agentCharReveal': {
+            '0%': { opacity: 0, transform: 'translateY(2px)' },
+            '100%': { opacity: 1, transform: 'translateY(0)' },
+          },
+        }}
+      >
+        {char === ' ' ? '\u00A0' : char}
+      </Box>
+    );
+  });
+}
+
 const ELEMENT_SEPARATOR = '\n\n---\nSelected UI Elements:\n';
 
 interface OpenSwarmErrorInfo {
@@ -806,10 +839,11 @@ interface Props {
   onSaveEdit?: (messageId: string, newContent: string) => void;
   onCancelEdit?: () => void;
   isStreaming?: boolean;
+  animateText?: boolean;
   dynamicTurnLabel?: string | null;
 }
 
-const MessageBubble: React.FC<Props> = React.memo(({ message, editing = false, onSaveEdit, onCancelEdit, isStreaming, dynamicTurnLabel }) => {
+const MessageBubble: React.FC<Props> = React.memo(({ message, editing = false, onSaveEdit, onCancelEdit, isStreaming, animateText, dynamicTurnLabel }) => {
   const c = useClaudeTokens();
   const dispatch = useAppDispatch();
   const [editText, setEditText] = useState('');
@@ -934,14 +968,14 @@ const MessageBubble: React.FC<Props> = React.memo(({ message, editing = false, o
     >
       <Box
         sx={{
-          maxWidth: '85%',
+          maxWidth: isUser ? '78%' : '100%',
           minWidth: 0,
-          bgcolor: isUser ? c.user.bubble : c.bg.surface,
-          border: isUser ? (isFailed ? `1px solid ${c.status.error}` : 'none') : `1px solid ${c.border.subtle}`,
-          borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-          px: 2,
-          py: 1.25,
-          boxShadow: isUser ? 'none' : c.shadow.sm,
+          bgcolor: 'transparent',
+          border: isUser && isFailed ? `1px solid ${c.status.error}` : 'none',
+          borderRadius: isUser ? 0.85 : 0,
+          px: isUser ? 1.5 : 0.5,
+          py: isUser ? 1.15 : 1.25,
+          boxShadow: 'none',
           overflow: 'hidden',
           opacity: isPending ? 0.7 : 1,
           transition: 'opacity 0.2s, border-color 0.2s',
@@ -1138,7 +1172,7 @@ const MessageBubble: React.FC<Props> = React.memo(({ message, editing = false, o
               </Box>
             ) : (
               <>
-                {isStreaming ? (
+                {isStreaming || animateText ? (
                   <Box
                     component="div"
                     sx={{
@@ -1149,7 +1183,7 @@ const MessageBubble: React.FC<Props> = React.memo(({ message, editing = false, o
                       color: 'inherit',
                     }}
                   >
-                    {rawText}
+                    {renderAnimatedText(rawText)}
                   </Box>
                 ) : (
                   renderedMarkdown

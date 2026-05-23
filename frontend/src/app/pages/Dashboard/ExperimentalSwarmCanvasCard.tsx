@@ -10,7 +10,6 @@ import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import {
-  addViewCard,
   removeSwarmCard,
   setSwarmCardMode,
   setSwarmCardModel,
@@ -70,6 +69,7 @@ interface Props {
     width?: number;
     height?: number;
   }) => void;
+  onAddPreviewCard?: (outputId: string) => void;
   dashboardId?: string;
 }
 
@@ -139,6 +139,39 @@ function renderText(value: any, fallback = ''): string {
     return fallback;
   }
   return fallback;
+}
+
+function renderAnimatedText(value: string, baseDelayMs = 0): React.ReactNode {
+  let visibleIndex = 0;
+
+  return Array.from(value).map((char, idx) => {
+    if (char === '\n') {
+      return <br key={`line-${idx}`} />;
+    }
+
+    const delay = baseDelayMs + visibleIndex * 14;
+    visibleIndex += 1;
+
+    return (
+      <Box
+        key={`char-${idx}-${visibleIndex}`}
+        component="span"
+        sx={{
+          display: 'inline',
+          whiteSpace: char === ' ' ? 'pre' : 'normal',
+          opacity: 0,
+          animation: 'swarmCharReveal 0.16s ease-out forwards',
+          animationDelay: `${delay}ms`,
+          '@keyframes swarmCharReveal': {
+            '0%': { opacity: 0, transform: 'translateY(2px)' },
+            '100%': { opacity: 1, transform: 'translateY(0)' },
+          },
+        }}
+      >
+        {char === ' ' ? '\u00A0' : char}
+      </Box>
+    );
+  });
 }
 
 function getSwarmMessageText(message: any): string {
@@ -330,6 +363,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   onBringToFront,
   onDoubleClick,
   onSwarmBound,
+  onAddPreviewCard,
   dashboardId,
 }) => {
   const c = useClaudeTokens();
@@ -633,16 +667,16 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       await dispatch(fetchExperimentalSwarm(activeSwarmId));
       await dispatch(fetchOutputs());
       if (outputId) {
-        dispatch(addViewCard({ outputId }));
+        onAddPreviewCard?.(outputId);
       }
     }
-  }, [activeSwarm, activeSwarmId, dispatch]);
+  }, [activeSwarm, activeSwarmId, dispatch, onAddPreviewCard]);
 
   const handleAddOutputBridgePreview = useCallback(async () => {
     if (!outputBridgeOutputId) return;
     await dispatch(fetchOutputs());
-    dispatch(addViewCard({ outputId: outputBridgeOutputId }));
-  }, [dispatch, outputBridgeOutputId]);
+    onAddPreviewCard?.(outputBridgeOutputId);
+  }, [dispatch, onAddPreviewCard, outputBridgeOutputId]);
 
   const handleProjectIntakeOption = useCallback(async (option: any) => {
     const label = renderText(option?.label ?? option?.value, '').trim();
@@ -1098,23 +1132,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         fontSize: '0.88rem',
                         lineHeight: 1.55,
                         whiteSpace: 'pre-wrap',
-                        ...(isLatestChatMessage ? {
-                          overflow: 'hidden',
-                          animation: 'swarmMessageReveal 0.72s steps(34, end) both',
-                          '@keyframes swarmMessageReveal': {
-                            '0%': {
-                              clipPath: 'inset(0 100% 0 0)',
-                              opacity: 0.65,
-                            },
-                            '100%': {
-                              clipPath: 'inset(0 0 0 0)',
-                              opacity: 1,
-                            },
-                          },
-                        } : {}),
                       }}
                     >
-                      {body}
+                      {isLatestChatMessage ? renderAnimatedText(body) : body}
                     </Typography>
                     {!isUser && projectIntake.options.length > 0 && (
                       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 1 }}>
@@ -1275,21 +1295,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                       fontSize: '0.88rem',
                       lineHeight: 1.55,
                       whiteSpace: 'pre-wrap',
-                      overflow: 'hidden',
-                      animation: 'swarmMessageReveal 0.5s steps(28, end) both',
-                      '@keyframes swarmMessageReveal': {
-                        '0%': {
-                          clipPath: 'inset(0 100% 0 0)',
-                          opacity: 0.65,
-                        },
-                        '100%': {
-                          clipPath: 'inset(0 0 0 0)',
-                          opacity: 1,
-                        },
-                      },
                     }}
                   >
-                    {lastSubmittedPrompt}
+                    {renderAnimatedText(lastSubmittedPrompt)}
                   </Typography>
                 </Box>
               )}

@@ -642,7 +642,7 @@ const AgentCard: React.FC<Props> = ({
                 : expanded
                   ? `1px solid ${c.border.strong}`
                   : `1px solid ${c.border.subtle}`,
-        borderRadius: 3,
+        borderRadius: 1.25,
         p: 2,
         cursor: expanded ? 'default' : 'pointer',
         transition: noTransition

@@ -17,6 +17,8 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CloseIcon from '@mui/icons-material/Close';
+import OpenInFullIcon from '@mui/icons-material/OpenInFull';
+import CloseFullscreenIcon from '@mui/icons-material/CloseFullscreen';
 import AddIcon from '@mui/icons-material/Add';
 import LockIcon from '@mui/icons-material/Lock';
 import SearchIcon from '@mui/icons-material/Search';
@@ -112,6 +114,10 @@ interface Props {
   zoom?: number;
   panX?: number;
   panY?: number;
+  renderPanX?: number;
+  renderPanY?: number;
+  viewportWidth?: number;
+  viewportHeight?: number;
   cmdHeld?: boolean;
   isSelected?: boolean;
   isHighlighted?: boolean;
@@ -127,7 +133,7 @@ interface Props {
 
 
 const BrowserCard: React.FC<Props> = ({
-  browserId, tabs, activeTabId, cardX, cardY, cardWidth, cardHeight, zoom = 1, panX = 0, panY = 0, cmdHeld = false,
+  browserId, tabs, activeTabId, cardX, cardY, cardWidth, cardHeight, zoom = 1, panX = 0, panY = 0, renderPanX, renderPanY, viewportWidth, viewportHeight, cmdHeld = false,
   isSelected = false, isHighlighted = false, multiDragDelta, onCardSelect, onDragStart, onDragMove, onDragEnd,
   cardZOrder = 0, onDoubleClick, onBringToFront,
 }) => {
@@ -1358,6 +1364,7 @@ const BrowserCard: React.FC<Props> = ({
       ))}
     </Box>
   );
+
 };
 
 export default React.memo(BrowserCard);
