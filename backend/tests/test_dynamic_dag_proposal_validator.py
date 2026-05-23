@@ -992,3 +992,91 @@ def test_model_dag_prompt_includes_exact_role_mappings():
     assert "validation_execute=TesterAgent" in prompt
     assert "consolidate_final=CoordinatorAgent" in prompt
     assert "create_readme=DocumentationAgent" in prompt
+
+
+def test_model_dag_preview_decision_stores_recoverable_metadata(tmp_path):
+    orchestrator = SwarmOrchestrator()
+    orchestrator.store.root = tmp_path
+
+    swarm = orchestrator.create_swarm(
+        user_prompt="crear app con backend",
+        dashboard_id="dashboard-test",
+        intent="chat",
+    )
+
+    saved, errors = orchestrator.record_model_dag_proposal_preview(
+        swarm_id=swarm.id,
+        generated_plan={
+            "summary": "Dashboard simple",
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        },
+        final_message={
+            "content": """
+            {
+              "kind": "model_generated_dag",
+              "tasks": [
+                {
+                  "id": "architecture",
+                  "task_type": "architecture_plan_execute",
+                  "role": "ArchitectAgent",
+                  "title": "Architecture",
+                  "objective": "Plan architecture."
+                },
+                {
+                  "id": "create_readme",
+                  "task_type": "create_readme",
+                  "role": "DocumentationAgent",
+                  "title": "Create README",
+                  "objective": "Create README.",
+                  "depends_on": ["architecture"]
+                }
+              ]
+            }
+            """
+        },
+    )
+
+    assert errors == []
+    decision = saved.decisions[-1]
+    metadata = decision["metadata"]
+
+    assert decision["status"] == "accepted"
+    assert metadata["preview_id"]
+    assert metadata["proposal"]["kind"] == "model_generated_dag"
+    assert metadata["normalized_plan"]["backend"] == "FastAPI"
+    assert metadata["normalized_plan"]["database"] == "PostgreSQL"
+    assert metadata["plan_fingerprint"]
+    assert metadata["task_ids"] == ["architecture", "create_readme"]
+
+
+def test_model_dag_preview_rejected_parse_error_stores_plan_fingerprint(tmp_path):
+    orchestrator = SwarmOrchestrator()
+    orchestrator.store.root = tmp_path
+
+    swarm = orchestrator.create_swarm(
+        user_prompt="crear app inválida",
+        dashboard_id="dashboard-test",
+        intent="chat",
+    )
+
+    saved, errors = orchestrator.record_model_dag_proposal_preview(
+        swarm_id=swarm.id,
+        generated_plan={
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        },
+        final_message="no hay json",
+    )
+
+    assert errors[0]["error"] == "model_dag_proposal_response_not_json"
+    decision = saved.decisions[-1]
+    metadata = decision["metadata"]
+
+    assert decision["status"] == "rejected"
+    assert metadata["preview_id"]
+    assert metadata["parse_status"] == "failed"
+    assert metadata["normalized_plan"]["backend"] == "FastAPI"
+    assert metadata["plan_fingerprint"]

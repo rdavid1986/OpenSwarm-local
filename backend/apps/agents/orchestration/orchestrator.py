@@ -6,6 +6,7 @@ for the mandatory README-review MVP shape. It does not launch sessions yet.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -956,6 +957,11 @@ class SwarmOrchestrator:
 
         return data, None
 
+    @staticmethod
+    def _fingerprint_model_dag_plan(normalized_plan: dict[str, str]) -> str:
+        payload = json.dumps(normalized_plan, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
     def _validate_model_dag_semantic_policy(
         self,
         *,
@@ -1032,12 +1038,18 @@ class SwarmOrchestrator:
         materialized = base_swarm.model_copy(deep=True)
 
         if parse_error:
+            normalized_plan = self._normalize_generated_plan(generated_plan)
             materialized = self._record_dag_proposal_decision(
                 swarm=materialized,
                 source="model_dag_proposal",
                 proposal_kind="model_generated_dag",
                 validation_errors=[parse_error],
-                metadata={"parse_status": "failed"},
+                metadata={
+                    "preview_id": materialized.id + ":" + str(len(materialized.decisions)),
+                    "parse_status": "failed",
+                    "normalized_plan": normalized_plan,
+                    "plan_fingerprint": self._fingerprint_model_dag_plan(normalized_plan),
+                },
             )
             return materialized, [parse_error]
 
@@ -1047,13 +1059,18 @@ class SwarmOrchestrator:
             *self._validate_model_dag_semantic_policy(proposal=proposal or {}, generated_plan=generated_plan),
         ]
         proposal_tasks = [item for item in ((proposal or {}).get("tasks") or []) if isinstance(item, dict)]
+        normalized_plan = self._normalize_generated_plan(generated_plan)
         materialized = self._record_dag_proposal_decision(
             swarm=materialized,
             source="model_dag_proposal",
             proposal_kind=str((proposal or {}).get("kind") or "model_generated_dag"),
             validation_errors=validation_errors,
             metadata={
+                "preview_id": materialized.id + ":" + str(len(materialized.decisions)),
                 "parse_status": "accepted",
+                "proposal": proposal or {},
+                "normalized_plan": normalized_plan,
+                "plan_fingerprint": self._fingerprint_model_dag_plan(normalized_plan),
                 "task_count": len(proposal_tasks),
                 "task_ids": [str(item.get("id") or "") for item in proposal_tasks],
                 "task_types": [str(item.get("task_type") or "") for item in proposal_tasks],
