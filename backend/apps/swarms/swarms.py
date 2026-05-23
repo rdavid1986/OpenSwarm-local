@@ -123,6 +123,12 @@ class ExperimentalDAGProposalPreviewGenerateRequest(BaseModel):
     max_turns: int = 1
 
 
+class ExperimentalDAGProposalPreviewMaterializeRequest(BaseModel):
+    preview_id: str
+    approve: bool = False
+    generated_plan: dict[str, Any] | None = None
+
+
 def _dump(swarm):
     return swarm.model_dump(mode="json")
 
@@ -2172,6 +2178,33 @@ async def experimental_dag_proposal_preview_generate(swarm_id: str, body: Experi
         "errors": response.errors,
         "turns": response.turns,
         "swarm": response.swarm,
+    }
+
+
+@swarms.router.post("/{swarm_id}/experimental/dag-proposal-preview/materialize")
+async def experimental_dag_proposal_preview_materialize(
+    swarm_id: str,
+    body: ExperimentalDAGProposalPreviewMaterializeRequest,
+):
+    try:
+        swarm, validation_errors = swarm_orchestrator.materialize_model_dag_proposal_preview(
+            swarm_id=swarm_id,
+            preview_id=body.preview_id,
+            generated_plan=body.generated_plan,
+            approve=body.approve,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    last_decision = swarm.decisions[-1] if swarm.decisions else None
+    return {
+        "ok": not validation_errors,
+        "status": "accepted" if not validation_errors else "rejected",
+        "validation_errors": validation_errors,
+        "decision": last_decision,
+        "swarm": _dump(swarm),
     }
 
 

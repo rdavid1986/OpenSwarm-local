@@ -486,3 +486,157 @@ def test_dag_proposal_preview_generate_endpoint_uses_service(monkeypatch, tmp_pa
     assert stored.tasks == []
     assert stored.contracts == []
     assert stored.decisions[-1]["status"] == "accepted"
+
+
+def _create_preview_for_materialize_endpoint(client, swarm_id):
+    preview = client.post(
+        f"/api/swarms/{swarm_id}/experimental/dag-proposal-preview",
+        json={
+            "final_message": {
+                "content": """
+                {
+                  "kind": "model_generated_dag",
+                  "tasks": [
+                    {
+                      "id": "architecture",
+                      "task_type": "architecture_plan_execute",
+                      "role": "ArchitectAgent",
+                      "title": "Architecture",
+                      "objective": "Plan architecture."
+                    },
+                    {
+                      "id": "create_readme",
+                      "task_type": "create_readme",
+                      "role": "DocumentationAgent",
+                      "title": "Create README",
+                      "objective": "Create README.",
+                      "depends_on": ["architecture"]
+                    },
+                    {
+                      "id": "consolidate",
+                      "task_type": "consolidate_final",
+                      "role": "CoordinatorAgent",
+                      "title": "Consolidate",
+                      "objective": "Consolidate final proposal.",
+                      "depends_on": ["create_readme"]
+                    }
+                  ]
+                }
+                """
+            }
+        },
+    )
+    assert preview.status_code == 200
+    assert preview.json()["status"] == "accepted"
+    return preview.json()["decision"]["metadata"]["preview_id"]
+
+
+def test_dag_proposal_preview_materialize_endpoint_requires_approval(monkeypatch, tmp_path: Path):
+    store = SwarmStore(root=tmp_path / "swarms")
+    orchestrator = SwarmOrchestrator(store=store)
+    monkeypatch.setattr(swarms_module, "swarm_orchestrator", orchestrator)
+
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.include_router(swarms_module.swarms.router, prefix="/api/swarms")
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/swarms/create",
+        json={"user_prompt": "Crear app", "dashboard_id": "dash-materialize", "intent": "chat"},
+    )
+    assert created.status_code == 200
+    swarm_id = created.json()["id"]
+    preview_id = _create_preview_for_materialize_endpoint(client, swarm_id)
+
+    response = client.post(
+        f"/api/swarms/{swarm_id}/experimental/dag-proposal-preview/materialize",
+        json={"preview_id": preview_id, "approve": False},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["status"] == "rejected"
+    assert body["validation_errors"][0]["error"] == "approval_required"
+    assert store.load(swarm_id).tasks == []
+
+
+def test_dag_proposal_preview_materialize_endpoint_persists_tasks(monkeypatch, tmp_path: Path):
+    store = SwarmStore(root=tmp_path / "swarms")
+    orchestrator = SwarmOrchestrator(store=store)
+    monkeypatch.setattr(swarms_module, "swarm_orchestrator", orchestrator)
+
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.include_router(swarms_module.swarms.router, prefix="/api/swarms")
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/swarms/create",
+        json={"user_prompt": "Crear app", "dashboard_id": "dash-materialize", "intent": "chat"},
+    )
+    assert created.status_code == 200
+    swarm_id = created.json()["id"]
+    preview_id = _create_preview_for_materialize_endpoint(client, swarm_id)
+
+    response = client.post(
+        f"/api/swarms/{swarm_id}/experimental/dag-proposal-preview/materialize",
+        json={
+            "preview_id": preview_id,
+            "approve": True,
+            "generated_plan": {
+                "summary": "Plan generated from project intake.",
+                "frontend": "not specified",
+                "backend": "not specified",
+                "database": "not specified",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["status"] == "accepted"
+    assert body["decision"]["kind"] == "dag_proposal_materialization"
+
+    stored = store.load(swarm_id)
+    assert stored.intent == "task"
+    assert stored.tasks
+    assert stored.contracts
+    assert stored.coordinator_contract_id
+    assert stored.tool_history == []
+    assert stored.final_result is None
+    assert stored.messages[-1].payload["message"] == "model_dag_proposal_materialized"
+
+
+def test_dag_proposal_preview_materialize_endpoint_rejects_missing_preview(monkeypatch, tmp_path: Path):
+    store = SwarmStore(root=tmp_path / "swarms")
+    orchestrator = SwarmOrchestrator(store=store)
+    monkeypatch.setattr(swarms_module, "swarm_orchestrator", orchestrator)
+
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.include_router(swarms_module.swarms.router, prefix="/api/swarms")
+    client = TestClient(app)
+
+    created = client.post(
+        "/api/swarms/create",
+        json={"user_prompt": "Crear app", "dashboard_id": "dash-materialize", "intent": "chat"},
+    )
+    assert created.status_code == 200
+    swarm_id = created.json()["id"]
+
+    response = client.post(
+        f"/api/swarms/{swarm_id}/experimental/dag-proposal-preview/materialize",
+        json={"preview_id": "missing", "approve": True},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["validation_errors"][0]["error"] == "preview_not_found"
+    assert store.load(swarm_id).tasks == []
