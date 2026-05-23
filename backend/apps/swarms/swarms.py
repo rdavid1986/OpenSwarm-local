@@ -2133,6 +2133,18 @@ async def experimental_start_implementation(swarm_id: str, body: ExperimentalDAG
             "created_at": _project_intake_now(),
         })
         swarm_orchestrator.store.save(swarm)
+
+        proposal_swarm, proposal_errors = swarm_orchestrator._build_validated_template_dag_state(
+            base_swarm=swarm,
+            template=dag_template,
+            generated_plan=generated_plan,
+        )
+        swarm = swarm_orchestrator.store.load(swarm_id)
+        swarm.decisions = proposal_swarm.decisions
+        swarm_orchestrator.store.save(swarm)
+        if proposal_errors:
+            raise ValueError(f"Template DAG proposal validation failed: {proposal_errors}")
+
         if dag_template == "static_app":
             swarm_orchestrator.ensure_static_app_dag(swarm_id=swarm_id, generated_plan=generated_plan)
         else:
