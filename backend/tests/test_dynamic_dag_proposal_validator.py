@@ -363,3 +363,92 @@ def test_parse_model_dag_proposal_accepts_wrapped_dag_proposal():
 
     assert error is None
     assert proposal["kind"] == "model_generated_dag"
+
+
+def test_validated_model_dag_proposal_accepts_valid_model_output_without_mutating_base():
+    orchestrator = SwarmOrchestrator()
+    base = SwarmState(title="Test", user_prompt="Test")
+    output = {
+        "content": """
+        {
+          "kind": "model_generated_dag",
+          "tasks": [
+            {
+              "id": "architecture",
+              "task_type": "architecture_plan_execute",
+              "role": "ArchitectAgent",
+              "title": "Execute architecture plan",
+              "objective": "Plan architecture."
+            },
+            {
+              "id": "create_readme",
+              "task_type": "create_readme",
+              "role": "DocumentationAgent",
+              "title": "Create implementation brief README.md",
+              "objective": "Create README.md.",
+              "depends_on": ["architecture"]
+            }
+          ]
+        }
+        """
+    }
+
+    materialized, errors = orchestrator._build_validated_model_dag_proposal_state(
+        base_swarm=base,
+        final_message=output,
+    )
+
+    assert errors == []
+    assert base.tasks == []
+    assert base.contracts == []
+    assert [task.id for task in materialized.tasks] == ["architecture", "create_readme"]
+    assert materialized.decisions[-1]["source"] == "model_dag_proposal"
+    assert materialized.decisions[-1]["status"] == "accepted"
+    assert materialized.decisions[-1]["metadata"]["parse_status"] == "accepted"
+
+
+def test_validated_model_dag_proposal_rejects_parse_error_without_tasks():
+    orchestrator = SwarmOrchestrator()
+    base = SwarmState(title="Test", user_prompt="Test")
+
+    materialized, errors = orchestrator._build_validated_model_dag_proposal_state(
+        base_swarm=base,
+        final_message="no hay json",
+    )
+
+    assert errors[0]["error"] == "model_dag_proposal_response_not_json"
+    assert materialized.tasks == []
+    assert materialized.contracts == []
+    assert materialized.decisions[-1]["source"] == "model_dag_proposal"
+    assert materialized.decisions[-1]["status"] == "rejected"
+    assert materialized.decisions[-1]["metadata"]["parse_status"] == "failed"
+
+
+def test_validated_model_dag_proposal_rejects_unknown_dependency():
+    orchestrator = SwarmOrchestrator()
+    base = SwarmState(title="Test", user_prompt="Test")
+    output = {
+        "content": """
+        {
+          "kind": "model_generated_dag",
+          "tasks": [
+            {
+              "id": "create_readme",
+              "task_type": "create_readme",
+              "role": "DocumentationAgent",
+              "title": "Create implementation brief README.md",
+              "objective": "Create README.md.",
+              "depends_on": ["missing"]
+            }
+          ]
+        }
+        """
+    }
+
+    materialized, errors = orchestrator._build_validated_model_dag_proposal_state(
+        base_swarm=base,
+        final_message=output,
+    )
+
+    assert any(error["error"] == "unknown_dependency" for error in errors)
+    assert materialized.decisions[-1]["status"] == "rejected"

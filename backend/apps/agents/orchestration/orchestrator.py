@@ -894,6 +894,43 @@ class SwarmOrchestrator:
 
         return data, None
 
+    def _build_validated_model_dag_proposal_state(
+        self,
+        *,
+        base_swarm: SwarmState,
+        final_message: dict | str | None,
+    ) -> tuple[SwarmState, list[dict]]:
+        proposal, parse_error = self._parse_model_dag_proposal(final_message)
+        materialized = base_swarm.model_copy(deep=True)
+
+        if parse_error:
+            materialized = self._record_dag_proposal_decision(
+                swarm=materialized,
+                source="model_dag_proposal",
+                proposal_kind="model_generated_dag",
+                validation_errors=[parse_error],
+                metadata={"parse_status": "failed"},
+            )
+            return materialized, [parse_error]
+
+        materialized = self._materialize_dag_proposal_state(base_swarm=materialized, proposal=proposal or {})
+        validation_errors = self._validate_dag_proposal_state(materialized)
+        proposal_tasks = [item for item in ((proposal or {}).get("tasks") or []) if isinstance(item, dict)]
+        materialized = self._record_dag_proposal_decision(
+            swarm=materialized,
+            source="model_dag_proposal",
+            proposal_kind=str((proposal or {}).get("kind") or "model_generated_dag"),
+            validation_errors=validation_errors,
+            metadata={
+                "parse_status": "accepted",
+                "task_count": len(proposal_tasks),
+                "task_ids": [str(item.get("id") or "") for item in proposal_tasks],
+                "task_types": [str(item.get("task_type") or "") for item in proposal_tasks],
+                "roles": [str(item.get("role") or "") for item in proposal_tasks],
+            },
+        )
+        return materialized, validation_errors
+
     def _build_template_dag_proposal(self, *, template: str, generated_plan: dict | None = None) -> dict:
         plan = self._normalize_generated_plan(generated_plan)
         plan_summary = plan["summary"]
