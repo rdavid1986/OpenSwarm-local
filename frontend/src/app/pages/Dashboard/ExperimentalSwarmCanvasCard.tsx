@@ -1183,7 +1183,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         <Button
                           size="small"
                           variant="contained"
-                          disabled={!projectIntake.action.enabled || swarmState.actionLoading || isImplementationActionRunning || !activeSwarmId}
+                          disabled={swarmState.actionLoading || isImplementationActionRunning || !activeSwarmId}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleStartImplementation();

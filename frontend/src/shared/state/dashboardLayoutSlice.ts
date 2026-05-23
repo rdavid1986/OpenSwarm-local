@@ -421,16 +421,21 @@ const dashboardLayoutSlice = createSlice({
 
     addSwarmCard(state, action: PayloadAction<{
       expandedSessionIds?: string[];
+      swarmCardId?: string;
       swarmId?: string | null;
       swarmMode?: SwarmMode;
       swarmModel?: string | null;
+      x?: number;
+      y?: number;
     } | undefined>) {
-      const id = 'swarm-main';
+      const id = action.payload?.swarmCardId || 'swarm-main';
       if (state.swarmCards[id]) {
         state.swarmCards[id].hidden = false;
         state.swarmCards[id].swarm_id = action.payload?.swarmId ?? state.swarmCards[id].swarm_id ?? null;
         state.swarmCards[id].swarm_mode = action.payload?.swarmMode ?? state.swarmCards[id].swarm_mode ?? 'ask';
         state.swarmCards[id].swarm_model = action.payload?.swarmModel ?? state.swarmCards[id].swarm_model ?? null;
+        if (typeof action.payload?.x === 'number') state.swarmCards[id].x = action.payload.x;
+        if (typeof action.payload?.y === 'number') state.swarmCards[id].y = action.payload.y;
         state.swarmCards[id].zOrder = state.nextZOrder++;
         return;
       }
@@ -441,8 +446,8 @@ const dashboardLayoutSlice = createSlice({
         swarm_id: action.payload?.swarmId ?? null,
         swarm_mode: action.payload?.swarmMode ?? 'ask',
         swarm_model: action.payload?.swarmModel ?? null,
-        x: pos.x,
-        y: pos.y,
+        x: typeof action.payload?.x === 'number' ? action.payload.x : pos.x,
+        y: typeof action.payload?.y === 'number' ? action.payload.y : pos.y,
         width: DEFAULT_SWARM_CARD_W,
         height: DEFAULT_SWARM_CARD_H,
         zOrder: state.nextZOrder++,
