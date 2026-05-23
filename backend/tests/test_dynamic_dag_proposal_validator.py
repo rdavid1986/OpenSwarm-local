@@ -749,3 +749,85 @@ def test_materialize_dag_proposal_uses_registry_title_instead_of_model_title():
         get_experimental_task_spec("frontend_plan_execute").title,
     ]
     assert orchestrator._validate_dag_proposal_state(materialized) == []
+
+
+def test_model_dag_semantic_policy_rejects_static_app_for_backend_database_plan():
+    orchestrator = SwarmOrchestrator()
+    base = SwarmState(title="Test", user_prompt="Test")
+    output = {
+        "content": """
+        {
+          "kind": "model_generated_dag",
+          "tasks": [
+            {
+              "id": "architecture",
+              "task_type": "architecture_plan_execute",
+              "role": "ArchitectAgent",
+              "title": "Architecture",
+              "objective": "Plan architecture."
+            },
+            {
+              "id": "create_static",
+              "task_type": "create_static_app",
+              "role": "FrontendAgent",
+              "title": "Create Static App",
+              "objective": "Create static app.",
+              "depends_on": ["architecture"]
+            }
+          ]
+        }
+        """
+    }
+
+    materialized, errors = orchestrator._build_validated_model_dag_proposal_state(
+        base_swarm=base,
+        final_message=output,
+        generated_plan={
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        },
+    )
+
+    assert any(error["error"] == "semantically_incompatible_task_type" for error in errors)
+    assert materialized.decisions[-1]["status"] == "rejected"
+
+
+def test_model_dag_semantic_policy_allows_static_app_for_static_plan():
+    orchestrator = SwarmOrchestrator()
+    base = SwarmState(title="Test", user_prompt="Test")
+    output = {
+        "content": """
+        {
+          "kind": "model_generated_dag",
+          "tasks": [
+            {
+              "id": "architecture",
+              "task_type": "architecture_plan_execute",
+              "role": "ArchitectAgent",
+              "title": "Architecture",
+              "objective": "Plan architecture."
+            },
+            {
+              "id": "create_static",
+              "task_type": "create_static_app",
+              "role": "FrontendAgent",
+              "title": "Create Static App",
+              "objective": "Create static app.",
+              "depends_on": ["architecture"]
+            }
+          ]
+        }
+        """
+    }
+
+    materialized, errors = orchestrator._build_validated_model_dag_proposal_state(
+        base_swarm=base,
+        final_message=output,
+        generated_plan={
+            "backend": "no backend",
+            "database": "no database",
+        },
+    )
+
+    assert errors == []
+    assert materialized.decisions[-1]["status"] == "accepted"

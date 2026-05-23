@@ -68,6 +68,7 @@ class ModelDAGProposalPreviewService:
             saved, validation_errors = self.orchestrator.record_model_dag_proposal_preview(
                 swarm_id=swarm_id,
                 final_message={"content": ""},
+                generated_plan=request.generated_plan,
             )
             error = {"error": "provider_unavailable", "detail": health}
             saved.decisions[-1]["validation_errors"] = [error]
@@ -125,6 +126,7 @@ class ModelDAGProposalPreviewService:
             saved, validation_errors = self.orchestrator.record_model_dag_proposal_preview(
                 swarm_id=swarm_id,
                 final_message=final_message,
+                generated_plan=request.generated_plan,
             )
             error = {
                 "error": "model_failed",
@@ -149,6 +151,7 @@ class ModelDAGProposalPreviewService:
         saved, validation_errors = self.orchestrator.record_model_dag_proposal_preview(
             swarm_id=swarm_id,
             final_message=runtime_result.final_message,
+            generated_plan=request.generated_plan,
         )
         status = "accepted" if not validation_errors else "rejected"
         return ModelDAGProposalPreviewResponse(

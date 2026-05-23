@@ -938,11 +938,47 @@ class SwarmOrchestrator:
 
         return data, None
 
+    def _validate_model_dag_semantic_policy(
+        self,
+        *,
+        proposal: dict,
+        generated_plan: dict | None = None,
+    ) -> list[dict]:
+        plan = self._normalize_generated_plan(generated_plan)
+        backend = plan.get("backend", "").lower()
+        database = plan.get("database", "").lower()
+        task_types = [
+            str(item.get("task_type") or "")
+            for item in (proposal.get("tasks") or [])
+            if isinstance(item, dict)
+        ]
+
+        no_backend_signals = {"", "none", "no backend", "sin backend", "static", "backend not defined"}
+        no_database_signals = {"", "none", "no database", "sin database", "static", "database not defined"}
+
+        has_real_backend = backend not in no_backend_signals
+        has_real_database = database not in no_database_signals
+
+        errors: list[dict] = []
+        if (has_real_backend or has_real_database) and "create_static_app" in task_types:
+            errors.append(
+                {
+                    "error": "semantically_incompatible_task_type",
+                    "task_type": "create_static_app",
+                    "reason": "Model proposed static app creation for a plan with backend or database requirements.",
+                    "backend": plan.get("backend"),
+                    "database": plan.get("database"),
+                }
+            )
+
+        return errors
+
     def _build_validated_model_dag_proposal_state(
         self,
         *,
         base_swarm: SwarmState,
         final_message: dict | str | None,
+        generated_plan: dict | None = None,
     ) -> tuple[SwarmState, list[dict]]:
         proposal, parse_error = self._parse_model_dag_proposal(final_message)
         materialized = base_swarm.model_copy(deep=True)
@@ -958,7 +994,10 @@ class SwarmOrchestrator:
             return materialized, [parse_error]
 
         materialized = self._materialize_dag_proposal_state(base_swarm=materialized, proposal=proposal or {})
-        validation_errors = self._validate_dag_proposal_state(materialized)
+        validation_errors = [
+            *self._validate_dag_proposal_state(materialized),
+            *self._validate_model_dag_semantic_policy(proposal=proposal or {}, generated_plan=generated_plan),
+        ]
         proposal_tasks = [item for item in ((proposal or {}).get("tasks") or []) if isinstance(item, dict)]
         materialized = self._record_dag_proposal_decision(
             swarm=materialized,
@@ -980,11 +1019,13 @@ class SwarmOrchestrator:
         *,
         swarm_id: str,
         final_message: dict | str | None,
+        generated_plan: dict | None = None,
     ) -> tuple[SwarmState, list[dict]]:
         swarm = self.store.load(swarm_id)
         materialized, validation_errors = self._build_validated_model_dag_proposal_state(
             base_swarm=swarm,
             final_message=final_message,
+            generated_plan=generated_plan,
         )
 
         # Persist only proposal decisions. Do not persist model-generated tasks/contracts yet.

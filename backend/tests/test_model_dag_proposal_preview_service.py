@@ -179,3 +179,49 @@ def test_model_dag_preview_service_handles_model_failed(tmp_path):
     assert stored.decisions[-1]["status"] == "rejected"
     assert runtime.last_context.swarm_id is None
     assert runtime.last_context.store is None
+
+
+def test_model_dag_preview_service_rejects_semantically_incompatible_static_app(tmp_path):
+    import asyncio
+
+    result = MiniAgentRuntimeResult(
+        status="completed",
+        task_id="tmp-task",
+        agent_contract_id="tmp-agent",
+        final_message={
+            "content": """
+            {
+              "kind": "model_generated_dag",
+              "tasks": [
+                {
+                  "id": "architecture",
+                  "task_type": "architecture_plan_execute",
+                  "role": "ArchitectAgent",
+                  "title": "Architecture",
+                  "objective": "Plan architecture."
+                },
+                {
+                  "id": "create_static",
+                  "task_type": "create_static_app",
+                  "role": "FrontendAgent",
+                  "title": "Create Static App",
+                  "objective": "Create static app.",
+                  "depends_on": ["architecture"]
+                }
+              ]
+            }
+            """
+        },
+        turns=1,
+    )
+    service, orchestrator, runtime, swarm = _service(tmp_path, runtime_result=result)
+
+    response = asyncio.run(_run(service, swarm.id))
+    stored = orchestrator.store.load(swarm.id)
+
+    assert response.ok is False
+    assert response.status == "rejected"
+    assert any(error["error"] == "semantically_incompatible_task_type" for error in response.validation_errors)
+    assert stored.tasks == []
+    assert stored.contracts == []
+    assert stored.decisions[-1]["status"] == "rejected"
