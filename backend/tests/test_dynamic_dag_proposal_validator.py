@@ -862,3 +862,39 @@ def test_model_dag_prompt_allows_static_app_for_static_plan():
     allowed_segment = prompt.split("Use only these task_type values:", 1)[1].split("Use only these role values:", 1)[0]
     assert "create_static_app" in allowed_segment
     assert "review_static_app" in allowed_segment
+
+
+def test_model_dag_prompt_separates_planning_from_implementation_language():
+    orchestrator = SwarmOrchestrator()
+    prompt = orchestrator._build_model_dag_proposal_prompt(
+        generated_plan={
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        }
+    )
+
+    assert "Planning task types" in prompt
+    assert "must describe planning, design, scope, constraints, handoff, and risks only" in prompt
+    assert "Do not use implementation language" in prompt
+    assert "do not pretend the app is implemented" in prompt
+    assert "use backend_plan_execute only to plan schema/data model/API integration" in prompt
+    assert "validation_execute must validate available artifacts or plans only" in prompt
+
+
+def test_model_dag_prompt_separates_planning_from_implementation_language():
+    orchestrator = SwarmOrchestrator()
+    prompt = orchestrator._build_model_dag_proposal_prompt(
+        generated_plan={
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        }
+    )
+
+    assert "Planning task types" in prompt
+    assert "must describe planning, design, scope, constraints, handoff, and risks only" in prompt
+    assert "Do not use implementation language" in prompt
+    assert "do not pretend the app is implemented" in prompt
+    assert "use backend_plan_execute only to plan schema/data model/API integration" in prompt
+    assert "validation_execute must validate available artifacts or plans only" in prompt
