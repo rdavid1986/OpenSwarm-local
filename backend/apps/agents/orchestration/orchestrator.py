@@ -931,6 +931,22 @@ class SwarmOrchestrator:
         )
         return materialized, validation_errors
 
+    def record_model_dag_proposal_preview(
+        self,
+        *,
+        swarm_id: str,
+        final_message: dict | str | None,
+    ) -> tuple[SwarmState, list[dict]]:
+        swarm = self.store.load(swarm_id)
+        materialized, validation_errors = self._build_validated_model_dag_proposal_state(
+            base_swarm=swarm,
+            final_message=final_message,
+        )
+
+        # Persist only proposal decisions. Do not persist model-generated tasks/contracts yet.
+        swarm.decisions = materialized.decisions
+        return self.store.save(swarm), validation_errors
+
     def _build_template_dag_proposal(self, *, template: str, generated_plan: dict | None = None) -> dict:
         plan = self._normalize_generated_plan(generated_plan)
         plan_summary = plan["summary"]

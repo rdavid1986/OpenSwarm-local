@@ -452,3 +452,71 @@ def test_validated_model_dag_proposal_rejects_unknown_dependency():
 
     assert any(error["error"] == "unknown_dependency" for error in errors)
     assert materialized.decisions[-1]["status"] == "rejected"
+
+
+def test_record_model_dag_proposal_preview_persists_only_decisions(tmp_path):
+    orchestrator = SwarmOrchestrator()
+    orchestrator.store.root = tmp_path
+
+    swarm = orchestrator.create_swarm(
+        user_prompt="crear app desde propuesta modelo",
+        dashboard_id="dashboard-test",
+        intent="chat",
+    )
+
+    saved, errors = orchestrator.record_model_dag_proposal_preview(
+        swarm_id=swarm.id,
+        final_message={
+            "content": """
+            {
+              "kind": "model_generated_dag",
+              "tasks": [
+                {
+                  "id": "architecture",
+                  "task_type": "architecture_plan_execute",
+                  "role": "ArchitectAgent",
+                  "title": "Execute architecture plan",
+                  "objective": "Plan architecture."
+                },
+                {
+                  "id": "create_readme",
+                  "task_type": "create_readme",
+                  "role": "DocumentationAgent",
+                  "title": "Create implementation brief README.md",
+                  "objective": "Create README.md.",
+                  "depends_on": ["architecture"]
+                }
+              ]
+            }
+            """
+        },
+    )
+
+    assert errors == []
+    assert saved.tasks == []
+    assert saved.contracts == []
+    assert saved.decisions[-1]["kind"] == "dag_proposal_validation"
+    assert saved.decisions[-1]["source"] == "model_dag_proposal"
+    assert saved.decisions[-1]["status"] == "accepted"
+
+
+def test_record_model_dag_proposal_preview_persists_rejection_without_tasks(tmp_path):
+    orchestrator = SwarmOrchestrator()
+    orchestrator.store.root = tmp_path
+
+    swarm = orchestrator.create_swarm(
+        user_prompt="crear app desde propuesta inválida",
+        dashboard_id="dashboard-test",
+        intent="chat",
+    )
+
+    saved, errors = orchestrator.record_model_dag_proposal_preview(
+        swarm_id=swarm.id,
+        final_message="no hay json",
+    )
+
+    assert errors[0]["error"] == "model_dag_proposal_response_not_json"
+    assert saved.tasks == []
+    assert saved.contracts == []
+    assert saved.decisions[-1]["status"] == "rejected"
+    assert saved.decisions[-1]["metadata"]["parse_status"] == "failed"
