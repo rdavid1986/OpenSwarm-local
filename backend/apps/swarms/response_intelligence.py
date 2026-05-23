@@ -380,3 +380,57 @@ def build_response_context(
         lines.append("none")
 
     return "\n".join(line for line in lines if line is not None)
+
+
+def build_ri_result(
+    swarm: Any,
+    *,
+    route: str,
+    user_message: str,
+    swarm_mode: str | None = None,
+    source: str = "local",
+    response_source: str = "local",
+    requires_provider: bool = False,
+    assistant_content: str | None = None,
+    payload: dict[str, Any] | None = None,
+    answer_guard_applied: bool = False,
+    answer_guard_reason: str | None = None,
+) -> RIResult:
+    """Create a structured chat-routing result without changing behavior.
+
+    RI-1.D uses this as a boundary object so later phases can move routing out
+    of swarms.py incrementally.
+    """
+
+    payload = dict(_as_dict(payload))
+    if swarm_mode:
+        payload.setdefault("swarm_mode", swarm_mode)
+    payload.setdefault("route", route)
+
+    state = build_ri_state_snapshot(
+        swarm,
+        route=route,
+        user_message=user_message,
+        payload=payload,
+    )
+    payload.update(snapshot_payload(state))
+
+    context = build_response_context(
+        swarm,
+        route=route,
+        user_message=user_message,
+        payload=payload,
+    )
+
+    return RIResult(
+        route=route,
+        source=source,
+        response_source=response_source,
+        requires_provider=requires_provider,
+        assistant_content=assistant_content,
+        payload=payload,
+        context=context,
+        answer_guard_applied=answer_guard_applied,
+        answer_guard_reason=answer_guard_reason,
+        state=state,
+    )
