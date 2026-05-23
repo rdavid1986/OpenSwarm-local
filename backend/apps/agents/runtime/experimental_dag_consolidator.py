@@ -102,6 +102,7 @@ class ExperimentalDAGConsolidator:
             "status": "completed",
             "summary": summary,
             "artifact_kind": artifact_kind,
+            "implementation_performed": artifact_kind == "static_app",
             "artifact_refs": [item.get("id") for item in artifacts if item.get("id")],
             "created_files": expected_artifact_paths,
             "architecture_plan_result": {
