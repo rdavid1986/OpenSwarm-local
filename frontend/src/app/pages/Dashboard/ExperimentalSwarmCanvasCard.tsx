@@ -406,6 +406,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const promptInputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const [lastSubmittedPrompt, setLastSubmittedPrompt] = useState('');
   const [isStartingImplementation, setIsStartingImplementation] = useState(false);
+  const [lastOutputBridgeOutputId, setLastOutputBridgeOutputId] = useState<string | null>(null);
   const [openPanelSections, setOpenPanelSections] = useState<Record<string, boolean>>({
     tasks: false,
     approvals: false,
@@ -518,9 +519,20 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     ))
     : null;
   const outputBridgeOutputId = outputBridgeDecision?.metadata?.output_id || null;
+  const refinementOutputId = finalResult && typeof finalResult === 'object'
+    ? ((finalResult as any).refinement_request?.output_id || null)
+    : null;
+  const stableOutputBridgeOutputId = outputBridgeOutputId || lastOutputBridgeOutputId || refinementOutputId || null;
+
+  useEffect(() => {
+    if (outputBridgeOutputId) {
+      setLastOutputBridgeOutputId(outputBridgeOutputId);
+    }
+  }, [outputBridgeOutputId]);
+
   const canCreateOutputBridge = Boolean(
     activeSwarmId
-    && !outputBridgeOutputId
+    && !stableOutputBridgeOutputId
     && finalResult
     && typeof finalResult === 'object'
     && (finalResult as any).artifact_kind === 'static_app'
@@ -684,11 +696,16 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     }
   }, [activeSwarm, activeSwarmId, dispatch, onAddPreviewCard]);
 
-  const handleAddOutputBridgePreview = useCallback(async () => {
-    if (!outputBridgeOutputId) return;
-    await dispatch(fetchOutputs());
-    onAddPreviewCard?.(outputBridgeOutputId);
-  }, [dispatch, onAddPreviewCard, outputBridgeOutputId]);
+  const handleOpenOutputPreview = useCallback(async () => {
+    if (stableOutputBridgeOutputId) {
+      await dispatch(fetchOutputs());
+      onAddPreviewCard?.(stableOutputBridgeOutputId);
+      return;
+    }
+    if (canCreateOutputBridge) {
+      await handleCreateOutputBridge();
+    }
+  }, [canCreateOutputBridge, dispatch, handleCreateOutputBridge, onAddPreviewCard, stableOutputBridgeOutputId]);
 
   const handleProjectIntakeOption = useCallback(async (option: any) => {
     const label = renderText(option?.label ?? option?.value, '').trim();
@@ -1034,13 +1051,13 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             {activeSwarmModel || 'No model selected'}
           </Typography>
         </Box>
-        {outputBridgeOutputId && (
+        {(stableOutputBridgeOutputId || canCreateOutputBridge) && (
           <Button
             size="small"
             variant="outlined"
             onClick={(e) => {
               e.stopPropagation();
-              handleAddOutputBridgePreview();
+              handleOpenOutputPreview();
             }}
             onPointerDown={(e) => e.stopPropagation()}
             sx={{
@@ -1160,6 +1177,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                     sx={{
                       alignSelf: isUser ? 'flex-end' : 'stretch',
                       maxWidth: isUser ? '78%' : '100%',
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      mr: '15px',
                       bgcolor: 'transparent',
                       color: c.text.primary,
                       border: 'none',
@@ -1178,6 +1198,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         fontSize: '0.88rem',
                         lineHeight: 1.55,
                         whiteSpace: 'pre-wrap',
+                        overflowWrap: 'break-word',
+                        wordBreak: 'normal',
+                        maxWidth: '100%',
                       }}
                     >
                       {isLatestChatMessage ? renderAnimatedText(body) : body}

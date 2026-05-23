@@ -230,6 +230,9 @@ def _classify_chat_question(user_message: str) -> str:
         "empezá a construir",
     )
 
+    if _looks_like_output_refinement_request(user_message):
+        return "refinement_request"
+
     if any(phrase in normalized for phrase in implementation_phrases):
         return "implementation_request"
 
@@ -494,6 +497,108 @@ def _classify_chat_question(user_message: str) -> str:
         return "app_capability"
 
     return "normal_chat"
+
+
+def _looks_like_output_refinement_request(user_message: str) -> bool:
+    normalized = (user_message or "").lower()
+    return (
+        "output id:" in normalized
+        and "source swarm:" in normalized
+        and "cambio solicitado:" in normalized
+    )
+
+
+def _extract_output_refinement_request(user_message: str) -> dict[str, Any]:
+    output_id = ""
+    source_swarm_id = ""
+    requested_change = ""
+    for raw_line in user_message.splitlines():
+        line = raw_line.strip()
+        lower = line.lower()
+        if lower.startswith("output id:"):
+            output_id = line.split(":", 1)[1].strip()
+        elif lower.startswith("source swarm:"):
+            source_swarm_id = line.split(":", 1)[1].strip()
+        elif lower.startswith("cambio solicitado:"):
+            requested_change = line.split(":", 1)[1].strip()
+
+    return {
+        "output_id": output_id,
+        "source_swarm_id": source_swarm_id,
+        "requested_change": requested_change,
+        "status": "received",
+        "next_action": "refinement_pipeline_pending",
+    }
+
+
+def _get_pending_refinement_request(swarm) -> dict[str, Any] | None:
+    final_result = getattr(swarm, "final_result", None)
+    if not isinstance(final_result, dict):
+        return None
+    refinement = final_result.get("refinement_request")
+    if not isinstance(refinement, dict):
+        return None
+    if not refinement.get("output_id"):
+        return None
+    return refinement
+
+
+def _is_refinement_confirmation(user_message: str, swarm) -> bool:
+    if not _get_pending_refinement_request(swarm):
+        return False
+
+    normalized = (user_message or "").strip().lower()
+    confirmation_phrases = {
+        "hazlo",
+        "hacelo",
+        "dale",
+        "aplicalo",
+        "aplícalo",
+        "continua",
+        "continúa",
+        "seguir",
+        "siguiente",
+        "ejecuta",
+        "ejecutá",
+        "implementa",
+        "implementá",
+    }
+    return normalized in confirmation_phrases
+
+
+def _refinement_request_response(user_message: str, swarm=None) -> tuple[str, dict[str, Any]]:
+    if _looks_like_output_refinement_request(user_message):
+        refinement = _extract_output_refinement_request(user_message)
+    else:
+        refinement = dict(_get_pending_refinement_request(swarm) or {})
+        if refinement:
+            refinement["status"] = "confirmed"
+            refinement["next_action"] = "refinement_pipeline_pending"
+
+    requested_change = str(refinement.get("requested_change") or "").strip()
+    status = str(refinement.get("status") or "received")
+
+    if status == "confirmed":
+        assistant_content = (
+            "Confirmado. No voy a reiniciar el intake. "
+            "El refinamiento sigue asociado al Output existente. "
+            "La ejecución real del refinement pipeline todavía está pendiente de implementación."
+        )
+    else:
+        assistant_content = (
+            "Recibí el refinamiento de la Preview. "
+            "No voy a reiniciar el intake. "
+            "Este pedido queda asociado al Output existente y será usado para una iteración controlada."
+        )
+
+    if requested_change:
+        assistant_content += f"\n\nCambio solicitado: {requested_change}"
+
+    payload = {
+        "route": "refinement_request",
+        "refinement_request": refinement,
+    }
+    return assistant_content, payload
 
 
 def _implementation_request_explanation() -> str:
@@ -1516,6 +1621,8 @@ def _save_local_chat_message(swarm, coordinator_id: str, assistant_content: str,
         swarm.final_result["project_intake_action"] = payload["project_intake_action"]
     if "orchestration_canvas_state" in payload:
         swarm.final_result["orchestration_canvas_state"] = payload["orchestration_canvas_state"]
+    if "refinement_request" in payload:
+        swarm.final_result["refinement_request"] = payload["refinement_request"]
 
 
 
@@ -1725,6 +1832,8 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
     )
 
     route = _classify_chat_question(user_message)
+    if swarm_mode == "app_builder" and route == "normal_chat" and _is_refinement_confirmation(user_message, swarm):
+        route = "refinement_request"
     if swarm_mode == "ask" and route == "implementation_request":
         route = "normal_chat"
 
@@ -1746,7 +1855,9 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
         return {**_dump(swarm), "provider_events": []}
 
     project_intake_payload: dict[str, Any] | None = None
-    if swarm_mode == "app_builder" and _is_project_intake_collecting(swarm):
+    if swarm_mode == "app_builder" and route == "refinement_request":
+        assistant_content, project_intake_payload = _refinement_request_response(user_message, swarm)
+    elif swarm_mode == "app_builder" and _is_project_intake_collecting(swarm):
         assistant_content, project_intake_payload = _advance_project_intake(swarm, user_message)
     elif swarm_mode == "app_builder" and route == "implementation_request":
         assistant_content, project_intake_payload = _start_project_intake(swarm, user_message)
