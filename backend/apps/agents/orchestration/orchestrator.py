@@ -1101,12 +1101,19 @@ class SwarmOrchestrator:
         proposal = self._build_template_dag_proposal(template=template, generated_plan=generated_plan)
         materialized = self._materialize_dag_proposal_state(base_swarm=base_swarm, proposal=proposal)
         validation_errors = self._validate_dag_proposal_state(materialized)
+        proposal_tasks = [item for item in (proposal.get("tasks") or []) if isinstance(item, dict)]
         materialized = self._record_dag_proposal_decision(
             swarm=materialized,
             source="template_pipeline",
             proposal_kind=str(proposal.get("kind") or "template_dag_proposal"),
             validation_errors=validation_errors,
-            metadata={"template": template},
+            metadata={
+                "template": template,
+                "task_count": len(proposal_tasks),
+                "task_ids": [str(item.get("id") or "") for item in proposal_tasks],
+                "task_types": [str(item.get("task_type") or "") for item in proposal_tasks],
+                "roles": [str(item.get("role") or "") for item in proposal_tasks],
+            },
         )
         return materialized, validation_errors
 
