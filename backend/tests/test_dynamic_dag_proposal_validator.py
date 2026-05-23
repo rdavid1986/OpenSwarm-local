@@ -520,3 +520,63 @@ def test_record_model_dag_proposal_preview_persists_rejection_without_tasks(tmp_
     assert saved.contracts == []
     assert saved.decisions[-1]["status"] == "rejected"
     assert saved.decisions[-1]["metadata"]["parse_status"] == "failed"
+
+
+def test_build_model_dag_proposal_prompt_contains_guardrails_and_plan_context():
+    orchestrator = SwarmOrchestrator()
+    prompt = orchestrator._build_model_dag_proposal_prompt(
+        generated_plan={
+            "summary": "Plan de prueba",
+            "app_type": "web app",
+            "main_goal": "crear dashboard",
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+            "mvp_priority": "login y dashboard",
+            "out_of_scope": "pagos",
+            "visual_style": "clean UI",
+        }
+    )
+
+    assert "Return JSON only" in prompt
+    assert "model_generated_dag" in prompt
+    assert "architecture_plan_execute" in prompt
+    assert "validation_execute" in prompt
+    assert "CoordinatorAgent" in prompt
+    assert "allowed_tools" in prompt
+    assert "output_contract" in prompt
+    assert "backend derives those from TASK_TYPE_REGISTRY" in prompt
+    assert "React" in prompt
+    assert "FastAPI" in prompt
+    assert "PostgreSQL" in prompt
+    assert "pagos" in prompt
+
+
+def test_build_model_dag_proposal_prompt_contains_guardrails_and_plan_context():
+    orchestrator = SwarmOrchestrator()
+    prompt = orchestrator._build_model_dag_proposal_prompt(
+        generated_plan={
+            "summary": "Plan de prueba",
+            "app_type": "web app",
+            "main_goal": "crear dashboard",
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+            "mvp_priority": "login y dashboard",
+            "out_of_scope": "pagos",
+            "visual_style": "clean UI",
+        }
+    )
+
+    assert "Return JSON only" in prompt
+    assert "model_generated_dag" in prompt
+    assert "architecture_plan_execute" in prompt
+    assert "validation_execute" in prompt
+    assert "CoordinatorAgent" in prompt
+    assert "allowed_tools" in prompt
+    assert "output_contract" in prompt
+    assert "backend derives those from TASK_TYPE_REGISTRY" in prompt
+    assert "React" in prompt
+    assert "FastAPI" in prompt
+    assert "PostgreSQL" in prompt
+    assert "pagos" in prompt

@@ -849,6 +849,50 @@ class SwarmOrchestrator:
 
         return self.store.save(swarm)
 
+    def _build_model_dag_proposal_prompt(self, *, generated_plan: dict | None = None) -> str:
+        plan = self._normalize_generated_plan(generated_plan)
+        allowed_task_types = [
+            "architecture_plan_execute",
+            "frontend_plan_execute",
+            "backend_plan_execute",
+            "security_review_execute",
+            "create_readme",
+            "review_readme",
+            "create_static_app",
+            "review_static_app",
+            "validation_execute",
+            "consolidate_final",
+        ]
+        allowed_roles = [
+            "CoordinatorAgent",
+            "PlannerAgent",
+            "ArchitectAgent",
+            "BackendAgent",
+            "FrontendAgent",
+            "TesterAgent",
+            "ReviewerAgent",
+            "SecurityAgent",
+            "DocumentationAgent",
+        ]
+
+        return (
+            "Create a safe DAG proposal for OpenSwarm. Return JSON only. "
+            "Do not execute tools. Do not create files. Do not include markdown. "
+            "The backend will validate and may reject the proposal. "
+            "You must not include allowed_tools or output_contract; backend derives those from TASK_TYPE_REGISTRY. "
+            "Use only these task_type values: " + ', '.join(allowed_task_types) + ". "
+            "Use only these role values: " + ', '.join(allowed_roles) + ". "
+            "Each task must include id, task_type, role, title, objective, and optional depends_on array of existing task ids. "
+            "Dependencies must form an acyclic graph. "
+            "Use registry-compatible titles when possible. "
+            "Return shape: {\"kind\":\"model_generated_dag\",\"tasks\":[...]} . "
+            f"Project summary: {plan['summary']} "
+            f"App type: {plan['app_type']}. Main goal: {plan['main_goal']}. "
+            f"Frontend: {plan['frontend']}. Backend: {plan['backend']}. Database: {plan['database']}. "
+            f"MVP priority: {plan['mvp_priority']}. Out of scope: {plan['out_of_scope']}. "
+            f"Visual style: {plan['visual_style']}."
+        )
+
     @staticmethod
     def _parse_model_dag_proposal(final_message: dict | str | None) -> tuple[dict | None, dict | None]:
         if isinstance(final_message, dict):
