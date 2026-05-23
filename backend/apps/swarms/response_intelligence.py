@@ -64,9 +64,19 @@ def build_ri_state_snapshot(
     *,
     route: str | None = None,
     user_message: str | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> RIStateSnapshot:
-    final_result = _as_dict(getattr(swarm, "final_result", None))
-    project_intake_state = _as_dict(getattr(swarm, "project_intake_state", None))
+    payload = _as_dict(payload)
+    final_result = dict(_as_dict(getattr(swarm, "final_result", None)))
+    if "refinement_request" in payload:
+        final_result["refinement_request"] = payload["refinement_request"]
+    if "project_intake_state" in payload:
+        final_result["project_intake_state"] = payload["project_intake_state"]
+
+    project_intake_state = dict(_as_dict(getattr(swarm, "project_intake_state", None)))
+    if "project_intake_state" in payload:
+        project_intake_state = _as_dict(payload["project_intake_state"])
+
     refinement_request = _as_dict(final_result.get("refinement_request"))
 
     claim_guard = _as_dict(final_result.get("claim_guard"))

@@ -1875,6 +1875,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
             swarm,
             route=str(project_intake_payload.get("route") or route),
             user_message=user_message,
+            payload=project_intake_payload,
         )))
         _save_local_chat_message(swarm, coordinator_id, assistant_content, project_intake_payload)
         swarm = swarm_orchestrator.store.save(swarm)
