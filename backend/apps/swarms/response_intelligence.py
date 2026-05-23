@@ -221,3 +221,162 @@ def snapshot_payload(snapshot: RIStateSnapshot) -> dict[str, Any]:
             "reason": snapshot.reason,
         }
     }
+
+
+def _safe_preview(value: Any, *, limit: int = 220) -> str:
+    if value is None:
+        return ""
+    text = str(value).replace("\r", " ").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _message_text(message: Any) -> str:
+    payload = _as_dict(getattr(message, "payload", None))
+    content = payload.get("content") or payload.get("message") or payload.get("response") or ""
+    return _safe_preview(content, limit=260)
+
+
+def _message_role(message: Any) -> str:
+    payload = _as_dict(getattr(message, "payload", None))
+    return str(payload.get("role") or getattr(message, "type", "") or "").strip().lower()
+
+
+def _artifact_label(artifact: Any, index: int) -> str:
+    data = _as_dict(artifact)
+    return _first_non_empty(
+        data.get("name"),
+        data.get("title"),
+        data.get("path"),
+        data.get("id"),
+        f"artifact_{index + 1}",
+    ) or f"artifact_{index + 1}"
+
+
+def _evidence_label(evidence: Any, index: int) -> str:
+    if hasattr(evidence, "model_dump"):
+        data = evidence.model_dump(mode="json")
+    else:
+        data = _as_dict(evidence)
+    return _first_non_empty(
+        data.get("id"),
+        data.get("summary"),
+        data.get("kind"),
+        data.get("type"),
+        f"evidence_{index + 1}",
+    ) or f"evidence_{index + 1}"
+
+
+def build_response_context(
+    swarm: Any,
+    *,
+    route: str | None = None,
+    user_message: str | None = None,
+    payload: dict[str, Any] | None = None,
+    max_messages: int = 8,
+    max_items: int = 6,
+) -> str:
+    """Build a compact grounded response context for future model-authored replies.
+
+    This context is not a chain-of-thought. It is an explicit state summary for
+    grounding assistant responses and preventing false action claims.
+    """
+
+    snapshot = build_ri_state_snapshot(
+        swarm,
+        route=route,
+        user_message=user_message,
+        payload=payload,
+    )
+
+    final_result = dict(_as_dict(getattr(swarm, "final_result", None)))
+    payload = _as_dict(payload)
+    if "refinement_request" in payload:
+        final_result["refinement_request"] = payload["refinement_request"]
+    if "project_intake_state" in payload:
+        final_result["project_intake_state"] = payload["project_intake_state"]
+
+    project_intake_state = dict(_as_dict(getattr(swarm, "project_intake_state", None)))
+    if "project_intake_state" in payload:
+        project_intake_state = _as_dict(payload["project_intake_state"])
+
+    refinement_request = _as_dict(final_result.get("refinement_request"))
+    artifacts = list(getattr(swarm, "artifacts", []) or [])
+    evidence = list(getattr(swarm, "evidence", []) or [])
+    final_evidence = list(getattr(swarm, "final_evidence", []) or [])
+    messages = list(getattr(swarm, "messages", []) or [])
+
+    lines: list[str] = [
+        "[response_context]",
+        "Use this state as grounding. Do not claim actions were executed unless artifacts/evidence/events prove it.",
+        "",
+        "[ri_state]",
+        f"- route: {snapshot.current_route or 'unknown'}",
+        f"- pending_action: {snapshot.pending_action or 'none'}",
+        f"- target_output_id: {snapshot.target_output_id or 'none'}",
+        f"- source_swarm_id: {snapshot.source_swarm_id or 'none'}",
+        f"- project_intake_status: {snapshot.project_intake_status or 'none'}",
+        f"- implementation_status: {snapshot.implementation_status or 'none'}",
+        f"- claim_guard_status: {snapshot.claim_guard_status or 'none'}",
+        f"- available_actions: {', '.join(snapshot.available_actions) if snapshot.available_actions else 'none'}",
+        "",
+        "[current_user_message]",
+        _safe_preview(user_message, limit=500) or "none",
+        "",
+    ]
+
+    if refinement_request:
+        lines.extend([
+            "[refinement_request]",
+            f"- output_id: {_safe_preview(refinement_request.get('output_id')) or 'none'}",
+            f"- source_swarm_id: {_safe_preview(refinement_request.get('source_swarm_id')) or 'none'}",
+            f"- requested_change: {_safe_preview(refinement_request.get('requested_change'), limit=500) or 'none'}",
+            f"- status: {_safe_preview(refinement_request.get('status')) or 'none'}",
+            f"- next_action: {_safe_preview(refinement_request.get('next_action')) or snapshot.pending_action or 'none'}",
+            "",
+        ])
+
+    if project_intake_state:
+        answers = _as_dict(project_intake_state.get("answers"))
+        lines.extend([
+            "[project_intake_state]",
+            f"- status: {_safe_preview(project_intake_state.get('status')) or 'none'}",
+            f"- current_question_id: {_safe_preview(project_intake_state.get('current_question_id')) or 'none'}",
+            f"- answered_count: {len(answers)}",
+            "",
+        ])
+
+    if final_result:
+        lines.extend([
+            "[final_result]",
+            f"- status: {_safe_preview(final_result.get('status')) or 'none'}",
+            f"- route: {_safe_preview(final_result.get('route')) or 'none'}",
+            f"- artifact_kind: {_safe_preview(final_result.get('artifact_kind')) or 'none'}",
+            f"- implementation_performed: {_safe_preview(final_result.get('implementation_performed')) or 'none'}",
+            f"- summary: {_safe_preview(final_result.get('summary'), limit=500) or 'none'}",
+            "",
+        ])
+
+    lines.extend([
+        "[artifacts]",
+        *(f"- {_safe_preview(_artifact_label(item, idx), limit=240)}" for idx, item in enumerate(artifacts[:max_items])),
+        "none" if not artifacts else "",
+        "",
+        "[evidence]",
+        *(f"- {_safe_preview(_evidence_label(item, idx), limit=240)}" for idx, item in enumerate((final_evidence or evidence)[:max_items])),
+        "none" if not (final_evidence or evidence) else "",
+        "",
+        "[recent_messages]",
+    ])
+
+    for message in messages[-max_messages:]:
+        role = _message_role(message) or "unknown"
+        body = _message_text(message)
+        if body:
+            lines.append(f"- {role}: {body}")
+
+    if not messages:
+        lines.append("none")
+
+    return "\n".join(line for line in lines if line is not None)
