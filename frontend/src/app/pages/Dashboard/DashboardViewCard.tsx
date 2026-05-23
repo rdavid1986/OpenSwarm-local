@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
@@ -8,6 +9,8 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import BoltIcon from '@mui/icons-material/Bolt';
 import CloseIcon from '@mui/icons-material/Close';
 import GridViewRoundedIcon from '@mui/icons-material/GridViewRounded';
+import OpenInFullIcon from '@mui/icons-material/OpenInFull';
+import CloseFullscreenIcon from '@mui/icons-material/CloseFullscreen';
 import { Output, autoRunOutput, autoRunAgentOutput, executeOutput, OutputExecuteResult, getBackendCode, SERVE_BASE } from '@/shared/state/outputsSlice';
 import { setViewCardPosition, setViewCardSize, removeViewCard } from '@/shared/state/dashboardLayoutSlice';
 import { useAppDispatch } from '@/shared/hooks';
@@ -22,6 +25,36 @@ const EDGE_THICKNESS = 6;
 const CORNER_SIZE = 14;
 const MIN_W = 320;
 const MIN_H = 200;
+const PREVIEW_HEADER_H = 40;
+const PREVIEW_BODY_PAD = 16;
+const MAX_PRESET_FRAME_W = 960;
+const MAX_PRESET_FRAME_H = 680;
+
+type DevicePresetKey = 'desktop-full-hd' | 'desktop' | 'laptop' | 'tablet' | 'mobile' | 'custom';
+
+type DevicePreset = { label: string; width: number; height: number };
+
+const DEVICE_PRESETS: Record<DevicePresetKey, DevicePreset> = {
+  'desktop-full-hd': { label: 'Desktop Full HD', width: 1920, height: 1080 },
+  desktop: { label: 'Desktop', width: 1440, height: 900 },
+  laptop: { label: 'Laptop', width: 1366, height: 768 },
+  tablet: { label: 'Tablet', width: 768, height: 1024 },
+  mobile: { label: 'Mobile', width: 390, height: 844 },
+  // Apps-3.D can add editable custom dimensions; keep it visible now without persistence.
+  custom: { label: 'Custom', width: 1440, height: 900 },
+};
+
+const getPresetCardSize = (preset: DevicePreset) => {
+  const frameScale = Math.min(
+    1,
+    MAX_PRESET_FRAME_W / preset.width,
+    MAX_PRESET_FRAME_H / preset.height,
+  );
+  return {
+    width: Math.round(preset.width * frameScale + PREVIEW_BODY_PAD * 2),
+    height: Math.round(preset.height * frameScale + PREVIEW_BODY_PAD * 2 + PREVIEW_HEADER_H),
+  };
+};
 
 const CURSOR_MAP: Record<ResizeDir, string> = {
   n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize',
@@ -74,8 +107,13 @@ const DashboardViewCard: React.FC<Props> = ({
   const [inputData, setInputData] = useState<Record<string, any>>(() => getDefault(output.input_schema));
   const [backendResult, setBackendResult] = useState<Record<string, any> | null>(null);
   const [autoRunning, setAutoRunning] = useState(false);
+  const [selectedPreset, setSelectedPreset] = useState<DevicePresetKey>('desktop');
+  const [isMaximized, setIsMaximized] = useState(false);
+  const [bodySize, setBodySize] = useState({ width: 0, height: 0 });
+  const previewBodyRef = useRef<HTMLDivElement>(null);
 
   const hasAutoRun = !!(output.auto_run_config?.enabled && output.auto_run_config?.prompt);
+  const selectedDevice = DEVICE_PRESETS[selectedPreset];
 
   // ---- Drag via header ----
   const DRAG_THRESHOLD = 3;
@@ -91,7 +129,23 @@ const DashboardViewCard: React.FC<Props> = ({
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
 
+  useEffect(() => {
+    const el = previewBodyRef.current;
+    if (!el) return;
+
+    const updateBodySize = () => {
+      const rect = el.getBoundingClientRect();
+      setBodySize({ width: rect.width, height: rect.height });
+    };
+
+    updateBodySize();
+    const observer = new ResizeObserver(updateBodySize);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isMaximized]);
+
   const handleDragPointerDown = useCallback((e: React.PointerEvent) => {
+    if (isMaximized) return;
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
@@ -101,7 +155,7 @@ const DashboardViewCard: React.FC<Props> = ({
     setIsDragging(true);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     onDragStart?.(output.id, 'view');
-  }, [cardX, cardY, onDragStart, output.id]);
+  }, [cardX, cardY, isMaximized, onDragStart, output.id]);
 
   const recomputeDragPos = useCallback(() => {
     const ds = dragState.current;
@@ -173,6 +227,7 @@ const DashboardViewCard: React.FC<Props> = ({
 
   const handleResizeDown = useCallback(
     (dir: ResizeDir) => (e: React.PointerEvent) => {
+      if (isMaximized) return;
       if (e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
@@ -183,7 +238,7 @@ const DashboardViewCard: React.FC<Props> = ({
       setIsResizing(true);
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
     },
-    [cardX, cardY, cardWidth, cardHeight],
+    [cardX, cardY, cardWidth, cardHeight, isMaximized],
   );
 
   const computeResize = useCallback(
@@ -233,6 +288,21 @@ const DashboardViewCard: React.FC<Props> = ({
   const handleRefresh = (e: React.MouseEvent) => {
     e.stopPropagation();
     previewRef.current?.reload();
+  };
+
+  const handlePresetChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    e.stopPropagation();
+    const nextPresetKey = e.target.value as DevicePresetKey;
+    setSelectedPreset(nextPresetKey);
+    if (!isMaximized) {
+      const { width, height } = getPresetCardSize(DEVICE_PRESETS[nextPresetKey]);
+      dispatch(setViewCardSize({ outputId: output.id, width, height }));
+    }
+  };
+
+  const handleMaximizeToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsMaximized((prev) => !prev);
   };
 
   const handleAutoRun = async (e: React.MouseEvent) => {
@@ -290,8 +360,21 @@ const DashboardViewCard: React.FC<Props> = ({
   const displayW = localResize?.w ?? cardWidth;
   const displayH = localResize?.h ?? cardHeight;
   const noTransition = isDragging || isResizing || (isSelected && !!multiDragDelta);
+  const fallbackBodyW = isMaximized ? window.innerWidth - 24 : displayW;
+  const fallbackBodyH = isMaximized ? window.innerHeight - 24 - PREVIEW_HEADER_H : displayH - PREVIEW_HEADER_H;
+  const availableW = Math.max(1, (bodySize.width || fallbackBodyW) - PREVIEW_BODY_PAD * 2);
+  const availableH = Math.max(1, (bodySize.height || fallbackBodyH) - PREVIEW_BODY_PAD * 2);
+  const previewScale = isMaximized
+    ? 1
+    : Math.min(
+      1,
+      availableW / selectedDevice.width,
+      availableH / selectedDevice.height,
+    );
+  const scaledFrameW = selectedDevice.width * previewScale;
+  const scaledFrameH = selectedDevice.height * previewScale;
 
-  return (
+  const card = (
     <Box
       data-select-type="view-card"
       data-select-id={output.id}
@@ -306,13 +389,12 @@ const DashboardViewCard: React.FC<Props> = ({
         onDoubleClick?.(output.id, 'view');
       }}
       sx={{
-        position: 'absolute',
+        position: isMaximized ? 'fixed' : 'absolute',
         // contain: iframe app repaints don't shake the rest of the dashboard.
         contain: 'layout style',
-        left: displayX,
-        top: displayY,
-        width: displayW,
-        height: displayH,
+        ...(isMaximized
+          ? { inset: 12, width: 'auto', height: 'auto' }
+          : { left: displayX, top: displayY, width: displayW, height: displayH }),
         borderRadius: `${c.radius.lg}px`,
         border: isHighlighted
           ? `2px solid ${c.accent.primary}`
@@ -328,7 +410,7 @@ const DashboardViewCard: React.FC<Props> = ({
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
-        zIndex: (isDragging || isResizing) ? 999999 : cardZOrder,
+        zIndex: isMaximized ? 999999 : ((isDragging || isResizing) ? 999999 : cardZOrder),
         transition: noTransition ? 'none' : 'box-shadow 0.2s',
         '&:hover .resize-handle': { opacity: 1 },
         ...(isHighlighted && {
@@ -354,7 +436,7 @@ const DashboardViewCard: React.FC<Props> = ({
       }}
     >
       {/* Selection overlay – blocks click interaction while selected, enabling drag from anywhere */}
-      {isSelected && (
+      {isSelected && !isMaximized && (
         <Box
           ref={scrollOverlayRef}
           onPointerDown={handleDragPointerDown}
@@ -374,52 +456,83 @@ const DashboardViewCard: React.FC<Props> = ({
         />
       )}
 
-      {/* Header */}
+      {/* Browser/devtools header */}
       <Box
         onPointerDown={handleDragPointerDown}
         onPointerMove={handleDragPointerMove}
         onPointerUp={handleDragPointerUp}
         sx={{
           position: 'relative',
-          zIndex: 16,
+          zIndex: 20,
           display: 'flex',
           alignItems: 'center',
           gap: 0.75,
           px: 1.5,
-          py: 0.75,
+          py: 0.5,
           bgcolor: c.bg.secondary,
           borderBottom: `1px solid ${c.border.subtle}`,
-          cursor: isDragging ? 'grabbing' : 'grab',
+          cursor: isMaximized ? 'default' : (isDragging ? 'grabbing' : 'grab'),
           flexShrink: 0,
-          minHeight: 36,
+          minHeight: PREVIEW_HEADER_H,
           userSelect: 'none',
         }}
       >
-        <GridViewRoundedIcon sx={{ fontSize: 16, color: c.accent.primary, flexShrink: 0 }} />
-        <Typography
+        <Box
           sx={{
-            flex: 1,
-            fontSize: '0.8rem',
-            fontWeight: 600,
-            color: c.text.primary,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
+            display: 'flex',
+            alignItems: 'center',
+            minWidth: 0,
+            maxWidth: '35%',
+            gap: 0.75,
           }}
         >
-          {output.name}
-        </Typography>
-
-        <Tooltip title="Reload preview" placement="top">
-          <IconButton
-            size="small"
-            onClick={handleRefresh}
-            onPointerDown={(e) => e.stopPropagation()}
-            sx={{ color: c.text.muted, p: 0.5, '&:hover': { color: c.text.primary } }}
+          <GridViewRoundedIcon sx={{ fontSize: 16, color: c.accent.primary, flexShrink: 0 }} />
+          <Typography
+            sx={{
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              color: c.text.primary,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
           >
-            <RefreshIcon sx={{ fontSize: 16 }} />
-          </IconButton>
-        </Tooltip>
+            {output.name}
+          </Typography>
+        </Box>
+
+        <Box
+          component="select"
+          value={selectedPreset}
+          onChange={handlePresetChange}
+          onClick={(e: React.MouseEvent) => e.stopPropagation()}
+          onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
+          aria-label="Device preset"
+          sx={{
+            position: 'absolute',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            maxWidth: '38%',
+            height: 26,
+            px: 1,
+            borderRadius: `${c.radius.md}px`,
+            border: `1px solid ${c.border.subtle}`,
+            bgcolor: c.bg.surface,
+            color: c.text.secondary,
+            fontSize: '0.72rem',
+            fontFamily: c.font.mono,
+            outline: 'none',
+            cursor: 'pointer',
+          }}
+        >
+          {(Object.keys(DEVICE_PRESETS) as DevicePresetKey[]).map((key) => (
+            <option key={key} value={key}>
+              {DEVICE_PRESETS[key].label} · {DEVICE_PRESETS[key].width}×{DEVICE_PRESETS[key].height}
+            </option>
+          ))}
+        </Box>
+
+        <Box sx={{ flex: 1 }} />
 
         {hasAutoRun && (
           <Tooltip title={autoRunning ? 'Running...' : 'Auto Run'} placement="top">
@@ -437,6 +550,28 @@ const DashboardViewCard: React.FC<Props> = ({
           </Tooltip>
         )}
 
+        <Tooltip title="Reload preview" placement="top">
+          <IconButton
+            size="small"
+            onClick={handleRefresh}
+            onPointerDown={(e) => e.stopPropagation()}
+            sx={{ color: c.text.muted, p: 0.5, '&:hover': { color: c.text.primary } }}
+          >
+            <RefreshIcon sx={{ fontSize: 16 }} />
+          </IconButton>
+        </Tooltip>
+
+        <Tooltip title={isMaximized ? 'Restore preview' : 'Maximize preview'} placement="top">
+          <IconButton
+            size="small"
+            onClick={handleMaximizeToggle}
+            onPointerDown={(e) => e.stopPropagation()}
+            sx={{ color: c.text.muted, p: 0.5, '&:hover': { color: c.text.primary } }}
+          >
+            {isMaximized ? <CloseFullscreenIcon sx={{ fontSize: 16 }} /> : <OpenInFullIcon sx={{ fontSize: 16 }} />}
+          </IconButton>
+        </Tooltip>
+
         <Tooltip title="Remove from dashboard" placement="top">
           <IconButton
             size="small"
@@ -450,21 +585,63 @@ const DashboardViewCard: React.FC<Props> = ({
       </Box>
 
       {/* Preview body */}
-      <Box sx={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+      <Box
+        ref={previewBodyRef}
+        sx={{
+          flex: 1,
+          position: 'relative',
+          overflow: 'auto',
+          bgcolor: c.bg.page,
+          p: `${PREVIEW_BODY_PAD}px`,
+        }}
+      >
         {cmdHeld && !isSelected && (
           <Box sx={{ position: 'absolute', inset: 0, zIndex: 12 }} />
         )}
-        <ViewPreview
-          ref={previewRef}
-          serveUrl={`${SERVE_BASE}/${output.id}/serve/index.html`}
-          frontendCode={output.files?.['index.html'] ?? ''}
-          inputData={inputData}
-          backendResult={backendResult}
-        />
+        <Box
+          sx={{
+            minWidth: '100%',
+            minHeight: '100%',
+            display: 'flex',
+            alignItems: scaledFrameH < availableH ? 'center' : 'flex-start',
+            justifyContent: 'center',
+          }}
+        >
+          <Box
+            sx={{
+              width: scaledFrameW,
+              height: scaledFrameH,
+              flex: '0 0 auto',
+              position: 'relative',
+            }}
+          >
+            <Box
+              sx={{
+                width: selectedDevice.width,
+                height: selectedDevice.height,
+                transform: `scale(${previewScale})`,
+                transformOrigin: 'top left',
+                bgcolor: c.bg.surface,
+                border: `1px solid ${c.border.medium}`,
+                borderRadius: `${c.radius.md}px`,
+                boxShadow: c.shadow.md,
+                overflow: 'hidden',
+              }}
+            >
+              <ViewPreview
+                ref={previewRef}
+                serveUrl={`${SERVE_BASE}/${output.id}/serve/index.html`}
+                frontendCode={output.files?.['index.html'] ?? ''}
+                inputData={inputData}
+                backendResult={backendResult}
+              />
+            </Box>
+          </Box>
+        </Box>
       </Box>
 
       {/* Resize handles */}
-      {HANDLE_DEFS.map(({ dir, sx }) => (
+      {!isMaximized && HANDLE_DEFS.map(({ dir, sx }) => (
         <Box
           key={dir}
           className="resize-handle"
@@ -482,6 +659,8 @@ const DashboardViewCard: React.FC<Props> = ({
       ))}
     </Box>
   );
+
+  return isMaximized ? createPortal(card, document.body) : card;
 };
 
 export default React.memo(DashboardViewCard);

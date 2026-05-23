@@ -2115,6 +2115,9 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
 
   const dotSize = Math.max(1, 1.5 * canvas.zoom);
   const dotSpacing = 24 * canvas.zoom;
+  const dpr = window.devicePixelRatio || 1;
+  const crispPanX = Math.round(canvas.panX * dpr) / dpr;
+  const crispPanY = Math.round(canvas.panY * dpr) / dpr;
 
   const handleRenameDashboard = useCallback((name: string) => {
     if (!dashboardId || !dashboard) return;
@@ -2200,7 +2203,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
             pointerEvents: 'none',
             backgroundImage: `radial-gradient(circle, ${c.border.medium} ${dotSize}px, transparent ${dotSize}px)`,
             backgroundSize: `${dotSpacing}px ${dotSpacing}px`,
-            backgroundPosition: `${canvas.panX % dotSpacing}px ${canvas.panY % dotSpacing}px`,
+            backgroundPosition: `${crispPanX % dotSpacing}px ${crispPanY % dotSpacing}px`,
           }}
         />
 
@@ -2239,9 +2242,9 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
           <div
             ref={canvas.contentRef}
             style={{
-              transform: `translate(${canvas.panX}px, ${canvas.panY}px) scale(${canvas.zoom})`,
+              transform: `translate(${crispPanX}px, ${crispPanY}px) scale(${canvas.zoom})`,
               transformOrigin: '0 0',
-              willChange: 'transform',
+              willChange: canvas.isPanning ? 'transform' : 'auto',
               position: 'relative',
             }}
           >
