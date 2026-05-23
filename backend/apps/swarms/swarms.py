@@ -57,6 +57,7 @@ from backend.apps.agents.runtime.events import event_trace_runtime
 from backend.apps.agents.orchestration.models import AgentToAgentMessage
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.runtime.provider import ProviderTurnContext
+from backend.apps.swarms.response_intelligence import build_ri_state_snapshot, snapshot_payload
 
 
 @asynccontextmanager
@@ -1623,6 +1624,8 @@ def _save_local_chat_message(swarm, coordinator_id: str, assistant_content: str,
         swarm.final_result["orchestration_canvas_state"] = payload["orchestration_canvas_state"]
     if "refinement_request" in payload:
         swarm.final_result["refinement_request"] = payload["refinement_request"]
+    if "ri_state" in payload:
+        swarm.final_result["ri_state"] = payload["ri_state"]
 
 
 
@@ -1844,7 +1847,11 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
             swarm,
             coordinator_id,
             assistant_content,
-            {"route": route, "swarm_mode": swarm_mode},
+            {
+                "route": route,
+                "swarm_mode": swarm_mode,
+                **snapshot_payload(build_ri_state_snapshot(swarm, route=route, user_message=user_message)),
+            },
         )
         swarm = swarm_orchestrator.store.save(swarm)
         event_trace_runtime.create(
@@ -1864,6 +1871,11 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
 
     if project_intake_payload:
         project_intake_payload["swarm_mode"] = swarm_mode
+        project_intake_payload.update(snapshot_payload(build_ri_state_snapshot(
+            swarm,
+            route=str(project_intake_payload.get("route") or route),
+            user_message=user_message,
+        )))
         _save_local_chat_message(swarm, coordinator_id, assistant_content, project_intake_payload)
         swarm = swarm_orchestrator.store.save(swarm)
         event_trace_runtime.create(
@@ -1882,6 +1894,11 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
     controlled_content = _controlled_chat_response(route, user_message, swarm)
     if controlled_content:
         assistant_content = controlled_content
+        ri_payload = snapshot_payload(build_ri_state_snapshot(
+            swarm,
+            route=route,
+            user_message=user_message,
+        ))
         swarm.messages.append(
             AgentToAgentMessage(
                 type="chat_message",
@@ -1895,6 +1912,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
                     "swarm_mode": swarm_mode,
                     "answer_guard_applied": False,
                     "answer_guard_reason": None,
+                    **ri_payload,
                 },
                 requires_response=False,
             )
@@ -1906,6 +1924,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
             "route": route,
             "swarm_mode": swarm_mode,
             "answer_guard_applied": False,
+            **ri_payload,
         }
         swarm = swarm_orchestrator.store.save(swarm)
         event_trace_runtime.create(
