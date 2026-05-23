@@ -1080,3 +1080,167 @@ def test_model_dag_preview_rejected_parse_error_stores_plan_fingerprint(tmp_path
     assert metadata["parse_status"] == "failed"
     assert metadata["normalized_plan"]["backend"] == "FastAPI"
     assert metadata["plan_fingerprint"]
+
+
+def _record_valid_model_preview_for_materialization(orchestrator, swarm_id):
+    saved, errors = orchestrator.record_model_dag_proposal_preview(
+        swarm_id=swarm_id,
+        generated_plan={
+            "summary": "Dashboard simple",
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        },
+        final_message={
+            "content": """
+            {
+              "kind": "model_generated_dag",
+              "tasks": [
+                {
+                  "id": "architecture",
+                  "task_type": "architecture_plan_execute",
+                  "role": "ArchitectAgent",
+                  "title": "Architecture",
+                  "objective": "Plan architecture."
+                },
+                {
+                  "id": "create_readme",
+                  "task_type": "create_readme",
+                  "role": "DocumentationAgent",
+                  "title": "Create README",
+                  "objective": "Create README.",
+                  "depends_on": ["architecture"]
+                },
+                {
+                  "id": "consolidate",
+                  "task_type": "consolidate_final",
+                  "role": "CoordinatorAgent",
+                  "title": "Consolidate",
+                  "objective": "Consolidate final proposal.",
+                  "depends_on": ["create_readme"]
+                }
+              ]
+            }
+            """
+        },
+    )
+    assert errors == []
+    return saved, saved.decisions[-1]["metadata"]["preview_id"]
+
+
+def test_materialize_model_dag_proposal_preview_requires_approval(tmp_path):
+    orchestrator = SwarmOrchestrator()
+    orchestrator.store.root = tmp_path
+    swarm = orchestrator.create_swarm(user_prompt="test", dashboard_id="dash", intent="chat")
+    saved, preview_id = _record_valid_model_preview_for_materialization(orchestrator, swarm.id)
+
+    result, errors = orchestrator.materialize_model_dag_proposal_preview(
+        swarm_id=swarm.id,
+        preview_id=preview_id,
+        approve=False,
+    )
+
+    assert errors[0]["error"] == "approval_required"
+    assert result.tasks == []
+    assert result.decisions[-1]["kind"] == "dag_proposal_materialization"
+    assert result.decisions[-1]["status"] == "rejected"
+
+
+def test_materialize_model_dag_proposal_preview_persists_tasks_with_approval(tmp_path):
+    orchestrator = SwarmOrchestrator()
+    orchestrator.store.root = tmp_path
+    swarm = orchestrator.create_swarm(user_prompt="test", dashboard_id="dash", intent="chat")
+    saved, preview_id = _record_valid_model_preview_for_materialization(orchestrator, swarm.id)
+
+    result, errors = orchestrator.materialize_model_dag_proposal_preview(
+        swarm_id=swarm.id,
+        preview_id=preview_id,
+        generated_plan={
+            "summary": "Dashboard simple",
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        },
+        approve=True,
+    )
+
+    assert errors == []
+    assert result.intent == "task"
+    assert result.tasks
+    assert result.contracts
+    assert result.coordinator_contract_id
+    assert result.decisions[-1]["kind"] == "dag_proposal_materialization"
+    assert result.decisions[-1]["status"] == "accepted"
+    assert result.messages[-1].payload["message"] == "model_dag_proposal_materialized"
+
+
+def test_materialize_model_dag_proposal_preview_rejects_missing_preview(tmp_path):
+    orchestrator = SwarmOrchestrator()
+    orchestrator.store.root = tmp_path
+    swarm = orchestrator.create_swarm(user_prompt="test", dashboard_id="dash", intent="chat")
+
+    result, errors = orchestrator.materialize_model_dag_proposal_preview(
+        swarm_id=swarm.id,
+        preview_id="missing",
+        approve=True,
+    )
+
+    assert errors[0]["error"] == "preview_not_found"
+    assert result.tasks == []
+
+
+def test_materialize_model_dag_proposal_preview_rejects_stale_plan(tmp_path):
+    orchestrator = SwarmOrchestrator()
+    orchestrator.store.root = tmp_path
+    swarm = orchestrator.create_swarm(user_prompt="test", dashboard_id="dash", intent="chat")
+    saved, preview_id = _record_valid_model_preview_for_materialization(orchestrator, swarm.id)
+
+    result, errors = orchestrator.materialize_model_dag_proposal_preview(
+        swarm_id=swarm.id,
+        preview_id=preview_id,
+        generated_plan={
+            "summary": "Changed plan",
+            "frontend": "Vue",
+            "backend": "Django",
+            "database": "SQLite",
+        },
+        approve=True,
+    )
+
+    assert errors[0]["error"] == "preview_plan_fingerprint_mismatch"
+    assert result.tasks == []
+
+
+def test_materialize_model_dag_proposal_preview_rejects_existing_tasks(tmp_path):
+    orchestrator = SwarmOrchestrator()
+    orchestrator.store.root = tmp_path
+    swarm = orchestrator.create_swarm(user_prompt="test", dashboard_id="dash", intent="chat")
+    saved, preview_id = _record_valid_model_preview_for_materialization(orchestrator, swarm.id)
+
+    first, errors = orchestrator.materialize_model_dag_proposal_preview(
+        swarm_id=swarm.id,
+        preview_id=preview_id,
+        generated_plan={
+            "summary": "Dashboard simple",
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        },
+        approve=True,
+    )
+    assert errors == []
+
+    second, errors = orchestrator.materialize_model_dag_proposal_preview(
+        swarm_id=swarm.id,
+        preview_id=preview_id,
+        generated_plan={
+            "summary": "Dashboard simple",
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        },
+        approve=True,
+    )
+
+    assert errors[0]["error"] == "swarm_already_has_tasks"
+    assert len(second.tasks) == len(first.tasks)

@@ -1407,6 +1407,146 @@ class SwarmOrchestrator:
         )
         return self.store.save(materialized), []
 
+    def materialize_model_dag_proposal_preview(
+        self,
+        *,
+        swarm_id: str,
+        preview_id: str,
+        generated_plan: dict | None = None,
+        approve: bool = False,
+    ) -> tuple[SwarmState, list[dict]]:
+        if not approve:
+            swarm = self.store.load(swarm_id)
+            error = {"error": "approval_required", "preview_id": preview_id}
+            swarm.decisions.append(
+                {
+                    "kind": "dag_proposal_materialization",
+                    "source": "model_dag_proposal",
+                    "status": "rejected",
+                    "preview_id": preview_id,
+                    "validation_errors": [error],
+                    "metadata": {},
+                }
+            )
+            return self.store.save(swarm), [error]
+
+        swarm = self.store.load(swarm_id)
+        self._ensure_workspace_path(swarm)
+
+        if swarm.tasks:
+            error = {"error": "swarm_already_has_tasks", "preview_id": preview_id}
+            swarm.decisions.append(
+                {
+                    "kind": "dag_proposal_materialization",
+                    "source": "model_dag_proposal",
+                    "status": "rejected",
+                    "preview_id": preview_id,
+                    "validation_errors": [error],
+                    "metadata": {},
+                }
+            )
+            return self.store.save(swarm), [error]
+
+        matching_decision = None
+        for decision in reversed(swarm.decisions):
+            metadata = decision.get("metadata") or {}
+            if metadata.get("preview_id") == preview_id:
+                matching_decision = decision
+                break
+
+        if not matching_decision:
+            error = {"error": "preview_not_found", "preview_id": preview_id}
+            swarm.decisions.append(
+                {
+                    "kind": "dag_proposal_materialization",
+                    "source": "model_dag_proposal",
+                    "status": "rejected",
+                    "preview_id": preview_id,
+                    "validation_errors": [error],
+                    "metadata": {},
+                }
+            )
+            return self.store.save(swarm), [error]
+
+        metadata = matching_decision.get("metadata") or {}
+        proposal = metadata.get("proposal")
+        if matching_decision.get("status") != "accepted" or not isinstance(proposal, dict):
+            error = {"error": "preview_not_accepted", "preview_id": preview_id}
+            swarm.decisions.append(
+                {
+                    "kind": "dag_proposal_materialization",
+                    "source": "model_dag_proposal",
+                    "status": "rejected",
+                    "preview_id": preview_id,
+                    "validation_errors": [error],
+                    "metadata": {},
+                }
+            )
+            return self.store.save(swarm), [error]
+
+        normalized_plan = self._normalize_generated_plan(generated_plan)
+        expected_fingerprint = metadata.get("plan_fingerprint")
+        current_fingerprint = self._fingerprint_model_dag_plan(normalized_plan)
+        if expected_fingerprint and expected_fingerprint != current_fingerprint:
+            error = {
+                "error": "preview_plan_fingerprint_mismatch",
+                "preview_id": preview_id,
+                "expected": expected_fingerprint,
+                "current": current_fingerprint,
+            }
+            swarm.decisions.append(
+                {
+                    "kind": "dag_proposal_materialization",
+                    "source": "model_dag_proposal",
+                    "status": "rejected",
+                    "preview_id": preview_id,
+                    "validation_errors": [error],
+                    "metadata": {"normalized_plan": normalized_plan},
+                }
+            )
+            return self.store.save(swarm), [error]
+
+        materialized = self._materialize_dag_proposal_state(base_swarm=swarm, proposal=proposal)
+        validation_errors = [
+            *self._validate_dag_proposal_state(materialized),
+            *self._validate_model_dag_semantic_policy(proposal=proposal, generated_plan=generated_plan),
+        ]
+
+        materialized.decisions.append(
+            {
+                "kind": "dag_proposal_materialization",
+                "source": "model_dag_proposal",
+                "status": "accepted" if not validation_errors else "rejected",
+                "preview_id": preview_id,
+                "validation_errors": validation_errors,
+                "metadata": {
+                    "normalized_plan": normalized_plan,
+                    "plan_fingerprint": current_fingerprint,
+                },
+            }
+        )
+
+        if validation_errors:
+            return self.store.save(swarm), validation_errors
+
+        coordinator = next((contract for contract in materialized.contracts if contract.role == "CoordinatorAgent"), None)
+        materialized.intent = "task"
+        materialized.coordinator_contract_id = coordinator.id if coordinator else None
+        materialized.messages.append(
+            AgentToAgentMessage(
+                type="broadcast_to_swarm",
+                from_agent_id=materialized.coordinator_contract_id or materialized.contracts[0].id,
+                payload={
+                    "message": "model_dag_proposal_materialized",
+                    "source": "model_dag_proposal",
+                    "preview_id": preview_id,
+                    "generated_plan_summary": normalized_plan["summary"],
+                },
+                requires_response=False,
+            )
+        )
+        return self.store.save(materialized), []
+
     def _record_dag_proposal_decision(
         self,
         *,
