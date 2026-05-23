@@ -580,3 +580,137 @@ def test_build_model_dag_proposal_prompt_contains_guardrails_and_plan_context():
     assert "FastAPI" in prompt
     assert "PostgreSQL" in prompt
     assert "pagos" in prompt
+
+
+def test_model_dag_prompt_to_preview_decision_flow_without_persisting_tasks(tmp_path):
+    orchestrator = SwarmOrchestrator()
+    orchestrator.store.root = tmp_path
+
+    swarm = orchestrator.create_swarm(
+        user_prompt="crear app con backend",
+        dashboard_id="dashboard-test",
+        intent="chat",
+    )
+
+    prompt = orchestrator._build_model_dag_proposal_prompt(
+        generated_plan={
+            "app_type": "web app",
+            "main_goal": "crear dashboard",
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        }
+    )
+    assert "model_generated_dag" in prompt
+    assert "Return JSON only" in prompt
+
+    saved, errors = orchestrator.record_model_dag_proposal_preview(
+        swarm_id=swarm.id,
+        final_message={
+            "content": """
+            {
+              "kind": "model_generated_dag",
+              "tasks": [
+                {
+                  "id": "architecture",
+                  "task_type": "architecture_plan_execute",
+                  "role": "ArchitectAgent",
+                  "title": "Execute architecture plan",
+                  "objective": "Plan architecture."
+                },
+                {
+                  "id": "frontend_plan",
+                  "task_type": "frontend_plan_execute",
+                  "role": "FrontendAgent",
+                  "title": "Execute frontend plan",
+                  "objective": "Plan frontend.",
+                  "depends_on": ["architecture"]
+                },
+                {
+                  "id": "create_readme",
+                  "task_type": "create_readme",
+                  "role": "DocumentationAgent",
+                  "title": "Create implementation brief README.md",
+                  "objective": "Create README.",
+                  "depends_on": ["frontend_plan"]
+                }
+              ]
+            }
+            """
+        },
+    )
+
+    assert errors == []
+    assert saved.tasks == []
+    assert saved.contracts == []
+    assert saved.decisions[-1]["kind"] == "dag_proposal_validation"
+    assert saved.decisions[-1]["source"] == "model_dag_proposal"
+    assert saved.decisions[-1]["status"] == "accepted"
+    assert saved.decisions[-1]["metadata"]["task_ids"] == ["architecture", "frontend_plan", "create_readme"]
+
+
+def test_model_dag_prompt_to_preview_decision_flow_without_persisting_tasks(tmp_path):
+    orchestrator = SwarmOrchestrator()
+    orchestrator.store.root = tmp_path
+
+    swarm = orchestrator.create_swarm(
+        user_prompt="crear app con backend",
+        dashboard_id="dashboard-test",
+        intent="chat",
+    )
+
+    prompt = orchestrator._build_model_dag_proposal_prompt(
+        generated_plan={
+            "app_type": "web app",
+            "main_goal": "crear dashboard",
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        }
+    )
+    assert "model_generated_dag" in prompt
+    assert "Return JSON only" in prompt
+
+    saved, errors = orchestrator.record_model_dag_proposal_preview(
+        swarm_id=swarm.id,
+        final_message={
+            "content": """
+            {
+              "kind": "model_generated_dag",
+              "tasks": [
+                {
+                  "id": "architecture",
+                  "task_type": "architecture_plan_execute",
+                  "role": "ArchitectAgent",
+                  "title": "Execute architecture plan",
+                  "objective": "Plan architecture."
+                },
+                {
+                  "id": "frontend_plan",
+                  "task_type": "frontend_plan_execute",
+                  "role": "FrontendAgent",
+                  "title": "Execute frontend plan",
+                  "objective": "Plan frontend.",
+                  "depends_on": ["architecture"]
+                },
+                {
+                  "id": "create_readme",
+                  "task_type": "create_readme",
+                  "role": "DocumentationAgent",
+                  "title": "Create implementation brief README.md",
+                  "objective": "Create README.",
+                  "depends_on": ["frontend_plan"]
+                }
+              ]
+            }
+            """
+        },
+    )
+
+    assert errors == []
+    assert saved.tasks == []
+    assert saved.contracts == []
+    assert saved.decisions[-1]["kind"] == "dag_proposal_validation"
+    assert saved.decisions[-1]["source"] == "model_dag_proposal"
+    assert saved.decisions[-1]["status"] == "accepted"
+    assert saved.decisions[-1]["metadata"]["task_ids"] == ["architecture", "frontend_plan", "create_readme"]
