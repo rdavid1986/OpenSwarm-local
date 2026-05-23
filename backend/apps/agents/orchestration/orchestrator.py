@@ -485,6 +485,8 @@ class SwarmOrchestrator:
                 "and local models such as Ollama when possible. "
                 "Do not claim generic distributed computing, cloud-first operation, automatic scalability, high availability, cost effectiveness, copyright, or invented years. "
                 "Do not use shell, npm, package managers, external CDNs, network calls, or backend code. "
+                "If JavaScript is used, it must be local-only and safe: fetch content.json only, do not use innerHTML, outerHTML, insertAdjacentHTML, eval, Function, storage, cookies, navigation, iframe/object/embed, inline event handlers, or external URLs. "
+                "Render dynamic list content with createElement and textContent only. "
                 f"Use the intake context: {plan_summary} "
                 f"Main goal: {main_goal}. Frontend: {frontend}. Visual style: {visual_style}. "
                 f"MVP priority: {mvp_priority}. Out of scope: {out_of_scope}."
@@ -496,7 +498,8 @@ class SwarmOrchestrator:
             title=review_spec.title,
             objective=(
                 "Read index.html, styles.css, and content.json with a real read tool. Reject if any required file is missing, "
-                "index.html references a missing file, content uses prohibited product claims or invented years, required sections "
+                "index.html references a missing file, content uses prohibited product claims or invented years, unsafe JavaScript patterns "
+                "(innerHTML, outerHTML, insertAdjacentHTML, eval, Function, storage, cookies, navigation, iframe/object/embed, inline event handlers, or external URLs), required sections "
                 "(Características, Ventajas, Próximos pasos) are missing, or required mentions are missing: local-first, agentes de IA, "
                 "dashboards/SwarmCard, tools, evidence, and final_result."
             ),
@@ -1659,6 +1662,78 @@ class SwarmOrchestrator:
             }
         )
         return swarm
+
+    def create_output_bridge_from_static_app(
+        self,
+        *,
+        swarm_id: str,
+        approve: bool = False,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> tuple[SwarmState, list[dict], dict]:
+        swarm = self.store.load(swarm_id)
+        metadata: dict = {
+            "source_swarm_id": swarm_id,
+            "output_id": None,
+            "workspace_path": swarm.workspace_path,
+        }
+
+        if not approve:
+            return swarm, [{"error": "approval_required"}], metadata
+
+        final_result = swarm.final_result if isinstance(swarm.final_result, dict) else {}
+        if not final_result:
+            return swarm, [{"error": "source_final_result_required"}], metadata
+
+        if final_result.get("status") != "completed":
+            return swarm, [{"error": "source_final_result_not_completed", "status": final_result.get("status")}], metadata
+
+        if final_result.get("artifact_kind") != "static_app":
+            return swarm, [{"error": "source_artifact_kind_not_static_app", "artifact_kind": final_result.get("artifact_kind")}], metadata
+
+        if final_result.get("implementation_performed") is not True:
+            return swarm, [{"error": "source_implementation_not_performed"}], metadata
+
+        claim_guard = final_result.get("claim_guard") if isinstance(final_result.get("claim_guard"), dict) else {}
+        claim_guard_status = str(claim_guard.get("status") or "")
+        if claim_guard_status != "verified":
+            return swarm, [{"error": "source_claim_guard_not_verified", "claim_guard_status": claim_guard_status}], metadata
+
+        if not swarm.workspace_path:
+            return swarm, [{"error": "source_workspace_path_required"}], metadata
+
+        from backend.apps.outputs.outputs import build_output_from_workspace
+
+        output, validation_errors, output_metadata = build_output_from_workspace(
+            workspace_path=swarm.workspace_path,
+            name=name,
+            description=description,
+        )
+        metadata.update(output_metadata)
+
+        if validation_errors:
+            swarm.decisions.append(
+                {
+                    "kind": "output_bridge_created",
+                    "source": "output_bridge",
+                    "status": "rejected",
+                    "validation_errors": validation_errors,
+                    "metadata": metadata,
+                }
+            )
+            return self.store.save(swarm), validation_errors, metadata
+
+        metadata["output_id"] = output.id if output else None
+        swarm.decisions.append(
+            {
+                "kind": "output_bridge_created",
+                "source": "output_bridge",
+                "status": "accepted",
+                "validation_errors": [],
+                "metadata": metadata,
+            }
+        )
+        return self.store.save(swarm), [], metadata
 
     def submit_artifact(
         self,

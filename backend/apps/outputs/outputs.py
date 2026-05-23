@@ -1,10 +1,12 @@
 import json
 import os
 import re
+import hashlib
 import logging
 import mimetypes
 import base64
 from datetime import datetime
+from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import HTTPException, Query
 from fastapi.responses import Response
@@ -191,6 +193,133 @@ def load_output(output_id: str) -> Output | None:
         return None
     with open(path) as f:
         return Output(**json.load(f))
+
+
+STATIC_OUTPUT_REQUIRED_FILES = {"index.html", "styles.css", "content.json"}
+STATIC_OUTPUT_OPTIONAL_FILES = {"schema.json", "meta.json"}
+STATIC_OUTPUT_ALLOWED_FILES = STATIC_OUTPUT_REQUIRED_FILES | STATIC_OUTPUT_OPTIONAL_FILES
+STATIC_OUTPUT_FORBIDDEN_HTML_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in [
+        r"javascript\s*:",
+        r"\son[a-z]+\s*=",
+        r"<\s*iframe\b",
+        r"<\s*object\b",
+        r"<\s*embed\b",
+        r"\beval\s*\(",
+        r"\bnew\s+Function\b",
+        r"\bFunction\s*\(",
+        r"\blocalStorage\b",
+        r"\bsessionStorage\b",
+        r"\bdocument\.cookie\b",
+        r"\bwindow\.location\b",
+        r"\blocation\.href\b",
+        r"\binnerHTML\b",
+        r"\bouterHTML\b",
+        r"\binsertAdjacentHTML\b",
+        r"https?://",
+    ]
+]
+
+
+def build_output_from_workspace(
+    *,
+    workspace_path: str,
+    name: str | None = None,
+    description: str | None = None,
+) -> tuple[Output | None, list[dict], dict]:
+    workspace = Path(workspace_path).expanduser().resolve()
+    allowed_root = (Path.home() / ".openswarm" / "workspaces").resolve()
+    metadata: dict = {
+        "workspace_path": str(workspace),
+        "allowed_files": [],
+        "file_hashes": {},
+        "file_sizes": {},
+    }
+
+    try:
+        workspace.relative_to(allowed_root)
+    except ValueError:
+        return None, [{"error": "workspace_outside_allowed_root", "workspace_path": str(workspace)}], metadata
+
+    if not workspace.is_dir():
+        return None, [{"error": "workspace_not_found", "workspace_path": str(workspace)}], metadata
+
+    files: dict[str, str] = {}
+    for child in workspace.iterdir():
+        if child.is_dir():
+            return None, [{"error": "subdirectories_not_allowed", "path": child.name}], metadata
+        if child.is_symlink():
+            try:
+                child.resolve().relative_to(workspace)
+            except ValueError:
+                return None, [{"error": "symlink_outside_workspace", "path": child.name}], metadata
+
+        rel_path = child.name
+        if rel_path == "backend.py":
+            return None, [{"error": "backend_py_not_allowed"}], metadata
+        if rel_path not in STATIC_OUTPUT_ALLOWED_FILES:
+            return None, [{"error": "file_not_allowed", "path": rel_path}], metadata
+
+    missing = sorted(name for name in STATIC_OUTPUT_REQUIRED_FILES if not (workspace / name).is_file())
+    if missing:
+        return None, [{"error": "required_files_missing", "files": missing}], metadata
+
+    for rel_path in sorted(STATIC_OUTPUT_ALLOWED_FILES):
+        file_path = workspace / rel_path
+        if not file_path.exists():
+            continue
+        if not file_path.is_file():
+            return None, [{"error": "file_not_regular", "path": rel_path}], metadata
+
+        try:
+            raw = file_path.read_bytes()
+            content = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return None, [{"error": "file_not_utf8", "path": rel_path}], metadata
+
+        if rel_path == "index.html":
+            for pattern in STATIC_OUTPUT_FORBIDDEN_HTML_PATTERNS:
+                if pattern.search(content):
+                    return None, [{"error": "unsafe_html_content", "path": rel_path, "pattern": pattern.pattern}], metadata
+
+        files[rel_path] = content
+        metadata["allowed_files"].append(rel_path)
+        metadata["file_hashes"][rel_path] = hashlib.sha256(raw).hexdigest()
+        metadata["file_sizes"][rel_path] = len(raw)
+
+    input_schema = {"type": "object", "properties": {}, "required": []}
+    if "schema.json" in files:
+        try:
+            parsed_schema = json.loads(files["schema.json"])
+        except json.JSONDecodeError as exc:
+            return None, [{"error": "invalid_schema_json", "detail": str(exc)}], metadata
+        if not isinstance(parsed_schema, dict):
+            return None, [{"error": "schema_json_must_be_object"}], metadata
+        input_schema = parsed_schema
+
+    meta = {}
+    if "meta.json" in files:
+        try:
+            parsed_meta = json.loads(files["meta.json"])
+            if isinstance(parsed_meta, dict):
+                meta = parsed_meta
+        except json.JSONDecodeError:
+            meta = {}
+
+    now = datetime.now().isoformat()
+    output = Output(
+        name=name or str(meta.get("name") or workspace.name),
+        description=description or str(meta.get("description") or "Static app generated by OpenSwarm."),
+        icon="view_quilt",
+        input_schema=input_schema,
+        files=files,
+        created_at=now,
+        updated_at=now,
+    )
+    _save(output)
+    metadata["output_id"] = output.id
+    return output, [], metadata
 
 
 def _walk_directory(folder: str) -> dict[str, str]:

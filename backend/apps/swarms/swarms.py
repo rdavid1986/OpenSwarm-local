@@ -135,6 +135,12 @@ class ExperimentalImplementationBridgePrepareRequest(BaseModel):
     generated_plan: dict[str, Any] | None = None
 
 
+class ExperimentalOutputBridgeCreateRequest(BaseModel):
+    approve: bool = False
+    name: str | None = None
+    description: str | None = None
+
+
 def _dump(swarm):
     return swarm.model_dump(mode="json")
 
@@ -2210,6 +2216,31 @@ async def experimental_dag_proposal_preview_materialize(
         "status": "accepted" if not validation_errors else "rejected",
         "validation_errors": validation_errors,
         "decision": last_decision,
+        "swarm": _dump(swarm),
+    }
+
+
+@swarms.router.post("/{swarm_id}/experimental/output-bridge/create")
+async def experimental_output_bridge_create(swarm_id: str, body: ExperimentalOutputBridgeCreateRequest):
+    try:
+        swarm, validation_errors, metadata = swarm_orchestrator.create_output_bridge_from_static_app(
+            swarm_id=swarm_id,
+            approve=body.approve,
+            name=body.name,
+            description=body.description,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Swarm not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "ok": not validation_errors,
+        "status": "accepted" if not validation_errors else "rejected",
+        "validation_errors": validation_errors,
+        "source_swarm_id": swarm_id,
+        "output_id": metadata.get("output_id"),
+        "metadata": metadata,
         "swarm": _dump(swarm),
     }
 

@@ -233,7 +233,14 @@ class ExperimentalDAGDependencyRunner:
     function renderList(selector, values) {
       const element = document.querySelector(selector);
       if (!element || !Array.isArray(values)) return;
-      element.innerHTML = values.map((item) => `<li>${item}</li>`).join("");
+      while (element.firstChild) {
+        element.removeChild(element.firstChild);
+      }
+      values.forEach((item) => {
+        const listItem = document.createElement("li");
+        listItem.textContent = String(item);
+        element.appendChild(listItem);
+      });
     }
 
     function render(content) {
@@ -383,6 +390,31 @@ li + li {
             checks.append({"kind": "referenced_file_exists", "path": ref, "ok": exists})
             if not exists:
                 errors.append({"error": "referenced_file_missing", "path": ref})
+
+        unsafe_patterns = {
+            "javascript_protocol": r"javascript\s*:",
+            "inline_event_handler": r"\son[a-z]+\s*=",
+            "iframe": r"<\s*iframe\b",
+            "object": r"<\s*object\b",
+            "embed": r"<\s*embed\b",
+            "eval": r"\beval\s*\(",
+            "new_function": r"\bnew\s+Function\b",
+            "function_constructor": r"\bFunction\s*\(",
+            "local_storage": r"\blocalStorage\b",
+            "session_storage": r"\bsessionStorage\b",
+            "document_cookie": r"\bdocument\.cookie\b",
+            "window_location": r"\bwindow\.location\b",
+            "location_href": r"\blocation\.href\b",
+            "inner_html": r"\binnerHTML\b",
+            "outer_html": r"\bouterHTML\b",
+            "insert_adjacent_html": r"\binsertAdjacentHTML\b",
+            "external_url": r"https?://",
+        }
+        for name, pattern in unsafe_patterns.items():
+            found = re.search(pattern, index_html, flags=re.IGNORECASE) is not None
+            checks.append({"kind": "unsafe_static_html_pattern_absent", "name": name, "ok": not found})
+            if found:
+                errors.append({"error": "unsafe_static_html_pattern_present", "name": name, "pattern": pattern})
 
         combined = "\n".join(str(files.get(path) or "") for path in STATIC_APP_REQUIRED_FILES).lower()
         for claim in STATIC_APP_FORBIDDEN_CLAIMS:
