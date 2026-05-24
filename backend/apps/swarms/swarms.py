@@ -60,6 +60,7 @@ from backend.apps.agents.runtime.provider import ProviderTurnContext
 from backend.apps.swarms.pending_action_intelligence import resolve_pending_action_intent
 from backend.apps.swarms.response_intelligence import (
     build_grounded_refinement_response,
+    build_response_context,
     build_ri_state_snapshot,
     snapshot_payload,
 )
@@ -2160,7 +2161,10 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
         return {**_dump(swarm), "provider_events": []}
 
     adapter = OllamaAdapter(allow_network=True, supports_json_mode=False)
-    local_chat_context = _build_local_chat_context(swarm, user_message, route)
+    local_chat_context = "\n\n".join([
+        build_response_context(swarm, route=route, user_message=user_message),
+        _build_local_chat_context(swarm, user_message, route),
+    ])
 
     context = ProviderTurnContext(
         session_id=swarm.id,

@@ -1,5 +1,5 @@
 from backend.apps.agents.orchestration.models import AgentContract, SwarmState
-from backend.apps.swarms.response_intelligence import build_grounded_refinement_response
+from backend.apps.swarms.response_intelligence import build_grounded_refinement_response, build_response_context
 from backend.apps.swarms.swarms import _refinement_request_response
 
 
@@ -153,3 +153,35 @@ def test_action_stage_prepared_comes_from_prepare_output_refinement_metadata():
     assert result.payload["ri_state"]["pending_action"] == "run_refinement_pipeline"
     assert result.payload["ri_state"]["action_stage"] == "prepared"
     assert "action_stage=prepared" in result.payload["ri_state"]["reason"]
+
+
+def test_response_context_includes_action_stage_policy_for_model_reasoning():
+    swarm = _chat_swarm()
+    swarm.final_result = {
+        "refinement_request": {
+            "output_id": "out-context",
+            "source_swarm_id": "source-context",
+            "requested_change": "Mejorar la jerarquía visual.",
+            "status": "confirmed",
+            "next_action": "run_refinement_pipeline",
+        },
+        "prepare_output_refinement": {
+            "metadata": {
+                "output_id": "out-context",
+                "requested_change": "Mejorar la jerarquía visual.",
+                "refinement_status": "prepared",
+            },
+            "validation_errors": [],
+        },
+    }
+
+    context = build_response_context(
+        swarm,
+        route="refinement_request",
+        user_message="aplicalo",
+    )
+
+    assert "- action_stage: prepared" in context
+    assert "[action_semantics_policy]" in context
+    assert "action_stage is computed by the system and is authoritative" in context
+    assert "preparation happened but execution did not" in context
