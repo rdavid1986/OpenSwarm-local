@@ -1602,6 +1602,7 @@ def _pending_refinement_chat_content(
     resolution: dict[str, Any],
     prepare_metadata: dict[str, Any] | None = None,
     validation_errors: list[dict[str, Any]] | None = None,
+    guard_result: dict[str, Any] | None = None,
 ) -> str:
     output_id = str(refinement_request.get("output_id") or resolution.get("output_id") or "").strip()
     requested_change = str(refinement_request.get("requested_change") or resolution.get("requested_change") or "").strip()
@@ -1619,7 +1620,7 @@ def _pending_refinement_chat_content(
                 "No ejecute tools ni modifique la app.",
             ])
         refinement_status = (prepare_metadata or {}).get("refinement_status") or "prepared"
-        return "\n".join([
+        lines = [
             f"Refinamiento preparado para el Output {output_id}.",
             "",
             "Cambio confirmado:",
@@ -1627,8 +1628,44 @@ def _pending_refinement_chat_content(
             "",
             f"Estado real: quedo en estado {refinement_status}, con metadata validada para la siguiente fase.",
             "No ejecute tools ni modifique la app todavia.",
-            "Siguiente accion interna: run_refinement_pipeline.",
-        ])
+        ]
+
+        if isinstance(guard_result, dict):
+            guard_status = str(guard_result.get("guard_status") or "unknown")
+            risk_level = str(guard_result.get("risk_level") or "unknown")
+            blocked_reasons = guard_result.get("blocked_reasons") if isinstance(guard_result.get("blocked_reasons"), list) else []
+            required_next_steps = guard_result.get("required_next_steps") if isinstance(guard_result.get("required_next_steps"), list) else []
+
+            lines.extend([
+                "",
+                f"Guard de ejecucion: {guard_status}.",
+                f"Riesgo: {risk_level}.",
+            ])
+
+            if blocked_reasons:
+                lines.extend(["", "Bloqueos principales:"])
+                for reason in blocked_reasons[:5]:
+                    if isinstance(reason, dict):
+                        code = str(reason.get("code") or "unknown")
+                        message = str(reason.get("message") or "").strip()
+                        lines.append(f"- {code}: {message or 'Sin detalle.'}")
+
+            if required_next_steps:
+                lines.extend(["", "Proximos pasos requeridos:"])
+                for step in required_next_steps[:5]:
+                    if isinstance(step, dict):
+                        code = str(step.get("code") or "unknown")
+                        label = str(step.get("label") or "").strip()
+                        phase = str(step.get("phase") or "").strip()
+                        suffix = f" ({phase})" if phase else ""
+                        lines.append(f"- {code}: {label or 'Sin detalle.'}{suffix}")
+
+            lines.append("")
+            lines.append("Estado real: el refinement esta preparado, pero la ejecucion sigue bloqueada por guard.")
+        else:
+            lines.append("Siguiente accion interna: run_refinement_pipeline.")
+
+        return "\n".join(lines)
 
     if classification == "update_pending_action":
         return "\n".join([
@@ -2048,6 +2085,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
                 resolution=resolution,
                 prepare_metadata=prepare_metadata,
                 validation_errors=validation_errors,
+                guard_result=guard_result,
             )
             payload = _pending_refinement_payload(
                 refinement_request=refinement,

@@ -272,3 +272,56 @@ def test_refinement_execution_guard_returns_ui_ready_reasons_and_next_steps(tmp_
     assert all({"code", "label", "phase"}.issubset(step) for step in result["required_next_steps"])
     assert result["metadata"]["evidence_state"] == "sufficient"
     assert result["metadata"]["execution_pipeline_state"] == "unavailable"
+
+
+def test_pending_refinement_chat_content_reports_guard_block():
+    from backend.apps.swarms.swarms import _pending_refinement_chat_content
+
+    content = _pending_refinement_chat_content(
+        classification="confirm_pending_action",
+        refinement_request={
+            "output_id": "out-guard",
+            "requested_change": "Mejorar hero.",
+        },
+        resolution={
+            "classification": "confirm_pending_action",
+            "output_id": "out-guard",
+            "requested_change": "Mejorar hero.",
+        },
+        prepare_metadata={
+            "output_id": "out-guard",
+            "requested_change": "Mejorar hero.",
+            "refinement_status": "prepared",
+        },
+        validation_errors=[],
+        guard_result={
+            "guard_status": "blocked",
+            "risk_level": "high",
+            "blocked_reasons": [
+                {
+                    "code": "snapshot_missing",
+                    "message": "No existe snapshot/version base del Output para ejecución segura.",
+                    "severity": "high",
+                },
+                {
+                    "code": "rollback_missing",
+                    "message": "No existe rollback mínimo disponible para revertir la iteración.",
+                    "severity": "high",
+                },
+            ],
+            "required_next_steps": [
+                {
+                    "code": "create_output_iteration_snapshot",
+                    "label": "Crear snapshot/version base del Output antes de ejecutar.",
+                    "phase": "Apps-3.G.4.A",
+                }
+            ],
+        },
+    )
+
+    assert "Guard de ejecucion: blocked." in content
+    assert "Riesgo: high." in content
+    assert "snapshot_missing" in content
+    assert "rollback_missing" in content
+    assert "create_output_iteration_snapshot" in content
+    assert "la ejecucion sigue bloqueada por guard" in content
