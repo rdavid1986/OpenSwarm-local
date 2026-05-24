@@ -58,6 +58,7 @@ from backend.apps.agents.orchestration.models import AgentToAgentMessage
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.runtime.provider import ProviderTurnContext
 from backend.apps.swarms.pending_action_intelligence import resolve_pending_action_intent
+from backend.apps.swarms.refinement_action_guard import evaluate_refinement_execution_guard
 from backend.apps.swarms.response_intelligence import (
     build_grounded_refinement_response,
     build_response_context,
@@ -1668,6 +1669,7 @@ def _pending_refinement_payload(
     resolution: dict[str, Any],
     prepare_metadata: dict[str, Any] | None = None,
     validation_errors: list[dict[str, Any]] | None = None,
+    guard_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "route": "refinement_request",
@@ -1680,6 +1682,8 @@ def _pending_refinement_payload(
             "metadata": prepare_metadata,
             "validation_errors": validation_errors or [],
         }
+    if guard_result is not None:
+        payload["refinement_execution_guard"] = guard_result
     return payload
 
 
@@ -1735,6 +1739,8 @@ def _save_local_chat_message(swarm, coordinator_id: str, assistant_content: str,
         swarm.final_result["pending_action_resolution"] = payload["pending_action_resolution"]
     if "prepare_output_refinement" in payload:
         swarm.final_result["prepare_output_refinement"] = payload["prepare_output_refinement"]
+    if "refinement_execution_guard" in payload:
+        swarm.final_result["refinement_execution_guard"] = payload["refinement_execution_guard"]
 
 
 
@@ -1969,6 +1975,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
             refinement = dict(pending_refinement)
             prepare_metadata: dict[str, Any] | None = None
             validation_errors: list[dict[str, Any]] = []
+            guard_result: dict[str, Any] | None = None
 
             if classification == "confirm_pending_action":
                 if _can_prepare_pending_refinement(
@@ -1992,6 +1999,18 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
                     else:
                         refinement["status"] = "confirmed"
                         refinement["next_action"] = "run_refinement_pipeline"
+                        swarm.final_result = dict(getattr(swarm, "final_result", {}) or {})
+                        swarm.final_result["refinement_request"] = refinement
+                        swarm.final_result["prepare_output_refinement"] = {
+                            "metadata": prepare_metadata,
+                            "validation_errors": [],
+                        }
+                        guard_result = evaluate_refinement_execution_guard(
+                            swarm=swarm,
+                            output_id=str(refinement.get("output_id") or ""),
+                            requested_change=str(refinement.get("requested_change") or ""),
+                            approve=True,
+                        )
                 else:
                     classification = "needs_clarification"
                     resolution = {
@@ -2036,6 +2055,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
                 resolution=resolution,
                 prepare_metadata=prepare_metadata,
                 validation_errors=validation_errors,
+                guard_result=guard_result,
             )
             payload.update(snapshot_payload(build_ri_state_snapshot(
                 swarm,
@@ -2055,6 +2075,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
                     "swarm_mode": swarm_mode,
                     "classification": classification,
                     "prepared": bool(prepare_metadata and not validation_errors),
+                    "guard_status": (guard_result or {}).get("guard_status"),
                 },
             )
             return {**_dump(swarm), "provider_events": []}
