@@ -15,6 +15,7 @@ from jsonschema import validate as schema_validate, ValidationError as SchemaVal
 from backend.config.Apps import SubApp
 from backend.apps.outputs.models import (
     Output, OutputCreate, OutputUpdate, OutputExecute, OutputExecuteResult,
+    OutputIterationRecord, OutputIterationCreate,
     VibeCodeRequest, AutoRunRequest, AutoRunConfig, AutoRunAgentRequest,
     WorkspaceSeedRequest,
 )
@@ -63,6 +64,8 @@ def _validate_against_schema(data: dict, schema: dict) -> str | None:
         return f"Schema validation failed at {path}: {exc.message}"
 
 from backend.config.paths import OUTPUTS_DIR as DATA_DIR, OUTPUTS_WORKSPACE_DIR as WORKSPACE_DIR
+
+ITERATIONS_DIR = os.path.join(DATA_DIR, "_iterations")
 
 
 def _build_data_injection(input_json: str, result_json: str) -> str:
@@ -156,6 +159,7 @@ def _decode_data_param(d: str) -> tuple[str, str]:
 async def outputs_lifespan():
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(WORKSPACE_DIR, exist_ok=True)
+    os.makedirs(ITERATIONS_DIR, exist_ok=True)
     yield
 
 
@@ -193,6 +197,40 @@ def load_output(output_id: str) -> Output | None:
         return None
     with open(path) as f:
         return Output(**json.load(f))
+
+
+def _iteration_path(iteration_id: str) -> str:
+    safe_id = Path(iteration_id).name
+    return os.path.join(ITERATIONS_DIR, f"{safe_id}.json")
+
+
+def _save_iteration(record: OutputIterationRecord):
+    os.makedirs(ITERATIONS_DIR, exist_ok=True)
+    with open(_iteration_path(record.iteration_id), "w") as f:
+        json.dump(record.model_dump(), f, indent=2)
+
+
+def _load_iteration(iteration_id: str) -> OutputIterationRecord:
+    path = _iteration_path(iteration_id)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Output iteration not found")
+    with open(path) as f:
+        return OutputIterationRecord(**json.load(f))
+
+
+def _load_output_iterations(output_id: str) -> list[OutputIterationRecord]:
+    if not os.path.exists(ITERATIONS_DIR):
+        return []
+    records: list[OutputIterationRecord] = []
+    for fname in os.listdir(ITERATIONS_DIR):
+        if not fname.endswith(".json"):
+            continue
+        with open(os.path.join(ITERATIONS_DIR, fname)) as f:
+            record = OutputIterationRecord(**json.load(f))
+        if record.output_id == output_id:
+            records.append(record)
+    records.sort(key=lambda record: record.created_at)
+    return records
 
 
 STATIC_OUTPUT_REQUIRED_FILES = {"index.html", "styles.css", "content.json"}
@@ -500,6 +538,41 @@ async def delete_workspace_file(workspace_id: str, filepath: str):
 @outputs.router.get("/{output_id}")
 async def get_output(output_id: str):
     return _load(output_id).model_dump()
+
+
+@outputs.router.get("/{output_id}/iterations")
+async def list_output_iterations(output_id: str):
+    _load(output_id)
+    return {"iterations": [record.model_dump() for record in _load_output_iterations(output_id)]}
+
+
+@outputs.router.get("/iterations/{iteration_id}")
+async def get_output_iteration(iteration_id: str):
+    return _load_iteration(iteration_id).model_dump()
+
+
+@outputs.router.post("/iterations/create")
+async def create_output_iteration(body: OutputIterationCreate):
+    output = _load(body.output_id)
+    now = datetime.now().isoformat()
+    record = OutputIterationRecord(
+        output_id=body.output_id,
+        source_swarm_id=body.source_swarm_id or output.source_swarm_id,
+        parent_iteration_id=body.parent_iteration_id,
+        candidate_workspace_path=body.candidate_workspace_path,
+        base_workspace_path=body.base_workspace_path,
+        requested_change=body.requested_change,
+        files_before=dict(output.files),
+        files_after=body.files_after or {},
+        diff_summary=body.diff_summary,
+        evidence_refs=body.evidence_refs,
+        validation_refs=body.validation_refs,
+        status=body.status,
+        created_at=now,
+        updated_at=now,
+    )
+    _save_iteration(record)
+    return {"ok": True, "iteration": record.model_dump()}
 
 
 @outputs.router.post("/create")

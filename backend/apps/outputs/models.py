@@ -152,6 +152,44 @@ class OutputUpdate(BaseModel):
         return data
 
 
+class OutputIterationRecord(BaseModel):
+    """Registro versionable de una iteración de Output.
+
+    Apps-3.G.4.A crea el contrato mínimo. Las fases siguientes agregan
+    candidate workspaces reales, diff completo, validaciones, accept/discard
+    y restore.
+    """
+    iteration_id: str = Field(default_factory=lambda: uuid4().hex)
+    output_id: str
+    source_swarm_id: Optional[str] = None
+    parent_iteration_id: Optional[str] = None
+    candidate_workspace_path: Optional[str] = None
+    base_workspace_path: Optional[str] = None
+    requested_change: str = ""
+    files_before: dict[str, str] = Field(default_factory=dict)
+    files_after: dict[str, str] = Field(default_factory=dict)
+    diff_summary: dict[str, Any] = Field(default_factory=dict)
+    evidence_refs: list[str] = Field(default_factory=list)
+    validation_refs: list[str] = Field(default_factory=list)
+    status: str = "candidate"
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
+class OutputIterationCreate(BaseModel):
+    output_id: str
+    source_swarm_id: Optional[str] = None
+    parent_iteration_id: Optional[str] = None
+    candidate_workspace_path: Optional[str] = None
+    base_workspace_path: Optional[str] = None
+    requested_change: str = ""
+    files_after: dict[str, str] = Field(default_factory=dict)
+    diff_summary: dict[str, Any] = Field(default_factory=dict)
+    evidence_refs: list[str] = Field(default_factory=list)
+    validation_refs: list[str] = Field(default_factory=list)
+    status: str = "candidate"
+
+
 class OutputExecute(BaseModel):
     output_id: str
     input_data: dict[str, Any] = Field(default_factory=dict)
