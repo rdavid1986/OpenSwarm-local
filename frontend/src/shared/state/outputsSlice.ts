@@ -77,6 +77,41 @@ export interface OutputExecuteResult {
   error: string | null;
 }
 
+export interface OutputIterationRecord {
+  iteration_id: string;
+  output_id: string;
+  source_swarm_id?: string | null;
+  parent_iteration_id?: string | null;
+  candidate_workspace_path?: string | null;
+  base_workspace_path?: string | null;
+  requested_change: string;
+  files_before: Record<string, string>;
+  files_after: Record<string, string>;
+  diff_summary: Record<string, any>;
+  evidence_refs: string[];
+  validation_refs: string[];
+  status: 'candidate' | 'accepted' | 'discarded' | 'restored' | 'failed' | string;
+  created_at: string;
+  updated_at: string;
+}
+
+export function workspaceIdFromPath(path?: string | null): string | null {
+  if (!path) return null;
+  const normalized = path.replace(/\\/g, '/');
+  const parts = normalized.split('/').filter(Boolean);
+  return parts[parts.length - 1] || null;
+}
+
+export const fetchOutputIterations = createAsyncThunk(
+  'outputs/fetchIterations',
+  async (outputId: string) => {
+    const res = await fetch(`${OUTPUTS_API}/${outputId}/iterations`);
+    if (!res.ok) throw new Error(`Fetch iterations failed: ${res.status}`);
+    const data = await res.json();
+    return data.iterations as OutputIterationRecord[];
+  }
+);
+
 interface OutputsState {
   items: Record<string, Output>;
   loading: boolean;

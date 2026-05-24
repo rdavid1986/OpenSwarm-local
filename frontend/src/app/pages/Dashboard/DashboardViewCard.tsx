@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -12,7 +12,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import GridViewRoundedIcon from '@mui/icons-material/GridViewRounded';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import CloseFullscreenIcon from '@mui/icons-material/CloseFullscreen';
-import { Output, autoRunOutput, autoRunAgentOutput, executeOutput, OutputExecuteResult, getBackendCode, SERVE_BASE } from '@/shared/state/outputsSlice';
+import { Output, OutputIterationRecord, autoRunOutput, autoRunAgentOutput, executeOutput, OutputExecuteResult, fetchOutputIterations, getBackendCode, SERVE_BASE, workspaceIdFromPath } from '@/shared/state/outputsSlice';
 import { setViewCardPosition, setViewCardSize, removeViewCard } from '@/shared/state/dashboardLayoutSlice';
 import { useAppDispatch } from '@/shared/hooks';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
@@ -119,8 +119,40 @@ const DashboardViewCard: React.FC<Props> = ({
   const [bodySize, setBodySize] = useState({ width: 0, height: 0 });
   const previewBodyRef = useRef<HTMLDivElement>(null);
 
+  const [previewMode, setPreviewMode] = useState<'stable' | 'candidate'>('stable');
+  const [candidateIteration, setCandidateIteration] = useState<OutputIterationRecord | null>(null);
+
   const hasAutoRun = !!(output.auto_run_config?.enabled && output.auto_run_config?.prompt);
   const selectedDevice = DEVICE_PRESETS[selectedPreset];
+
+  useEffect(() => {
+    let cancelled = false;
+    dispatch(fetchOutputIterations(output.id))
+      .unwrap()
+      .then((iterations) => {
+        if (cancelled) return;
+        const latestCandidate = [...iterations]
+          .reverse()
+          .find((iteration) => iteration.status === 'candidate' && iteration.candidate_workspace_path);
+        setCandidateIteration(latestCandidate ?? null);
+        if (!latestCandidate) setPreviewMode('stable');
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCandidateIteration(null);
+          setPreviewMode('stable');
+        }
+      });
+    return () => { cancelled = true; };
+  }, [dispatch, output.id]);
+
+  const candidateWorkspaceId = workspaceIdFromPath(candidateIteration?.candidate_workspace_path);
+  const activeServeUrl = useMemo(() => {
+    if (previewMode === 'candidate' && candidateWorkspaceId) {
+      return `${SERVE_BASE}/workspace/${candidateWorkspaceId}/serve/index.html`;
+    }
+    return `${SERVE_BASE}/${output.id}/serve/index.html`;
+  }, [candidateWorkspaceId, output.id, previewMode]);
 
   // ---- Drag via header ----
   const DRAG_THRESHOLD = 3;
@@ -662,7 +694,7 @@ const DashboardViewCard: React.FC<Props> = ({
             >
               <ViewPreview
                 ref={previewRef}
-                serveUrl={`${SERVE_BASE}/${output.id}/serve/index.html`}
+                serveUrl={activeServeUrl}
                 frontendCode={output.files?.['index.html'] ?? ''}
                 inputData={inputData}
                 backendResult={backendResult}
