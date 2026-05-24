@@ -233,6 +233,72 @@ def _load_output_iterations(output_id: str) -> list[OutputIterationRecord]:
     return records
 
 
+def _safe_workspace_path(workspace_id: str) -> Path:
+    safe_id = Path(workspace_id).name
+    workspace = (Path(WORKSPACE_DIR) / safe_id).resolve()
+    root = Path(WORKSPACE_DIR).resolve()
+    try:
+        workspace.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Workspace path traversal not allowed")
+    return workspace
+
+
+def _write_output_files_to_workspace(*, workspace_id: str, files: dict[str, str]) -> str:
+    workspace = _safe_workspace_path(workspace_id)
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    for rel_path, content in files.items():
+        if rel_path not in STATIC_OUTPUT_ALLOWED_FILES:
+            raise HTTPException(status_code=400, detail=f"File not allowed in candidate workspace: {rel_path}")
+        target = (workspace / rel_path).resolve()
+        try:
+            target.relative_to(workspace)
+        except ValueError:
+            raise HTTPException(status_code=403, detail="Candidate file path traversal not allowed")
+        target.write_text(content, encoding="utf-8")
+
+    return str(workspace)
+
+
+def _create_candidate_iteration_from_output(
+    *,
+    output: Output,
+    requested_change: str = "",
+    source_swarm_id: str | None = None,
+    parent_iteration_id: str | None = None,
+    evidence_refs: list[str] | None = None,
+    validation_refs: list[str] | None = None,
+) -> OutputIterationRecord:
+    now = datetime.now().isoformat()
+    record = OutputIterationRecord(
+        output_id=output.id,
+        source_swarm_id=source_swarm_id or output.source_swarm_id,
+        parent_iteration_id=parent_iteration_id,
+        requested_change=requested_change,
+        files_before=dict(output.files),
+        files_after=dict(output.files),
+        diff_summary={"status": "candidate_created", "changed": []},
+        evidence_refs=evidence_refs or [],
+        validation_refs=validation_refs or [],
+        status="candidate",
+        created_at=now,
+        updated_at=now,
+    )
+    base_workspace_id = f"{output.id}-{record.iteration_id}-base"
+    candidate_workspace_id = f"{output.id}-{record.iteration_id}-candidate"
+    record.base_workspace_path = _write_output_files_to_workspace(
+        workspace_id=base_workspace_id,
+        files=record.files_before,
+    )
+    record.candidate_workspace_path = _write_output_files_to_workspace(
+        workspace_id=candidate_workspace_id,
+        files=record.files_after,
+    )
+    _save_iteration(record)
+    return record
+
+
 STATIC_OUTPUT_REQUIRED_FILES = {"index.html", "styles.css", "content.json"}
 STATIC_OUTPUT_OPTIONAL_FILES = {"schema.json", "meta.json"}
 STATIC_OUTPUT_ALLOWED_FILES = STATIC_OUTPUT_REQUIRED_FILES | STATIC_OUTPUT_OPTIONAL_FILES
@@ -572,6 +638,22 @@ async def create_output_iteration(body: OutputIterationCreate):
         updated_at=now,
     )
     _save_iteration(record)
+    return {"ok": True, "iteration": record.model_dump()}
+
+
+@outputs.router.post("/{output_id}/iterations/candidate")
+async def create_candidate_output_iteration(output_id: str, body: OutputIterationCreate):
+    if body.output_id != output_id:
+        raise HTTPException(status_code=400, detail="output_id mismatch")
+    output = _load(output_id)
+    record = _create_candidate_iteration_from_output(
+        output=output,
+        requested_change=body.requested_change,
+        source_swarm_id=body.source_swarm_id,
+        parent_iteration_id=body.parent_iteration_id,
+        evidence_refs=body.evidence_refs,
+        validation_refs=body.validation_refs,
+    )
     return {"ok": True, "iteration": record.model_dump()}
 
 
