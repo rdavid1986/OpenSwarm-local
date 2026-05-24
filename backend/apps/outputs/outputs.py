@@ -343,6 +343,23 @@ def _accept_output_iteration(iteration_id: str) -> tuple[Output, OutputIteration
     return output, record, freshness
 
 
+def _discard_output_iteration(iteration_id: str) -> OutputIterationRecord:
+    record = _load_iteration(iteration_id)
+    if record.status != "candidate":
+        raise HTTPException(status_code=400, detail="Only candidate iterations can be discarded")
+
+    now = datetime.now().isoformat()
+    record.status = "discarded"
+    record.updated_at = now
+    record.diff_summary = {
+        **dict(record.diff_summary or {}),
+        "discarded_at": now,
+        "discarded_output_id": record.output_id,
+    }
+    _save_iteration(record)
+    return record
+
+
 STATIC_OUTPUT_REQUIRED_FILES = {"index.html", "styles.css", "content.json"}
 STATIC_OUTPUT_OPTIONAL_FILES = {"schema.json", "meta.json"}
 STATIC_OUTPUT_ALLOWED_FILES = STATIC_OUTPUT_REQUIRED_FILES | STATIC_OUTPUT_OPTIONAL_FILES
@@ -710,6 +727,12 @@ async def accept_output_iteration(iteration_id: str):
         "iteration": record.model_dump(),
         "freshness": freshness,
     }
+
+
+@outputs.router.post("/iterations/{iteration_id}/discard")
+async def discard_output_iteration(iteration_id: str):
+    record = _discard_output_iteration(iteration_id)
+    return {"ok": True, "iteration": record.model_dump()}
 
 
 @outputs.router.post("/create")

@@ -281,3 +281,68 @@ def test_accept_output_iteration_blocks_non_candidate_iteration(tmp_path, monkey
 
     accept = client.post(f"/api/outputs/iterations/{record.iteration_id}/accept")
     assert accept.status_code == 400
+
+
+def test_discard_output_iteration_marks_candidate_discarded_without_mutating_output(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+
+    output = Output(
+        name="Demo",
+        files={
+            "index.html": "<html><body>Stable</body></html>",
+            "styles.css": "body { margin: 0; }",
+            "content.json": '{"title":"Stable"}',
+        },
+    )
+    outputs_module._save(output)
+
+    response = client.post(
+        f"/api/outputs/{output.id}/iterations/candidate",
+        json={"output_id": output.id, "requested_change": "Discard this candidate"},
+    )
+    assert response.status_code == 200
+    iteration = response.json()["iteration"]
+
+    record = outputs_module._load_iteration(iteration["iteration_id"])
+    record.files_after = {
+        **record.files_after,
+        "content.json": '{"title":"Candidate"}',
+    }
+    outputs_module._save_iteration(record)
+
+    discard = client.post(f"/api/outputs/iterations/{record.iteration_id}/discard")
+    assert discard.status_code == 200
+
+    payload = discard.json()
+    assert payload["ok"] is True
+    assert payload["iteration"]["status"] == "discarded"
+    assert payload["iteration"]["diff_summary"]["discarded_output_id"] == output.id
+    assert payload["iteration"]["diff_summary"]["discarded_at"]
+
+    unchanged = outputs_module._load(output.id)
+    discarded = outputs_module._load_iteration(record.iteration_id)
+
+    assert unchanged.files == output.files
+    assert discarded.status == "discarded"
+    assert discarded.diff_summary["discarded_output_id"] == output.id
+    assert discarded.diff_summary["discarded_at"]
+
+
+def test_discard_output_iteration_blocks_non_candidate_iteration(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+
+    output = Output(name="Demo", files={"index.html": "A", "styles.css": "", "content.json": "{}"})
+    outputs_module._save(output)
+
+    response = client.post(
+        "/api/outputs/iterations/create",
+        json={"output_id": output.id, "requested_change": "Already accepted"},
+    )
+    iteration = response.json()["iteration"]
+
+    record = outputs_module._load_iteration(iteration["iteration_id"])
+    record.status = "accepted"
+    outputs_module._save_iteration(record)
+
+    discard = client.post(f"/api/outputs/iterations/{record.iteration_id}/discard")
+    assert discard.status_code == 400
