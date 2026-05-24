@@ -346,3 +346,68 @@ def test_discard_output_iteration_blocks_non_candidate_iteration(tmp_path, monke
 
     discard = client.post(f"/api/outputs/iterations/{record.iteration_id}/discard")
     assert discard.status_code == 400
+
+
+def test_restore_output_iteration_restores_files_before_from_accepted_iteration(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+
+    before_files = {
+        "index.html": "<html><body>Before</body></html>",
+        "styles.css": "body { margin: 0; }",
+        "content.json": '{"title":"Before"}',
+    }
+    after_files = dict(before_files)
+    after_files["content.json"] = '{"title":"After"}'
+
+    output = Output(name="Demo", files=dict(after_files))
+    outputs_module._save(output)
+
+    response = client.post(
+        "/api/outputs/iterations/create",
+        json={
+            "output_id": output.id,
+            "requested_change": "Accepted change",
+            "files_after": after_files,
+        },
+    )
+    iteration = response.json()["iteration"]
+
+    record = outputs_module._load_iteration(iteration["iteration_id"])
+    record.status = "accepted"
+    record.files_before = dict(before_files)
+    record.files_after = dict(after_files)
+    outputs_module._save_iteration(record)
+
+    restore = client.post(f"/api/outputs/iterations/{record.iteration_id}/restore")
+    assert restore.status_code == 200
+
+    payload = restore.json()
+    assert payload["ok"] is True
+    assert payload["output"]["files"] == before_files
+    assert payload["iteration"]["status"] == "restored"
+    assert payload["iteration"]["diff_summary"]["restored_output_id"] == output.id
+    assert payload["iteration"]["diff_summary"]["restored_at"]
+
+    restored_output = outputs_module._load(output.id)
+    restored_iteration = outputs_module._load_iteration(record.iteration_id)
+
+    assert restored_output.files == before_files
+    assert restored_iteration.status == "restored"
+    assert restored_iteration.diff_summary["restored_output_id"] == output.id
+    assert restored_iteration.diff_summary["restored_at"]
+
+
+def test_restore_output_iteration_blocks_candidate_iteration(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+
+    output = Output(name="Demo", files={"index.html": "A", "styles.css": "", "content.json": "{}"})
+    outputs_module._save(output)
+
+    response = client.post(
+        "/api/outputs/iterations/create",
+        json={"output_id": output.id, "requested_change": "Still candidate"},
+    )
+    iteration = response.json()["iteration"]
+
+    restore = client.post(f"/api/outputs/iterations/{iteration['iteration_id']}/restore")
+    assert restore.status_code == 400

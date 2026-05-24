@@ -360,6 +360,33 @@ def _discard_output_iteration(iteration_id: str) -> OutputIterationRecord:
     return record
 
 
+def _restore_output_iteration(iteration_id: str) -> tuple[Output, OutputIterationRecord]:
+    record = _load_iteration(iteration_id)
+    if record.status not in {"accepted", "restored"}:
+        raise HTTPException(status_code=400, detail="Only accepted/restored iterations can be restored")
+
+    if not record.files_before:
+        raise HTTPException(status_code=409, detail="Iteration has no files_before snapshot to restore")
+
+    output = _load(record.output_id)
+    now = datetime.now().isoformat()
+
+    output.files = dict(record.files_before)
+    output.updated_at = now
+    _save(output)
+
+    record.status = "restored"
+    record.updated_at = now
+    record.diff_summary = {
+        **dict(record.diff_summary or {}),
+        "restored_at": now,
+        "restored_output_id": output.id,
+    }
+    _save_iteration(record)
+
+    return output, record
+
+
 STATIC_OUTPUT_REQUIRED_FILES = {"index.html", "styles.css", "content.json"}
 STATIC_OUTPUT_OPTIONAL_FILES = {"schema.json", "meta.json"}
 STATIC_OUTPUT_ALLOWED_FILES = STATIC_OUTPUT_REQUIRED_FILES | STATIC_OUTPUT_OPTIONAL_FILES
@@ -733,6 +760,16 @@ async def accept_output_iteration(iteration_id: str):
 async def discard_output_iteration(iteration_id: str):
     record = _discard_output_iteration(iteration_id)
     return {"ok": True, "iteration": record.model_dump()}
+
+
+@outputs.router.post("/iterations/{iteration_id}/restore")
+async def restore_output_iteration(iteration_id: str):
+    output, record = _restore_output_iteration(iteration_id)
+    return {
+        "ok": True,
+        "output": output.model_dump(),
+        "iteration": record.model_dump(),
+    }
 
 
 @outputs.router.post("/create")
