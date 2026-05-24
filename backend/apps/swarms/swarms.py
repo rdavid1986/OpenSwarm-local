@@ -57,6 +57,7 @@ from backend.apps.agents.runtime.events import event_trace_runtime
 from backend.apps.agents.orchestration.models import AgentToAgentMessage
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.runtime.provider import ProviderTurnContext
+from backend.apps.swarms.pending_action_intelligence import resolve_pending_action_intent
 from backend.apps.swarms.response_intelligence import (
     build_grounded_refinement_response,
     build_ri_state_snapshot,
@@ -551,6 +552,17 @@ def _get_pending_refinement_request(swarm) -> dict[str, Any] | None:
         return None
     if not refinement.get("output_id"):
         return None
+
+    status = str(refinement.get("status") or "received").strip().lower()
+    next_action = str(refinement.get("next_action") or "").strip().lower()
+    pending_statuses = {"received", "pending", "prepare_failed"}
+    pending_next_actions = {"refinement_pipeline_pending", "confirm_refinement"}
+
+    if status in {"cancelled", "confirmed", "prepared", "executing", "executed", "validated", "failed"}:
+        return None
+    if status not in pending_statuses and next_action not in pending_next_actions:
+        return None
+
     return refinement
 
 
@@ -1581,6 +1593,105 @@ def _is_project_intake_collecting(swarm) -> bool:
     return _get_project_intake_state(swarm).get("status") == "collecting"
 
 
+def _pending_refinement_chat_content(
+    *,
+    classification: str,
+    refinement_request: dict[str, Any],
+    resolution: dict[str, Any],
+    prepare_metadata: dict[str, Any] | None = None,
+    validation_errors: list[dict[str, Any]] | None = None,
+) -> str:
+    output_id = str(refinement_request.get("output_id") or resolution.get("output_id") or "").strip()
+    requested_change = str(refinement_request.get("requested_change") or resolution.get("requested_change") or "").strip()
+    clarification = str(resolution.get("clarification_question") or "").strip()
+
+    if classification == "confirm_pending_action":
+        if validation_errors:
+            return "\n".join([
+                f"Intente preparar el refinamiento para el Output {output_id}, pero la validacion lo bloqueo.",
+                "",
+                "Cambio solicitado:",
+                requested_change or "No especificado.",
+                "",
+                f"Errores de validacion: {validation_errors}",
+                "No ejecute tools ni modifique la app.",
+            ])
+        refinement_status = (prepare_metadata or {}).get("refinement_status") or "prepared"
+        return "\n".join([
+            f"Refinamiento preparado para el Output {output_id}.",
+            "",
+            "Cambio confirmado:",
+            requested_change or "No especificado.",
+            "",
+            f"Estado real: quedo en estado {refinement_status}, con metadata validada para la siguiente fase.",
+            "No ejecute tools ni modifique la app todavia.",
+            "Siguiente accion interna: run_refinement_pipeline.",
+        ])
+
+    if classification == "update_pending_action":
+        return "\n".join([
+            f"Actualice el refinamiento pendiente para el Output {output_id}.",
+            "",
+            "Nuevo cambio solicitado:",
+            requested_change or "No especificado.",
+            "",
+            "Estado real: el pedido sigue pendiente de confirmacion; no prepare ni ejecute cambios.",
+            "Siguiente accion interna: confirm_refinement.",
+        ])
+
+    if classification == "cancel_pending_action":
+        return "\n".join([
+            f"Cancele el refinamiento pendiente para el Output {output_id}.",
+            "",
+            "No prepare cambios, no ejecute tools y no reinicie el intake.",
+        ])
+
+    if classification == "explain_pending_action":
+        return "\n".join([
+            f"Hay un refinamiento pendiente para el Output {output_id}.",
+            "",
+            "Cambio solicitado:",
+            requested_change or "No especificado.",
+            "",
+            "Si lo confirmas, OpenSwarm solo va a preparar y validar metadata del refinamiento en esta fase.",
+            "No se ejecuta el pipeline real ni se modifica la app todavia.",
+        ])
+
+    return clarification or "Necesito una confirmacion mas clara: queres confirmar, actualizar, cancelar o solo revisar este refinamiento pendiente?"
+
+
+def _pending_refinement_payload(
+    *,
+    refinement_request: dict[str, Any],
+    swarm_mode: str | None,
+    resolution: dict[str, Any],
+    prepare_metadata: dict[str, Any] | None = None,
+    validation_errors: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "route": "refinement_request",
+        "swarm_mode": swarm_mode,
+        "refinement_request": refinement_request,
+        "pending_action_resolution": resolution,
+    }
+    if prepare_metadata is not None:
+        payload["prepare_output_refinement"] = {
+            "metadata": prepare_metadata,
+            "validation_errors": validation_errors or [],
+        }
+    return payload
+
+
+def _can_prepare_pending_refinement(*, resolution: dict[str, Any], refinement_request: dict[str, Any]) -> bool:
+    return (
+        resolution.get("classification") == "confirm_pending_action"
+        and resolution.get("safe_to_prepare") is True
+        and str(resolution.get("output_id") or "").strip() == str(refinement_request.get("output_id") or "").strip()
+        and bool(str(refinement_request.get("requested_change") or "").strip())
+        and float(resolution.get("confidence") or 0.0) >= 0.70
+    )
+
+
 def _save_local_chat_message(swarm, coordinator_id: str, assistant_content: str, payload: dict[str, Any]):
     route = str(payload.get("route") or "project_intake")
     swarm.messages.append(
@@ -1619,6 +1730,10 @@ def _save_local_chat_message(swarm, coordinator_id: str, assistant_content: str,
         swarm.final_result["refinement_request"] = payload["refinement_request"]
     if "ri_state" in payload:
         swarm.final_result["ri_state"] = payload["ri_state"]
+    if "pending_action_resolution" in payload:
+        swarm.final_result["pending_action_resolution"] = payload["pending_action_resolution"]
+    if "prepare_output_refinement" in payload:
+        swarm.final_result["prepare_output_refinement"] = payload["prepare_output_refinement"]
 
 
 
@@ -1827,8 +1942,124 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
         )
     )
 
+    pending_refinement = _get_pending_refinement_request(swarm)
+    if swarm_mode == "app_builder" and pending_refinement:
+        resolution = await resolve_pending_action_intent(
+            swarm=swarm,
+            user_message=user_message,
+            swarm_mode=swarm_mode,
+            model=body.model,
+        )
+        classification = str(resolution.get("classification") or "needs_clarification")
+        if classification == "no_pending_action" and _is_refinement_confirmation(user_message, swarm):
+            resolution = {
+                **resolution,
+                "classification": "confirm_pending_action",
+                "pending_action": "confirm_refinement",
+                "output_id": pending_refinement.get("output_id"),
+                "requested_change": pending_refinement.get("requested_change"),
+                "confidence": 0.70,
+                "safe_to_prepare": True,
+                "reason": "Compatibility fallback matched an existing confirmation phrase after model resolution.",
+                "clarification_question": None,
+            }
+            classification = "confirm_pending_action"
+        if classification != "no_pending_action":
+            refinement = dict(pending_refinement)
+            prepare_metadata: dict[str, Any] | None = None
+            validation_errors: list[dict[str, Any]] = []
+
+            if classification == "confirm_pending_action":
+                if _can_prepare_pending_refinement(
+                    resolution=resolution,
+                    refinement_request=refinement,
+                ):
+                    refinement["status"] = "confirmed"
+                    refinement["next_action"] = "run_refinement_pipeline"
+                    swarm.final_result = dict(getattr(swarm, "final_result", {}) or {})
+                    swarm.final_result["refinement_request"] = refinement
+                    swarm = swarm_orchestrator.store.save(swarm)
+                    swarm, validation_errors, prepare_metadata = swarm_orchestrator.prepare_output_refinement(
+                        swarm_id=swarm.id,
+                        output_id=str(refinement.get("output_id") or ""),
+                        requested_change=str(refinement.get("requested_change") or ""),
+                        approve=True,
+                    )
+                    if validation_errors:
+                        refinement["status"] = "prepare_failed"
+                        refinement["next_action"] = "confirm_refinement"
+                    else:
+                        refinement["status"] = "confirmed"
+                        refinement["next_action"] = "run_refinement_pipeline"
+                else:
+                    classification = "needs_clarification"
+                    resolution = {
+                        **resolution,
+                        "classification": classification,
+                        "safe_to_prepare": False,
+                        "clarification_question": resolution.get("clarification_question")
+                        or "Necesito confirmar con seguridad el Output y el cambio antes de preparar este refinamiento.",
+                    }
+            elif classification == "update_pending_action":
+                updated_change = str(resolution.get("requested_change") or "").strip()
+                if updated_change:
+                    refinement["requested_change"] = updated_change
+                refinement["status"] = "received"
+                refinement["next_action"] = "refinement_pipeline_pending"
+            elif classification == "cancel_pending_action":
+                refinement["status"] = "cancelled"
+                refinement["next_action"] = None
+                refinement.pop("executable_next_action", None)
+            elif classification in {"explain_pending_action", "needs_clarification"}:
+                pass
+            else:
+                classification = "needs_clarification"
+                resolution = {
+                    **resolution,
+                    "classification": classification,
+                    "safe_to_prepare": False,
+                    "clarification_question": resolution.get("clarification_question")
+                    or "Queres confirmar, actualizar, cancelar o solo revisar este refinamiento pendiente?",
+                }
+
+            assistant_content = _pending_refinement_chat_content(
+                classification=classification,
+                refinement_request=refinement,
+                resolution=resolution,
+                prepare_metadata=prepare_metadata,
+                validation_errors=validation_errors,
+            )
+            payload = _pending_refinement_payload(
+                refinement_request=refinement,
+                swarm_mode=swarm_mode,
+                resolution=resolution,
+                prepare_metadata=prepare_metadata,
+                validation_errors=validation_errors,
+            )
+            payload.update(snapshot_payload(build_ri_state_snapshot(
+                swarm,
+                route="refinement_request",
+                user_message=user_message,
+                payload=payload,
+            )))
+            _save_local_chat_message(swarm, coordinator_id, assistant_content, payload)
+            swarm = swarm_orchestrator.store.save(swarm)
+            event_trace_runtime.create(
+                swarm_id=swarm.id,
+                event_type="chat_completed",
+                payload={
+                    "message": "pending_action_resolved",
+                    "source": "model_assisted_pending_action",
+                    "route": "refinement_request",
+                    "swarm_mode": swarm_mode,
+                    "classification": classification,
+                    "prepared": bool(prepare_metadata and not validation_errors),
+                },
+            )
+            return {**_dump(swarm), "provider_events": []}
+
     route = _classify_chat_question(user_message)
-    if swarm_mode == "app_builder" and route == "normal_chat" and _is_refinement_confirmation(user_message, swarm):
+    if swarm_mode == "app_builder" and not pending_refinement and route == "normal_chat" and _is_refinement_confirmation(user_message, swarm):
         route = "refinement_request"
     if swarm_mode == "ask" and route == "implementation_request":
         route = "normal_chat"
