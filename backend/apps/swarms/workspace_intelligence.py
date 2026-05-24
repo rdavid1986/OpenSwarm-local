@@ -11,7 +11,7 @@ import hashlib
 from pathlib import Path
 from typing import Any, Literal
 
-from backend.apps.outputs.outputs import STATIC_OUTPUT_ALLOWED_FILES, STATIC_OUTPUT_REQUIRED_FILES
+from backend.apps.outputs.outputs import STATIC_OUTPUT_ALLOWED_FILES, STATIC_OUTPUT_REQUIRED_FILES, load_output
 
 
 Freshness = Literal["fresh", "stale", "missing", "unknown"]
@@ -161,6 +161,15 @@ def _output_metadata(output: Any | None) -> dict[str, Any] | None:
     }
 
 
+def _workspace_path_from_output(output: Any | None) -> str | None:
+    data = _as_dict(output)
+    workspace_id = str(data.get("workspace_id") or "").strip()
+    if not workspace_id:
+        return None
+    safe_workspace_id = Path(workspace_id).name
+    return str((_safe_workspace_root() / safe_workspace_id).resolve())
+
+
 def _collect_evidence_refs(swarm: Any | None, output: Any | None) -> list[str]:
     refs: list[Any] = []
     output_data = _as_dict(output)
@@ -185,6 +194,7 @@ def build_workspace_intelligence(
     *,
     swarm: Any | None = None,
     output: Any | None = None,
+    output_id: str | None = None,
     workspace_path: str | None = None,
     allowed_files: set[str] | None = None,
 ) -> dict[str, Any]:
@@ -194,8 +204,16 @@ def build_workspace_intelligence(
     does not inspect file contents outside ``~/.openswarm/workspaces``.
     """
 
+    if output is None and output_id:
+        output = load_output(output_id)
+
     output_data = _as_dict(output)
-    workspace_raw = workspace_path or getattr(swarm, "workspace_path", None) or None
+    workspace_raw = (
+        workspace_path
+        or getattr(swarm, "workspace_path", None)
+        or _workspace_path_from_output(output)
+        or None
+    )
     workspace, errors = _resolve_workspace_path(str(workspace_raw) if workspace_raw else None)
 
     allowed = set(allowed_files or STATIC_OUTPUT_ALLOWED_FILES)

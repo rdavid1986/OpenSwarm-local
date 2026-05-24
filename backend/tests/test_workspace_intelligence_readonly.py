@@ -157,3 +157,54 @@ def test_workspace_intelligence_includes_swarm_artifacts_and_evidence_refs(tmp_p
 
     assert snapshot["artifacts"] == [{"id": "artifact-1", "path": "index.html"}]
     assert snapshot["evidence_refs"] == ["evidence-output-1", "evidence-1", "final-ref-1"]
+
+
+def test_workspace_intelligence_resolves_workspace_from_output_id(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    workspace = tmp_path / ".openswarm" / "workspaces" / "output-ws"
+    workspace.mkdir(parents=True)
+    (workspace / "index.html").write_text("<html><body>Output WS</body></html>", encoding="utf-8")
+    (workspace / "styles.css").write_text("body { color: #222; }", encoding="utf-8")
+    (workspace / "content.json").write_text('{"title":"Output WS"}', encoding="utf-8")
+
+    output = Output(
+        id="out-ws",
+        name="Output Workspace",
+        workspace_id="output-ws",
+        files={
+            "index.html": (workspace / "index.html").read_text(encoding="utf-8"),
+            "styles.css": (workspace / "styles.css").read_text(encoding="utf-8"),
+            "content.json": (workspace / "content.json").read_text(encoding="utf-8"),
+        },
+        source_swarm_id="swarm-output-ws",
+    )
+
+    from backend.apps.swarms import workspace_intelligence as module
+    monkeypatch.setattr(module, "load_output", lambda output_id: output)
+
+    snapshot = build_workspace_intelligence(output_id=output.id)
+
+    assert snapshot["exists"] is True
+    assert snapshot["workspace_path"] == str(workspace.resolve())
+    assert snapshot["freshness"] == "fresh"
+    assert snapshot["output"]["id"] == output.id
+
+
+def test_workspace_intelligence_output_id_missing_workspace_stays_unknown(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    output = Output(
+        id="out-no-ws",
+        name="Output Without Workspace",
+        files={"index.html": "<html></html>"},
+    )
+
+    from backend.apps.swarms import workspace_intelligence as module
+    monkeypatch.setattr(module, "load_output", lambda output_id: output)
+
+    snapshot = build_workspace_intelligence(output_id=output.id)
+
+    assert snapshot["exists"] is False
+    assert snapshot["workspace_path"] is None
+    assert snapshot["freshness"] == "unknown"
+    assert snapshot["errors"][0]["error"] == "workspace_path_missing"
