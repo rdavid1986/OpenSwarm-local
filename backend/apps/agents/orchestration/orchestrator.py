@@ -1711,6 +1711,74 @@ class SwarmOrchestrator:
         )
         return swarm
 
+    def prepare_output_refinement(
+        self,
+        *,
+        swarm_id: str,
+        output_id: str,
+        requested_change: str,
+        approve: bool = False,
+    ) -> tuple[SwarmState, list[dict], dict]:
+        swarm = self.store.load(swarm_id)
+        metadata: dict = {
+            "source_swarm_id": swarm_id,
+            "output_id": output_id,
+            "requested_change": requested_change,
+            "workspace_path": swarm.workspace_path,
+            "refinement_status": "pending",
+        }
+
+        def reject(errors: list[dict]) -> tuple[SwarmState, list[dict], dict]:
+            swarm.decisions.append(
+                {
+                    "kind": "output_refinement_prepared",
+                    "source": "output_refinement",
+                    "status": "rejected",
+                    "validation_errors": errors,
+                    "metadata": metadata,
+                }
+            )
+            return self.store.save(swarm), errors, metadata
+
+        if not approve:
+            return reject([{"error": "approval_required"}])
+
+        if not output_id:
+            return reject([{"error": "output_id_required"}])
+
+        if not requested_change.strip():
+            return reject([{"error": "requested_change_required"}])
+
+        from backend.apps.outputs.outputs import load_output
+
+        output = load_output(output_id)
+        if output is None:
+            return reject([{"error": "output_not_found", "output_id": output_id}])
+
+        output_data = output.model_dump(mode="json")
+        metadata["output"] = {
+            "id": output_data.get("id"),
+            "name": output_data.get("name"),
+            "source_swarm_id": output_data.get("source_swarm_id"),
+            "source_task_id": output_data.get("source_task_id"),
+            "artifact_refs": output_data.get("artifact_refs") or [],
+            "evidence_refs": output_data.get("evidence_refs") or [],
+            "validation_status": output_data.get("validation_status"),
+            "updated_at": output_data.get("updated_at"),
+        }
+        metadata["refinement_status"] = "prepared"
+
+        swarm.decisions.append(
+            {
+                "kind": "output_refinement_prepared",
+                "source": "output_refinement",
+                "status": "accepted",
+                "validation_errors": [],
+                "metadata": metadata,
+            }
+        )
+        return self.store.save(swarm), [], metadata
+
     def create_output_bridge_from_static_app(
         self,
         *,

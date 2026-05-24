@@ -146,6 +146,12 @@ class ExperimentalOutputBridgeCreateRequest(BaseModel):
     description: str | None = None
 
 
+class ExperimentalOutputRefinementPrepareRequest(BaseModel):
+    approve: bool = False
+    output_id: str
+    requested_change: str
+
+
 def _dump(swarm):
     return swarm.model_dump(mode="json")
 
@@ -2359,6 +2365,34 @@ async def experimental_output_bridge_create(swarm_id: str, body: ExperimentalOut
         "source_swarm_id": swarm_id,
         "output_id": metadata.get("output_id"),
         "metadata": metadata,
+        "swarm": _dump(swarm),
+    }
+
+
+@swarms.router.post("/{swarm_id}/experimental/output-refinement/prepare")
+async def experimental_output_refinement_prepare(swarm_id: str, body: ExperimentalOutputRefinementPrepareRequest):
+    try:
+        swarm, validation_errors, metadata = swarm_orchestrator.prepare_output_refinement(
+            swarm_id=swarm_id,
+            output_id=body.output_id,
+            requested_change=body.requested_change,
+            approve=body.approve,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Swarm not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    last_decision = swarm.decisions[-1] if swarm.decisions else None
+    return {
+        "ok": not validation_errors,
+        "status": "accepted" if not validation_errors else "rejected",
+        "validation_errors": validation_errors,
+        "source_swarm_id": swarm_id,
+        "output_id": metadata.get("output_id"),
+        "requested_change": metadata.get("requested_change"),
+        "metadata": metadata,
+        "decision": last_decision,
         "swarm": _dump(swarm),
     }
 
