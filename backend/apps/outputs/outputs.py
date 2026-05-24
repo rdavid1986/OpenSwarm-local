@@ -233,6 +233,11 @@ def _load_output_iterations(output_id: str) -> list[OutputIterationRecord]:
     return records
 
 
+def load_output_iterations(output_id: str) -> list[OutputIterationRecord]:
+    """Public helper for safety gates to inspect Output iteration state."""
+    return _load_output_iterations(output_id)
+
+
 def _safe_workspace_path(workspace_id: str) -> Path:
     safe_id = Path(workspace_id).name
     workspace = (Path(WORKSPACE_DIR) / safe_id).resolve()

@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from backend.apps.agents.orchestration.models import EvidenceRecord, SwarmState
-from backend.apps.outputs.models import Output
+from backend.apps.outputs.models import Output, OutputIterationRecord
 from backend.apps.swarms import refinement_action_guard
 from backend.apps.swarms.refinement_action_guard import evaluate_refinement_execution_guard
 
@@ -325,3 +325,61 @@ def test_pending_refinement_chat_content_reports_guard_block():
     assert "rollback_missing" in content
     assert "create_output_iteration_snapshot" in content
     assert "la ejecucion sigue bloqueada por guard" in content
+
+
+def test_refinement_execution_guard_blocks_missing_candidate_iteration(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    workspace = _workspace(tmp_path)
+    output = _output_from_workspace(workspace)
+    monkeypatch.setattr(refinement_action_guard, "load_output", lambda output_id: output)
+    monkeypatch.setattr(refinement_action_guard, "load_output_iterations", lambda output_id: [])
+    swarm = _prepared_swarm(workspace)
+
+    result = evaluate_refinement_execution_guard(
+        swarm=swarm,
+        output_id=output.id,
+        requested_change="Mejorar hero.",
+        approve=True,
+    )
+
+    assert result["allowed"] is False
+    assert "candidate_iteration_missing" in _codes(result)
+    assert result["metadata"]["has_candidate_iteration"] is False
+    assert result["metadata"]["candidate_iteration_id"] is None
+
+
+def test_refinement_execution_guard_accepts_candidate_iteration_as_snapshot(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    workspace = _workspace(tmp_path)
+    base_workspace = _workspace(tmp_path, name="guard-base")
+    candidate_workspace = _workspace(tmp_path, name="guard-candidate")
+    output = _output_from_workspace(workspace)
+    candidate = OutputIterationRecord(
+        output_id=output.id,
+        base_workspace_path=str(base_workspace),
+        candidate_workspace_path=str(candidate_workspace),
+        requested_change="Mejorar hero.",
+        files_before=dict(output.files),
+        files_after=dict(output.files),
+        status="candidate",
+    )
+
+    monkeypatch.setattr(refinement_action_guard, "load_output", lambda output_id: output)
+    monkeypatch.setattr(refinement_action_guard, "load_output_iterations", lambda output_id: [candidate])
+    swarm = _prepared_swarm(workspace)
+
+    result = evaluate_refinement_execution_guard(
+        swarm=swarm,
+        output_id=output.id,
+        requested_change="Mejorar hero.",
+        approve=True,
+    )
+
+    assert result["allowed"] is False
+    assert "candidate_iteration_missing" not in _codes(result)
+    assert "snapshot_missing" not in _codes(result)
+    assert "rollback_missing" in _codes(result)
+    assert "execution_pipeline_unavailable" in _codes(result)
+    assert result["metadata"]["has_candidate_iteration"] is True
+    assert result["metadata"]["candidate_iteration_id"] == candidate.iteration_id
+    assert result["metadata"]["has_snapshot"] is True

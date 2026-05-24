@@ -8,9 +8,10 @@ the current prepared refinement state would be safe to advance from
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
-from backend.apps.outputs.outputs import load_output
+from backend.apps.outputs.outputs import load_output, load_output_iterations
 from backend.apps.swarms.response_intelligence import build_ri_state_snapshot
 from backend.apps.swarms.workspace_intelligence import build_workspace_intelligence
 
@@ -121,6 +122,11 @@ def _next_steps_for(reasons: list[dict[str, Any]]) -> list[dict[str, str]]:
             "label": "Crear snapshot/version base del Output antes de ejecutar.",
             "phase": "Apps-3.G.4.A",
         },
+        "candidate_iteration_missing": {
+            "code": "create_candidate_output_iteration",
+            "label": "Crear candidate iteration antes de ejecutar el refinamiento.",
+            "phase": "CMP-1",
+        },
         "rollback_missing": {
             "code": "create_refinement_rollback_plan",
             "label": "Crear rollback mínimo antes de ejecutar.",
@@ -181,6 +187,25 @@ def _has_snapshot(prepare_metadata: dict[str, Any], output_data: dict[str, Any])
     snapshot = prepare_metadata.get("snapshot")
     version = prepare_metadata.get("version")
     return bool(_as_dict(snapshot) or _as_dict(version))
+
+
+def _latest_candidate_iteration(output_id: str) -> dict[str, Any]:
+    candidates = []
+    for iteration in load_output_iterations(output_id):
+        if getattr(iteration, "status", None) != "candidate":
+            continue
+        base_workspace_path = _as_text(getattr(iteration, "base_workspace_path", None))
+        candidate_workspace_path = _as_text(getattr(iteration, "candidate_workspace_path", None))
+        if not base_workspace_path or not candidate_workspace_path:
+            continue
+        if not Path(base_workspace_path).is_dir() or not Path(candidate_workspace_path).is_dir():
+            continue
+        candidates.append(iteration)
+
+    if not candidates:
+        return {}
+    candidates.sort(key=lambda iteration: getattr(iteration, "created_at", ""))
+    return candidates[-1].model_dump(mode="json")
 
 
 def _has_rollback(prepare_metadata: dict[str, Any]) -> bool:
@@ -269,7 +294,9 @@ def evaluate_refinement_execution_guard(
     workspace_freshness = _as_text(workspace_intelligence.get("freshness")) or "unknown"
     has_workspace = bool(workspace_intelligence.get("exists"))
     has_output = output is not None
-    has_snapshot = _has_snapshot(prepare_metadata, output_data)
+    candidate_iteration = _latest_candidate_iteration(requested_output_id) if has_output and requested_output_id else {}
+    has_candidate_iteration = bool(candidate_iteration)
+    has_snapshot = _has_snapshot(prepare_metadata, output_data) or has_candidate_iteration
     has_rollback = _has_rollback(prepare_metadata)
     approval_state = "provided" if approve else "missing"
     source_swarm_state, source_swarm_id = _source_swarm_state(
@@ -385,6 +412,12 @@ def evaluate_refinement_execution_guard(
             code="snapshot_missing",
             message="No existe snapshot/version base del Output para ejecución segura.",
         )
+    if not has_candidate_iteration:
+        _add_reason(
+            reasons,
+            code="candidate_iteration_missing",
+            message="No existe candidate iteration con workspace base/candidate para ejecución segura.",
+        )
     if not has_rollback:
         _add_reason(
             reasons,
@@ -430,6 +463,8 @@ def evaluate_refinement_execution_guard(
             "has_output": has_output,
             "has_workspace": has_workspace,
             "has_snapshot": has_snapshot,
+            "has_candidate_iteration": has_candidate_iteration,
+            "candidate_iteration_id": candidate_iteration.get("iteration_id"),
             "has_rollback": has_rollback,
             "approval_state": approval_state,
             "snapshot_state": _state_from_bool(has_snapshot),
