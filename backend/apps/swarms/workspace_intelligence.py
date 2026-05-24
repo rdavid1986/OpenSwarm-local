@@ -11,7 +11,7 @@ import hashlib
 from pathlib import Path
 from typing import Any, Literal
 
-from backend.apps.outputs.outputs import STATIC_OUTPUT_ALLOWED_FILES, STATIC_OUTPUT_REQUIRED_FILES, load_output
+from backend.apps.outputs.outputs import STATIC_OUTPUT_ALLOWED_FILES, STATIC_OUTPUT_REQUIRED_FILES, load_output, load_output_iterations
 
 
 Freshness = Literal["fresh", "stale", "missing", "unknown"]
@@ -190,6 +190,36 @@ def _collect_artifacts(swarm: Any | None) -> list[dict[str, Any]]:
     return [_as_dict(item) for item in list(getattr(swarm, "artifacts", []) or []) if _as_dict(item)]
 
 
+def _files_match(left: Any, right: Any) -> bool:
+    return dict(left or {}) == dict(right or {})
+
+
+def _latest_candidate_iteration_for_output(output_id: str, iteration_id: str | None = None) -> Any | None:
+    iterations = load_output_iterations(output_id)
+    if iteration_id:
+        for iteration in iterations:
+            if getattr(iteration, "iteration_id", None) == iteration_id:
+                return iteration
+        return None
+
+    candidates = [
+        iteration
+        for iteration in iterations
+        if getattr(iteration, "status", None) == "candidate"
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda iteration: getattr(iteration, "created_at", ""))
+    return candidates[-1]
+
+
+def _reference_output_for_files(output: Any | None, files: dict[str, str]) -> dict[str, Any]:
+    data = _as_dict(output)
+    reference = dict(data)
+    reference["files"] = dict(files or {})
+    return reference
+
+
 def build_workspace_intelligence(
     *,
     swarm: Any | None = None,
@@ -280,3 +310,83 @@ def build_workspace_intelligence(
         "freshness": _overall_freshness(files, errors),
         "errors": errors,
     }
+
+
+def build_output_version_freshness(
+    *,
+    output_id: str,
+    iteration_id: str | None = None,
+    swarm: Any | None = None,
+) -> dict[str, Any]:
+    """Compare stable Output, base workspace, and candidate workspace.
+
+    PM-10 is read-only. It does not mutate Output files, candidate files,
+    iteration records, or workspaces.
+    """
+    output = load_output(output_id)
+    if output is None:
+        return {
+            "output_id": output_id,
+            "iteration_id": iteration_id,
+            "status": "missing_output",
+            "errors": [{"error": "output_not_found", "output_id": output_id}],
+        }
+
+    iteration = _latest_candidate_iteration_for_output(output_id, iteration_id)
+    if iteration is None:
+        return {
+            "output_id": output_id,
+            "iteration_id": iteration_id,
+            "status": "missing_candidate",
+            "stable": build_workspace_intelligence(swarm=swarm, output=output, output_id=output_id),
+            "errors": [{"error": "candidate_iteration_not_found", "output_id": output_id, "iteration_id": iteration_id}],
+        }
+
+    iteration_data = _as_dict(iteration)
+    files_before = dict(iteration_data.get("files_before") or {})
+    files_after = dict(iteration_data.get("files_after") or {})
+
+    stable = build_workspace_intelligence(swarm=swarm, output=output, output_id=output_id)
+    base = build_workspace_intelligence(
+        swarm=swarm,
+        output=_reference_output_for_files(output, files_before),
+        workspace_path=iteration_data.get("base_workspace_path"),
+    )
+    candidate = build_workspace_intelligence(
+        swarm=swarm,
+        output=_reference_output_for_files(output, files_after),
+        workspace_path=iteration_data.get("candidate_workspace_path"),
+    )
+
+    output_changed_since_candidate = not _files_match(_as_dict(output).get("files"), files_before)
+    base_matches_files_before = base.get("freshness") == "fresh"
+    candidate_matches_files_after = candidate.get("freshness") == "fresh"
+
+    errors: list[dict[str, Any]] = []
+    errors.extend({"scope": "stable", **error} for error in stable.get("errors", []))
+    errors.extend({"scope": "base", **error} for error in base.get("errors", []))
+    errors.extend({"scope": "candidate", **error} for error in candidate.get("errors", []))
+
+    if output_changed_since_candidate:
+        errors.append({"error": "output_changed_since_candidate", "output_id": output_id, "iteration_id": iteration_data.get("iteration_id")})
+    if not base_matches_files_before:
+        errors.append({"error": "base_workspace_not_fresh", "iteration_id": iteration_data.get("iteration_id")})
+    if not candidate_matches_files_after:
+        errors.append({"error": "candidate_workspace_not_fresh", "iteration_id": iteration_data.get("iteration_id")})
+
+    return {
+        "output_id": output_id,
+        "iteration_id": iteration_data.get("iteration_id"),
+        "status": "fresh" if not errors else "stale",
+        "output_changed_since_candidate": output_changed_since_candidate,
+        "base_matches_files_before": base_matches_files_before,
+        "candidate_matches_files_after": candidate_matches_files_after,
+        "stable_freshness": stable.get("freshness"),
+        "base_freshness": base.get("freshness"),
+        "candidate_freshness": candidate.get("freshness"),
+        "stable": stable,
+        "base": base,
+        "candidate": candidate,
+        "errors": errors,
+    }
+
