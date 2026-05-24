@@ -40,6 +40,7 @@ def test_grounded_refinement_received_preserves_payload_and_ri_state():
     assert result.payload["swarm_mode"] == "app_builder"
     assert result.payload["refinement_request"]["output_id"] == "out-123"
     assert result.payload["ri_state"]["pending_action"] == "confirm_refinement"
+    assert result.payload["ri_state"]["action_stage"] == "registered"
     assert result.payload["ri_state"]["target_output_id"] == "out-123"
     assert "confirm_refinement" in result.payload["ri_state"]["available_actions"]
     assert "Refinamiento registrado para el Output out-123." in (result.assistant_content or "")
@@ -65,6 +66,7 @@ def test_grounded_refinement_confirmed_reports_run_pipeline_without_execution_cl
     )
 
     assert result.payload["ri_state"]["pending_action"] == "run_refinement_pipeline"
+    assert result.payload["ri_state"]["action_stage"] == "confirmed"
     assert result.payload["ri_state"]["target_output_id"] == "out-456"
     assert "run_refinement_pipeline" in result.payload["ri_state"]["available_actions"]
     assert "Confirmación recibida para el Output out-456." in (result.assistant_content or "")
@@ -91,6 +93,7 @@ def test_grounded_refinement_missing_output_id_is_honest_and_safe():
     assert result.payload["refinement_request"]["output_id"] == ""
     assert result.payload["ri_state"]["target_output_id"] is None
     assert result.payload["ri_state"]["pending_action"] is None
+    assert result.payload["ri_state"]["action_stage"] is None
     assert "no encuentro un Output ID válido" in (result.assistant_content or "")
     assert "No ejecuté cambios ni reinicié el intake." in (result.assistant_content or "")
 
@@ -114,6 +117,39 @@ def test_swarms_refinement_confirmation_uses_grounded_ri_result_payload():
     assert payload["refinement_request"]["status"] == "confirmed"
     assert payload["refinement_request"]["next_action"] == "run_refinement_pipeline"
     assert payload["ri_state"]["pending_action"] == "run_refinement_pipeline"
+    assert payload["ri_state"]["action_stage"] == "confirmed"
     assert payload["ri_state"]["target_output_id"] == "out-existing"
     assert "Confirmación recibida para el Output out-existing." in content
     assert "Reducir padding." in content
+
+
+def test_action_stage_prepared_comes_from_prepare_output_refinement_metadata():
+    swarm = _chat_swarm()
+    swarm.final_result = {
+        "refinement_request": {
+            "output_id": "out-prepared",
+            "source_swarm_id": "source-prepared",
+            "requested_change": "Mejorar contraste.",
+            "status": "confirmed",
+            "next_action": "run_refinement_pipeline",
+        },
+        "prepare_output_refinement": {
+            "metadata": {
+                "output_id": "out-prepared",
+                "requested_change": "Mejorar contraste.",
+                "refinement_status": "prepared",
+            },
+            "validation_errors": [],
+        },
+    }
+
+    result = build_grounded_refinement_response(
+        swarm,
+        user_message="estado",
+        swarm_mode="app_builder",
+        refinement_request=swarm.final_result["refinement_request"],
+    )
+
+    assert result.payload["ri_state"]["pending_action"] == "run_refinement_pipeline"
+    assert result.payload["ri_state"]["action_stage"] == "prepared"
+    assert "action_stage=prepared" in result.payload["ri_state"]["reason"]

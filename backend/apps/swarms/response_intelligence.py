@@ -21,6 +21,7 @@ class RIStateSnapshot:
     current_route: str | None = None
     project_intake_status: str | None = None
     pending_action: str | None = None
+    action_stage: str | None = None
     target_output_id: str | None = None
     source_swarm_id: str | None = None
     implementation_status: str | None = None
@@ -102,6 +103,11 @@ def build_ri_state_snapshot(
         refinement_request=refinement_request,
     )
 
+    action_stage = classify_action_stage(
+        final_result=final_result,
+        refinement_request=refinement_request,
+    )
+
     available_actions = build_available_actions(
         route=route,
         final_result=final_result,
@@ -113,6 +119,8 @@ def build_ri_state_snapshot(
     reason_parts: list[str] = []
     if pending_action:
         reason_parts.append(f"pending_action={pending_action}")
+    if action_stage:
+        reason_parts.append(f"action_stage={action_stage}")
     if target_output_id:
         reason_parts.append(f"target_output_id={target_output_id}")
     if project_intake_state.get("status"):
@@ -127,6 +135,7 @@ def build_ri_state_snapshot(
         current_route=route,
         project_intake_status=_first_non_empty(project_intake_state.get("status")),
         pending_action=pending_action,
+        action_stage=action_stage,
         target_output_id=target_output_id,
         source_swarm_id=source_swarm_id,
         implementation_status=_first_non_empty(final_result.get("implementation_status"), final_result.get("status")),
@@ -138,6 +147,36 @@ def build_ri_state_snapshot(
         available_actions=available_actions,
         reason="; ".join(reason_parts),
     )
+
+
+def classify_action_stage(
+    *,
+    final_result: dict[str, Any],
+    refinement_request: dict[str, Any],
+) -> str | None:
+    """Return deterministic action stage for refinement-like flows.
+
+    This is system truth, not model reasoning. The model may reason over this
+    stage later, but it must not invent or override it.
+    """
+
+    if not refinement_request.get("output_id"):
+        return None
+
+    status = str(refinement_request.get("status") or "received").strip().lower()
+    prepare_payload = _as_dict(final_result.get("prepare_output_refinement"))
+    prepare_metadata = _as_dict(prepare_payload.get("metadata"))
+    prepare_status = str(prepare_metadata.get("refinement_status") or "").strip().lower()
+
+    if status in {"cancelled", "failed", "executing", "executed", "validated"}:
+        return status
+    if prepare_status == "prepared":
+        return "prepared"
+    if status == "confirmed":
+        return "confirmed"
+    if status in {"received", "pending", "prepare_failed"}:
+        return "registered"
+    return "registered"
 
 
 def classify_pending_action(
@@ -211,6 +250,7 @@ def snapshot_payload(snapshot: RIStateSnapshot) -> dict[str, Any]:
             "current_route": snapshot.current_route,
             "project_intake_status": snapshot.project_intake_status,
             "pending_action": snapshot.pending_action,
+            "action_stage": snapshot.action_stage,
             "target_output_id": snapshot.target_output_id,
             "source_swarm_id": snapshot.source_swarm_id,
             "implementation_status": snapshot.implementation_status,
