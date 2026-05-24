@@ -8,8 +8,9 @@ from backend.apps.outputs import outputs as outputs_module
 
 
 def _client(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
     data_dir = tmp_path / "outputs"
-    workspace_dir = tmp_path / "workspaces"
+    workspace_dir = tmp_path / ".openswarm" / "workspaces"
     iterations_dir = data_dir / "_iterations"
 
     monkeypatch.setattr(outputs_module, "DATA_DIR", str(data_dir))
@@ -39,6 +40,11 @@ def test_create_output_iteration_records_base_files_without_mutating_output(tmp_
         validation_status="verified",
     )
     outputs_module._save(output)
+
+    stable_workspace = tmp_path / "workspaces" / "stable-ws"
+    stable_workspace.mkdir(parents=True, exist_ok=True)
+    for rel_path, content in output.files.items():
+        (stable_workspace / rel_path).write_text(content, encoding="utf-8")
 
     response = client.post(
         "/api/outputs/iterations/create",
@@ -159,3 +165,119 @@ def test_create_candidate_output_iteration_rejects_output_id_mismatch(tmp_path, 
     )
 
     assert response.status_code == 400
+
+
+def test_accept_output_iteration_promotes_fresh_candidate(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+
+    output = Output(
+        name="Demo",
+        workspace_id="stable-ws",
+        files={
+            "index.html": "<html><body>Before</body></html>",
+            "styles.css": "body { margin: 0; }",
+            "content.json": '{"title":"Before"}',
+        },
+        source_swarm_id="swarm-1",
+    )
+    outputs_module._save(output)
+
+    stable_workspace = tmp_path / ".openswarm" / "workspaces" / "stable-ws"
+    stable_workspace.mkdir(parents=True, exist_ok=True)
+    for rel_path, content in output.files.items():
+        (stable_workspace / rel_path).write_text(content, encoding="utf-8")
+
+    response = client.post(
+        f"/api/outputs/{output.id}/iterations/candidate",
+        json={
+            "output_id": output.id,
+            "requested_change": "Change title",
+        },
+    )
+    assert response.status_code == 200
+    iteration = response.json()["iteration"]
+
+    updated_files = dict(output.files)
+    updated_files["content.json"] = '{"title":"After"}'
+
+    candidate_path = Path(iteration["candidate_workspace_path"])
+    (candidate_path / "content.json").write_text(updated_files["content.json"], encoding="utf-8")
+
+    record = outputs_module._load_iteration(iteration["iteration_id"])
+    record.files_after = updated_files
+    outputs_module._save_iteration(record)
+
+    accept = client.post(f"/api/outputs/iterations/{record.iteration_id}/accept")
+    assert accept.status_code == 200
+
+    payload = accept.json()
+    assert payload["ok"] is True
+    assert payload["output"]["files"] == updated_files
+    assert payload["iteration"]["status"] == "accepted"
+    assert payload["freshness"]["status"] == "fresh"
+
+    saved_output = outputs_module._load(output.id)
+    saved_iteration = outputs_module._load_iteration(record.iteration_id)
+
+    assert saved_output.files == updated_files
+    assert saved_iteration.status == "accepted"
+    assert saved_iteration.diff_summary["accepted_output_id"] == output.id
+    assert saved_iteration.diff_summary["accepted_at"]
+
+
+def test_accept_output_iteration_blocks_stale_candidate(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+
+    output = Output(
+        name="Demo",
+        workspace_id="stable-ws",
+        files={
+            "index.html": "<html><body>Before</body></html>",
+            "styles.css": "body { margin: 0; }",
+            "content.json": '{"title":"Before"}',
+        },
+    )
+    outputs_module._save(output)
+
+    response = client.post(
+        f"/api/outputs/{output.id}/iterations/candidate",
+        json={"output_id": output.id, "requested_change": "Change title"},
+    )
+    iteration = response.json()["iteration"]
+
+    record = outputs_module._load_iteration(iteration["iteration_id"])
+    record.files_after = {
+        **record.files_after,
+        "content.json": '{"title":"After"}',
+    }
+    outputs_module._save_iteration(record)
+
+    accept = client.post(f"/api/outputs/iterations/{record.iteration_id}/accept")
+    assert accept.status_code == 409
+    assert accept.json()["detail"]["error"] == "candidate_not_fresh"
+
+    unchanged = outputs_module._load(output.id)
+    still_candidate = outputs_module._load_iteration(record.iteration_id)
+
+    assert unchanged.files == output.files
+    assert still_candidate.status == "candidate"
+
+
+def test_accept_output_iteration_blocks_non_candidate_iteration(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+
+    output = Output(name="Demo", files={"index.html": "A", "styles.css": "", "content.json": "{}"})
+    outputs_module._save(output)
+
+    response = client.post(
+        "/api/outputs/iterations/create",
+        json={"output_id": output.id, "requested_change": "Already accepted"},
+    )
+    iteration = response.json()["iteration"]
+
+    record = outputs_module._load_iteration(iteration["iteration_id"])
+    record.status = "accepted"
+    outputs_module._save_iteration(record)
+
+    accept = client.post(f"/api/outputs/iterations/{record.iteration_id}/accept")
+    assert accept.status_code == 400

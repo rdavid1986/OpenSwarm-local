@@ -304,6 +304,45 @@ def _create_candidate_iteration_from_output(
     return record
 
 
+def _accept_output_iteration(iteration_id: str) -> tuple[Output, OutputIterationRecord, dict]:
+    record = _load_iteration(iteration_id)
+    if record.status != "candidate":
+        raise HTTPException(status_code=400, detail="Only candidate iterations can be accepted")
+
+    output = _load(record.output_id)
+
+    from backend.apps.swarms.workspace_intelligence import build_output_version_freshness
+
+    freshness = build_output_version_freshness(
+        output_id=record.output_id,
+        iteration_id=record.iteration_id,
+    )
+    if freshness.get("status") != "fresh":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "candidate_not_fresh",
+                "freshness": freshness,
+            },
+        )
+
+    now = datetime.now().isoformat()
+    output.files = dict(record.files_after)
+    output.updated_at = now
+    _save(output)
+
+    record.status = "accepted"
+    record.updated_at = now
+    record.diff_summary = {
+        **dict(record.diff_summary or {}),
+        "accepted_at": now,
+        "accepted_output_id": output.id,
+    }
+    _save_iteration(record)
+
+    return output, record, freshness
+
+
 STATIC_OUTPUT_REQUIRED_FILES = {"index.html", "styles.css", "content.json"}
 STATIC_OUTPUT_OPTIONAL_FILES = {"schema.json", "meta.json"}
 STATIC_OUTPUT_ALLOWED_FILES = STATIC_OUTPUT_REQUIRED_FILES | STATIC_OUTPUT_OPTIONAL_FILES
@@ -660,6 +699,17 @@ async def create_candidate_output_iteration(output_id: str, body: OutputIteratio
         validation_refs=body.validation_refs,
     )
     return {"ok": True, "iteration": record.model_dump()}
+
+
+@outputs.router.post("/iterations/{iteration_id}/accept")
+async def accept_output_iteration(iteration_id: str):
+    output, record, freshness = _accept_output_iteration(iteration_id)
+    return {
+        "ok": True,
+        "output": output.model_dump(),
+        "iteration": record.model_dump(),
+        "freshness": freshness,
+    }
 
 
 @outputs.router.post("/create")
