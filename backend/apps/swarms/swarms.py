@@ -2121,6 +2121,17 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
     route = _classify_chat_question(user_message)
     if swarm_mode == "app_builder" and not pending_refinement and route == "normal_chat" and _is_refinement_confirmation(user_message, swarm):
         route = "refinement_request"
+    final_result = getattr(swarm, "final_result", None)
+    existing_refinement = final_result.get("refinement_request") if isinstance(final_result, dict) else None
+    has_refinement_context = isinstance(existing_refinement, dict) and bool(existing_refinement.get("output_id"))
+    if (
+        swarm_mode == "app_builder"
+        and not pending_refinement
+        and not has_refinement_context
+        and route == "normal_chat"
+        and not _is_project_intake_collecting(swarm)
+    ):
+        route = "implementation_request"
     if swarm_mode == "ask" and route == "implementation_request":
         route = "normal_chat"
 

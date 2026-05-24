@@ -444,6 +444,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   }, [dashboard, dashboardId, dispatch]);
 
   const activeSwarmMode = getSwarmModeOption(swarmMode).id;
+  const activeSwarmModeRef = useRef<SwarmMode>(activeSwarmMode);
+  activeSwarmModeRef.current = activeSwarmMode;
   const activeSwarmModel = swarmModel || defaultModel || null;
 
   useEffect(() => {
@@ -455,6 +457,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   }, [draftPrompt, onDraftPromptConsumed]);
 
   const handleSwarmModeChange = useCallback((nextMode: SwarmMode) => {
+    activeSwarmModeRef.current = nextMode;
     dispatch(setSwarmCardMode({ swarmCardId, swarmMode: nextMode }));
     setCustomIntakeMode(false);
   }, [dispatch, swarmCardId]);
@@ -652,7 +655,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
     let swarmIdToRun = activeSwarmId;
     const activeIntent = activeSwarm?.intent || swarmState.swarm?.intent || null;
-    const requestedMode = activeSwarmMode;
+    const requestedMode = getSwarmModeOption(activeSwarmModeRef.current).id;
 
     if (!swarmIdToRun || (cleanPrompt && activeIntent !== 'chat')) {
       const action = await dispatch(createExperimentalSwarm({
@@ -678,7 +681,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       model: activeSwarmModel,
     }));
     dispatch(fetchExperimentalSwarm(swarmIdToRun));
-  }, [activeSwarm?.intent, activeSwarmId, activeSwarmMode, activeSwarmModel, dashboardId, dispatch, lastSubmittedPrompt, onSwarmBound, prompt, swarmCardId, swarmState.swarm?.intent]);
+  }, [activeSwarm?.intent, activeSwarmId, activeSwarmModel, dashboardId, dispatch, lastSubmittedPrompt, onSwarmBound, prompt, swarmCardId, swarmState.swarm?.intent]);
 
   useEffect(() => {
     const intakeStatus = (activeSwarm as any)?.project_intake_state?.status;
@@ -734,12 +737,14 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     if (!activeSwarmId || swarmState.actionLoading) return;
 
     setLastSubmittedPrompt(label);
-    await dispatch(chatExperimentalSwarm({ swarmId: activeSwarmId, message: label, swarmMode: activeSwarmMode, model: activeSwarmModel }));
+    const requestedMode = getSwarmModeOption(activeSwarmModeRef.current).id;
+    await dispatch(chatExperimentalSwarm({ swarmId: activeSwarmId, message: label, swarmMode: requestedMode, model: activeSwarmModel }));
     dispatch(fetchExperimentalSwarm(activeSwarmId));
-  }, [activeSwarmId, activeSwarmMode, activeSwarmModel, dispatch, swarmState.actionLoading]);
+  }, [activeSwarmId, activeSwarmModel, dispatch, swarmState.actionLoading]);
 
-  const handleStartImplementation = useCallback(async () => {
+  const handleStartImplementation = useCallback(async (action?: any) => {
     if (!activeSwarmId || swarmState.actionLoading || startImplementationInFlightRef.current) return;
+    if (action?.enabled === false) return;
 
     startImplementationInFlightRef.current = true;
     setIsStartingImplementation(true);
@@ -1289,10 +1294,10 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         <Button
                           size="small"
                           variant="contained"
-                          disabled={swarmState.actionLoading || isImplementationActionRunning || !activeSwarmId}
+                          disabled={swarmState.actionLoading || isImplementationActionRunning || !activeSwarmId || projectIntake.action.enabled === false}
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleStartImplementation();
+                            handleStartImplementation(projectIntake.action);
                           }}
                           sx={{
                             minHeight: 28,
@@ -1349,7 +1354,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         )}
                         {!projectIntake.action.enabled && (
                           <Typography sx={{ color: c.text.tertiary, fontSize: '0.68rem' }}>
-                            La implementación se habilita cuando el intake queda listo.
+                            {renderText(projectIntake.action.reason, 'La implementacion se habilita cuando el runner experimental esta activo.')}
                           </Typography>
                         )}
                       </Box>

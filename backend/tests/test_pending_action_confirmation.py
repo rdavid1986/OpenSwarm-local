@@ -151,7 +151,7 @@ def test_no_pending_action_ok_does_not_prepare(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     assert called["prepare"] is False
-    assert response.json()["final_result"]["route"] == "normal_chat"
+    assert response.json()["final_result"]["route"] == "implementation_request"
 
 
 def test_update_changes_requested_change_only(monkeypatch, tmp_path):
