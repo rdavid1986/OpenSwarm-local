@@ -12,6 +12,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import GridViewRoundedIcon from '@mui/icons-material/GridViewRounded';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import CloseFullscreenIcon from '@mui/icons-material/CloseFullscreen';
+import DifferenceIcon from '@mui/icons-material/Difference';
 import { Output, OutputIterationRecord, autoRunOutput, autoRunAgentOutput, executeOutput, OutputExecuteResult, fetchOutputIterations, getBackendCode, SERVE_BASE, workspaceIdFromPath } from '@/shared/state/outputsSlice';
 import { setViewCardPosition, setViewCardSize, removeViewCard } from '@/shared/state/dashboardLayoutSlice';
 import { useAppDispatch } from '@/shared/hooks';
@@ -34,6 +35,35 @@ const MAX_PRESET_FRAME_H = 680;
 type DevicePresetKey = 'desktop-full-hd' | 'desktop' | 'laptop' | 'tablet' | 'mobile' | 'custom';
 
 type DevicePreset = { label: string; width: number; height: number };
+
+type OutputDiffRow = {
+  path: string;
+  status: 'added' | 'removed' | 'modified' | 'unchanged';
+  before: string;
+  after: string;
+};
+
+function buildOutputDiffRows(iteration: OutputIterationRecord | null): OutputDiffRow[] {
+  if (!iteration) return [];
+  const before = iteration.files_before || {};
+  const after = iteration.files_after || {};
+  const paths = Array.from(new Set([...Object.keys(before), ...Object.keys(after)])).sort();
+
+  return paths.map((path) => {
+    const beforeContent = before[path] ?? '';
+    const afterContent = after[path] ?? '';
+    let status: OutputDiffRow['status'] = 'unchanged';
+    if (!(path in before)) status = 'added';
+    else if (!(path in after)) status = 'removed';
+    else if (beforeContent !== afterContent) status = 'modified';
+
+    return { path, status, before: beforeContent, after: afterContent };
+  });
+}
+
+function countChangedDiffRows(rows: OutputDiffRow[]): number {
+  return rows.filter((row) => row.status !== 'unchanged').length;
+}
 
 const DEVICE_PRESETS: Record<DevicePresetKey, DevicePreset> = {
   'desktop-full-hd': { label: 'Desktop Full HD', width: 1920, height: 1080 },
@@ -122,6 +152,8 @@ const DashboardViewCard: React.FC<Props> = ({
   const [previewMode, setPreviewMode] = useState<'stable' | 'candidate'>('stable');
   const [candidateIteration, setCandidateIteration] = useState<OutputIterationRecord | null>(null);
 
+  const [showDiffPanel, setShowDiffPanel] = useState(false);
+
   const hasAutoRun = !!(output.auto_run_config?.enabled && output.auto_run_config?.prompt);
   const selectedDevice = DEVICE_PRESETS[selectedPreset];
 
@@ -153,6 +185,9 @@ const DashboardViewCard: React.FC<Props> = ({
     }
     return `${SERVE_BASE}/${output.id}/serve/index.html`;
   }, [candidateWorkspaceId, output.id, previewMode]);
+
+  const outputDiffRows = useMemo(() => buildOutputDiffRows(candidateIteration), [candidateIteration]);
+  const changedDiffCount = useMemo(() => countChangedDiffRows(outputDiffRows), [outputDiffRows]);
 
   // ---- Drag via header ----
   const DRAG_THRESHOLD = 3;
@@ -564,6 +599,34 @@ const DashboardViewCard: React.FC<Props> = ({
 
         <Box sx={{ flex: 1 }} />
 
+        {candidateIteration && (
+          <Tooltip title="View candidate file diff" placement="top">
+            <Button
+              size="small"
+              data-preview-control="true"
+              onClick={() => setShowDiffPanel((value) => !value)}
+              onPointerDown={(e) => e.stopPropagation()}
+              startIcon={<DifferenceIcon sx={{ fontSize: 14 }} />}
+              sx={{
+                minWidth: 0,
+                px: 0.9,
+                py: 0.25,
+                borderRadius: `${c.radius.md}px`,
+                color: showDiffPanel ? c.text.primary : c.text.muted,
+                border: `1px solid ${showDiffPanel ? c.border.strong : c.border.medium}`,
+                bgcolor: showDiffPanel ? c.bg.muted : c.bg.surface,
+                fontSize: '0.68rem',
+                textTransform: 'none',
+                cursor: 'pointer',
+                '& .MuiButton-startIcon': { mr: 0.35 },
+                '&:hover': { bgcolor: c.bg.muted },
+              }}
+            >
+              Diff {changedDiffCount > 0 ? `(${changedDiffCount})` : ''}
+            </Button>
+          </Tooltip>
+        )}
+
         {output.source_swarm_id && (
           <Tooltip title="Refine this app in the source Swarm" placement="top">
             <Button
@@ -660,6 +723,139 @@ const DashboardViewCard: React.FC<Props> = ({
           p: `${PREVIEW_BODY_PAD}px`,
         }}
       >
+        {showDiffPanel && candidateIteration && (
+          <Box
+            data-preview-control="true"
+            onPointerDown={(e) => e.stopPropagation()}
+            sx={{
+              position: 'absolute',
+              top: 12,
+              right: 12,
+              width: 420,
+              maxWidth: 'calc(100% - 24px)',
+              maxHeight: 'calc(100% - 24px)',
+              zIndex: 8,
+              display: 'flex',
+              flexDirection: 'column',
+              border: `1px solid ${c.border.medium}`,
+              borderRadius: `${c.radius.lg}px`,
+              bgcolor: c.bg.surface,
+              boxShadow: c.shadow.lg,
+              overflow: 'hidden',
+            }}
+          >
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                px: 1.25,
+                py: 0.85,
+                borderBottom: `1px solid ${c.border.subtle}`,
+                bgcolor: c.bg.secondary,
+              }}
+            >
+              <DifferenceIcon sx={{ fontSize: 16, color: c.text.muted }} />
+              <Typography sx={{ color: c.text.primary, fontWeight: 600, fontSize: '0.78rem' }}>
+                Candidate File Diff
+              </Typography>
+              <Box sx={{ flex: 1 }} />
+              <Typography sx={{ color: c.text.ghost, fontSize: '0.68rem', fontFamily: c.font.mono }}>
+                {changedDiffCount} changed
+              </Typography>
+              <IconButton
+                size="small"
+                data-preview-control="true"
+                onClick={() => setShowDiffPanel(false)}
+                sx={{ color: c.text.tertiary, p: 0.25 }}
+              >
+                <Typography sx={{ fontSize: '0.8rem' }}>×</Typography>
+              </IconButton>
+            </Box>
+
+            <Box
+              sx={{
+                overflow: 'auto',
+                p: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 0.75,
+                '&::-webkit-scrollbar': { width: 5, height: 5 },
+                '&::-webkit-scrollbar-track': { background: 'transparent' },
+                '&::-webkit-scrollbar-thumb': {
+                  background: c.border.medium,
+                  borderRadius: 3,
+                  '&:hover': { background: c.border.strong },
+                },
+              }}
+            >
+              {outputDiffRows.length === 0 || changedDiffCount === 0 ? (
+                <Typography sx={{ color: c.text.ghost, fontSize: '0.76rem' }}>
+                  No file changes detected yet. The candidate currently matches the stable output.
+                </Typography>
+              ) : (
+                outputDiffRows
+                  .filter((row) => row.status !== 'unchanged')
+                  .map((row) => (
+                    <Box
+                      key={row.path}
+                      sx={{
+                        border: `1px solid ${c.border.subtle}`,
+                        borderRadius: `${c.radius.md}px`,
+                        overflow: 'hidden',
+                        bgcolor: c.bg.page,
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 0.75,
+                          px: 1,
+                          py: 0.65,
+                          borderBottom: `1px solid ${c.border.subtle}`,
+                          bgcolor: c.bg.surface,
+                        }}
+                      >
+                        <Typography sx={{ color: c.text.primary, fontSize: '0.72rem', fontFamily: c.font.mono, flex: 1 }}>
+                          {row.path}
+                        </Typography>
+                        <Typography
+                          sx={{
+                            color: row.status === 'added' ? c.status.success : row.status === 'removed' ? c.status.error : c.accent.primary,
+                            fontSize: '0.65rem',
+                            fontFamily: c.font.mono,
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          {row.status}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
+                        <Box sx={{ p: 0.85, borderRight: `1px solid ${c.border.subtle}` }}>
+                          <Typography sx={{ color: c.status.error, fontSize: '0.62rem', mb: 0.5, fontFamily: c.font.mono }}>
+                            Before
+                          </Typography>
+                          <Box component="pre" sx={{ m: 0, color: c.text.muted, fontSize: '0.64rem', fontFamily: c.font.mono, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 160, overflow: 'auto' }}>
+                            {row.before || '(empty)'}
+                          </Box>
+                        </Box>
+                        <Box sx={{ p: 0.85 }}>
+                          <Typography sx={{ color: c.status.success, fontSize: '0.62rem', mb: 0.5, fontFamily: c.font.mono }}>
+                            After
+                          </Typography>
+                          <Box component="pre" sx={{ m: 0, color: c.text.muted, fontSize: '0.64rem', fontFamily: c.font.mono, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 160, overflow: 'auto' }}>
+                            {row.after || '(empty)'}
+                          </Box>
+                        </Box>
+                      </Box>
+                    </Box>
+                  ))
+              )}
+            </Box>
+          </Box>
+        )}
+
         <Box
           sx={{
             width: isMaximized ? 'max-content' : scaledFrameW,
