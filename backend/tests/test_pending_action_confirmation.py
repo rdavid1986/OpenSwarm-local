@@ -132,7 +132,50 @@ def test_semantic_confirm_triggers_prepare(monkeypatch, tmp_path):
     body = response.json()
     assert body["final_result"]["refinement_request"]["status"] == "confirmed"
     assert body["final_result"]["prepare_output_refinement"]["metadata"]["refinement_status"] == "prepared"
-    assert "no ejecute tools" in body["final_result"]["summary"].lower()
+    assert "todavía no modifiqué la app" in body["final_result"]["summary"].lower() or "todavia no modifique la app" in body["final_result"]["summary"].lower()
+
+
+def test_confirmation_phrase_overrides_needs_clarification(monkeypatch, tmp_path):
+    client, orchestrator, store = _client(monkeypatch, tmp_path)
+    swarm = _create_chat_swarm(store, orchestrator)
+    called = {"prepare": False}
+
+    async def fake_resolver(**kwargs):
+        return {
+            "classification": "needs_clarification",
+            "pending_action": "confirm_refinement",
+            "output_id": "out-123",
+            "requested_change": "Make the hero blue.",
+            "confidence": 0.2,
+            "safe_to_prepare": False,
+            "reason": "Model was unsure.",
+            "clarification_question": "Queres confirmar, actualizar, cancelar o solo revisar este refinamiento pendiente?",
+        }
+
+    def fake_prepare(**kwargs):
+        called["prepare"] = True
+        current = store.load(kwargs["swarm_id"])
+        metadata = {
+            "source_swarm_id": kwargs["swarm_id"],
+            "output_id": kwargs["output_id"],
+            "requested_change": kwargs["requested_change"],
+            "refinement_status": "prepared",
+        }
+        return store.save(current), [], metadata
+
+    monkeypatch.setattr(swarms_module, "resolve_pending_action_intent", fake_resolver)
+    monkeypatch.setattr(orchestrator, "prepare_output_refinement", fake_prepare)
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "ok haz los cambios", "swarm_mode": "app_builder"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert called["prepare"] is True
+    assert body["final_result"]["pending_action_resolution"]["classification"] == "confirm_pending_action"
+    assert body["final_result"]["refinement_request"]["status"] == "confirmed"
 
 
 def test_no_pending_action_ok_does_not_prepare(monkeypatch, tmp_path):
@@ -152,6 +195,71 @@ def test_no_pending_action_ok_does_not_prepare(monkeypatch, tmp_path):
     assert response.status_code == 200
     assert called["prepare"] is False
     assert response.json()["final_result"]["route"] == "implementation_request"
+
+
+def test_preview_refine_registers_candidate_metadata_without_execution(monkeypatch, tmp_path):
+    client, orchestrator, store = _client(monkeypatch, tmp_path)
+    swarm = _create_chat_swarm(store, orchestrator, pending=False)
+    monkeypatch.setattr(swarms_module, "OllamaAdapter", _FakeNormalChatAdapter)
+
+    message = "\n".join([
+        "Quiero refinar la app generada desde esta Preview.",
+        "",
+        "Output ID: out-123",
+        "Output name: Demo",
+        "Preset actual: desktop",
+        f"Source swarm: {swarm.id}",
+        "Source task: task-1",
+        "Validation status: verified",
+        "Artifacts: art-1",
+        "Evidence: ev-1",
+        "",
+        "Cambio solicitado:",
+        "Make the hero clearer.",
+        "",
+        "Refinamiento preparado para esta app. Se creó una candidate para revisión en Preview.",
+    ])
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": message, "swarm_mode": "app_builder"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    refinement = body["final_result"]["refinement_request"]
+    assert refinement["output_id"] == "out-123"
+    assert refinement["requested_change"] == "Make the hero clearer."
+    assert "candidate_iteration_id" not in refinement
+    assert "candidate_workspace_path" not in refinement
+    assert "base_workspace_path" not in refinement
+    assert refinement.get("candidate_status") is None
+    assert refinement.get("files_changed") is not True
+    assert refinement["status"] == "received"
+    assert refinement["next_action"] == "refinement_pipeline_pending"
+    assert body["final_result"].get("execution_status") is None
+    summary = body["final_result"]["summary"].lower()
+    assert (
+        "todavía no modifiqué la app" in summary
+        or "todavia no modifique la app" in summary
+        or "no se modific" in summary
+        or "no se generaron nuevos artifacts" in summary
+    )
+    visible_user_message = [
+        message["payload"]["content"]
+        for message in body["messages"]
+        if message["payload"].get("role") == "user"
+    ][-1]
+    assert "Output ID:" not in visible_user_message
+    assert "Source swarm:" not in visible_user_message
+    assert "Source task:" not in visible_user_message
+    assert "Artifacts:" not in visible_user_message
+    assert "Evidence:" not in visible_user_message
+    assert "Candidate iteration ID:" not in visible_user_message
+    assert "Candidate workspace:" not in visible_user_message
+    assert "Base workspace:" not in visible_user_message
+    assert "Quiero refinar la app generada desde esta Preview" not in visible_user_message
+    assert "Cambio solicitado:" not in visible_user_message
 
 
 def test_update_changes_requested_change_only(monkeypatch, tmp_path):

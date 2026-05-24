@@ -524,25 +524,105 @@ def _looks_like_output_refinement_request(user_message: str) -> bool:
 
 def _extract_output_refinement_request(user_message: str) -> dict[str, Any]:
     output_id = ""
+    output_name = ""
     source_swarm_id = ""
+    source_task_id = ""
     requested_change = ""
+    validation_status = ""
+    artifact_refs: list[str] = []
+    evidence_refs: list[str] = []
+    candidate_iteration_id = ""
+    candidate_workspace_path = ""
+    base_workspace_path = ""
+    candidate_reused = False
+    collecting_change = False
+
+    def refs_from(value: str) -> list[str]:
+        refs: list[str] = []
+        for item in value.split(","):
+            ref = item.strip()
+            if ref and ref.lower() not in {"none", "unknown"}:
+                refs.append(ref)
+        return refs
+
     for raw_line in user_message.splitlines():
         line = raw_line.strip()
         lower = line.lower()
         if lower.startswith("output id:"):
             output_id = line.split(":", 1)[1].strip()
+            collecting_change = False
+        elif lower.startswith("output name:"):
+            output_name = line.split(":", 1)[1].strip()
+            collecting_change = False
         elif lower.startswith("source swarm:"):
             source_swarm_id = line.split(":", 1)[1].strip()
+            collecting_change = False
+        elif lower.startswith("source task:"):
+            source_task_id = line.split(":", 1)[1].strip()
+            collecting_change = False
+        elif lower.startswith("validation status:"):
+            validation_status = line.split(":", 1)[1].strip()
+            collecting_change = False
+        elif lower.startswith("artifacts:"):
+            artifact_refs = refs_from(line.split(":", 1)[1].strip())
+            collecting_change = False
+        elif lower.startswith("evidence:"):
+            evidence_refs = refs_from(line.split(":", 1)[1].strip())
+            collecting_change = False
+        elif lower.startswith("candidate iteration id:"):
+            candidate_iteration_id = line.split(":", 1)[1].strip()
+            collecting_change = False
+        elif lower.startswith("candidate workspace:"):
+            candidate_workspace_path = line.split(":", 1)[1].strip()
+            collecting_change = False
+        elif lower.startswith("base workspace:"):
+            base_workspace_path = line.split(":", 1)[1].strip()
+            collecting_change = False
+        elif lower.startswith("candidate reused:"):
+            candidate_reused = line.split(":", 1)[1].strip().lower() in {"yes", "true", "1", "si", "sí"}
+            collecting_change = False
         elif lower.startswith("cambio solicitado:"):
             requested_change = line.split(":", 1)[1].strip()
+            collecting_change = True
+        elif collecting_change and line:
+            if (
+                lower.startswith("refinamiento preparado para esta app")
+                or lower.startswith("candidate preparada")
+                or lower.startswith("candidate disponible")
+            ):
+                collecting_change = False
+                continue
+            requested_change = "\n".join(part for part in (requested_change, line) if part)
 
-    return {
+    refinement = {
         "output_id": output_id,
+        "output_name": output_name,
         "source_swarm_id": source_swarm_id,
+        "source_task_id": source_task_id,
         "requested_change": requested_change,
+        "validation_status": validation_status,
+        "artifact_refs": artifact_refs,
+        "evidence_refs": evidence_refs,
         "status": "received",
         "next_action": "refinement_pipeline_pending",
     }
+    if candidate_iteration_id:
+        refinement["candidate_iteration_id"] = candidate_iteration_id
+        refinement["candidate_workspace_path"] = candidate_workspace_path
+        refinement["base_workspace_path"] = base_workspace_path
+        refinement["candidate_reused"] = candidate_reused
+        refinement["candidate_status"] = "candidate"
+        refinement["files_changed"] = False
+    return refinement
+
+
+def _visible_refinement_chat_message(user_message: str) -> str:
+    if not _looks_like_output_refinement_request(user_message):
+        return user_message
+
+    refinement = _extract_output_refinement_request(user_message)
+    requested_change = str(refinement.get("requested_change") or "").strip()
+    return requested_change or user_message
 
 
 def _get_pending_refinement_request(swarm) -> dict[str, Any] | None:
@@ -587,6 +667,14 @@ def _is_refinement_confirmation(user_message: str, swarm) -> bool:
         "ejecutá",
         "implementa",
         "implementá",
+        "confirmo",
+        "quiero confirmar",
+        "ok haz los cambios",
+        "ok hacé los cambios",
+        "ok hace los cambios",
+        "haz los cambios",
+        "hacé los cambios",
+        "hace los cambios",
     }
     return normalized in confirmation_phrases
 
@@ -606,7 +694,19 @@ def _refinement_request_response(user_message: str, swarm=None, swarm_mode: str 
         refinement_request=refinement,
         swarm_mode=swarm_mode,
     )
-    return ri_result.assistant_content or "", ri_result.payload
+
+    requested_change = str(refinement.get("requested_change") or "").strip()
+    assistant_content = (
+        "Entendido. Dejé ese cambio preparado para revisión en Preview. "
+        "Todavía no modifiqué la app."
+    )
+    if requested_change:
+        assistant_content = (
+            "Entendido. Dejé ese cambio preparado para revisión en Preview. "
+            "Todavía no modifiqué la app."
+        )
+
+    return assistant_content, ri_result.payload
 
 
 def _implementation_request_explanation() -> str:
@@ -1610,24 +1710,12 @@ def _pending_refinement_chat_content(
 
     if classification == "confirm_pending_action":
         if validation_errors:
-            return "\n".join([
-                f"Intente preparar el refinamiento para el Output {output_id}, pero la validacion lo bloqueo.",
-                "",
-                "Cambio solicitado:",
-                requested_change or "No especificado.",
-                "",
-                f"Errores de validacion: {validation_errors}",
-                "No ejecute tools ni modifique la app.",
-            ])
+            return "No pude preparar ese cambio porque la validación lo bloqueó. La app no fue modificada."
         refinement_status = (prepare_metadata or {}).get("refinement_status") or "prepared"
         lines = [
-            f"Refinamiento preparado para el Output {output_id}.",
+            "Confirmado. El cambio quedó preparado para la siguiente fase.",
             "",
-            "Cambio confirmado:",
-            requested_change or "No especificado.",
-            "",
-            f"Estado real: quedo en estado {refinement_status}, con metadata validada para la siguiente fase.",
-            "No ejecute tools ni modifique la app todavia.",
+            "Todavía no modifiqué la app.",
         ]
 
         if isinstance(guard_result, dict):
@@ -1976,12 +2064,13 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
 
     swarm_mode = _normalize_swarm_mode(body.swarm_mode)
     coordinator_id = swarm.coordinator_contract_id or (swarm.contracts[0].id if swarm.contracts else "swarm")
+    visible_user_message = _visible_refinement_chat_message(user_message)
     swarm.messages.append(
         AgentToAgentMessage(
             type="chat_message",
             from_agent_id="user",
             to_agent_id=coordinator_id,
-            payload={"role": "user", "content": user_message, "swarm_mode": swarm_mode},
+            payload={"role": "user", "content": visible_user_message, "swarm_mode": swarm_mode},
             requires_response=True,
         )
     )
@@ -1995,16 +2084,16 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
             model=body.model,
         )
         classification = str(resolution.get("classification") or "needs_clarification")
-        if classification == "no_pending_action" and _is_refinement_confirmation(user_message, swarm):
+        if classification in {"no_pending_action", "needs_clarification"} and _is_refinement_confirmation(user_message, swarm):
             resolution = {
                 **resolution,
                 "classification": "confirm_pending_action",
                 "pending_action": "confirm_refinement",
                 "output_id": pending_refinement.get("output_id"),
                 "requested_change": pending_refinement.get("requested_change"),
-                "confidence": 0.70,
+                "confidence": 0.75,
                 "safe_to_prepare": True,
-                "reason": "Compatibility fallback matched an existing confirmation phrase after model resolution.",
+                "reason": "Compatibility fallback matched an existing confirmation phrase for a pending refinement.",
                 "clarification_question": None,
             }
             classification = "confirm_pending_action"

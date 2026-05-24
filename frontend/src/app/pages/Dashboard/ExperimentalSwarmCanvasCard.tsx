@@ -29,7 +29,7 @@ import {
   startExperimentalImplementation,
 } from '@/shared/state/experimentalSwarmsSlice';
 import { renameDashboard } from '@/shared/state/dashboardsSlice';
-import { fetchOutputs } from '@/shared/state/outputsSlice';
+import { createCandidateOutputIteration, fetchOutputIterations, fetchOutputs, type OutputIterationRecord } from '@/shared/state/outputsSlice';
 import { useAppDispatch, useAppSelector } from '@/shared/hooks';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import type { CardType } from './useDashboardSelection';
@@ -82,6 +82,154 @@ const CORNER_SIZE = 14;
 const MIN_SIDE_W = 220;
 const MAX_SIDE_W = 520;
 const DEFAULT_SWARM_CONTEXT_LIMIT = 32_000;
+
+const PREVIEW_REFINEMENT_MARKER = 'quiero refinar la app generada desde esta preview';
+
+function parseCsvRefs(value: string | null | undefined): string[] {
+  return (value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item && item.toLowerCase() !== 'none' && item.toLowerCase() !== 'unknown');
+}
+
+function parsePreviewRefinementDraft(message: string): {
+  outputId: string;
+  outputName: string;
+  sourceSwarmId: string;
+  sourceTaskId: string;
+  requestedChange: string;
+  validationStatus: string;
+  artifactRefs: string[];
+  evidenceRefs: string[];
+} | null {
+  const lines = (message || '').split(/\r?\n/);
+  const normalized = message.toLowerCase();
+  if (!normalized.includes(PREVIEW_REFINEMENT_MARKER)) return null;
+
+  const metadata: Record<string, string> = {};
+  let requestedChange = '';
+  let collectingChange = false;
+  const metadataPrefixes = [
+    'output id:',
+    'output name:',
+    'preset actual:',
+    'source swarm:',
+    'source task:',
+    'validation status:',
+    'artifacts:',
+    'evidence:',
+    'candidate iteration id:',
+    'candidate workspace:',
+    'base workspace:',
+    'candidate reused:',
+  ];
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    const lower = line.toLowerCase();
+    const metadataPrefix = metadataPrefixes.find((prefix) => lower.startsWith(prefix));
+
+    if (lower.startsWith('cambio solicitado:')) {
+      collectingChange = true;
+      requestedChange = line.split(':', 2)[1]?.trim() || '';
+      continue;
+    }
+
+    if (metadataPrefix) {
+      collectingChange = false;
+      metadata[metadataPrefix.slice(0, -1)] = line.split(':', 2)[1]?.trim() || '';
+      continue;
+    }
+
+    if (collectingChange && line) {
+      requestedChange = [requestedChange, line].filter(Boolean).join('\n');
+    }
+  }
+
+  const outputId = metadata['output id'] || '';
+  const sourceSwarmId = metadata['source swarm'] || '';
+  if (!outputId || !sourceSwarmId) return null;
+
+  return {
+    outputId,
+    outputName: metadata['output name'] || '',
+    sourceSwarmId,
+    sourceTaskId: metadata['source task'] || '',
+    requestedChange: requestedChange.trim(),
+    validationStatus: metadata['validation status'] || '',
+    artifactRefs: parseCsvRefs(metadata.artifacts),
+    evidenceRefs: parseCsvRefs(metadata.evidence),
+  };
+}
+
+function appendCandidateMetadataToRefinementDraft(
+  message: string,
+  candidate: OutputIterationRecord,
+  reused: boolean,
+): string {
+  void candidate;
+  const statusLine = reused
+    ? 'Refinamiento preparado para esta app. La candidate existente quedó disponible para revisión en Preview.'
+    : 'Refinamiento preparado para esta app. Se creó una candidate para revisión en Preview.';
+  const cleanLines = message
+    .split('\n')
+    .filter((line) => {
+      const lower = line.trim().toLowerCase();
+      return !(
+        lower.startsWith('candidate iteration id:')
+        || lower.startsWith('candidate workspace:')
+        || lower.startsWith('base workspace:')
+        || lower.startsWith('candidate reused:')
+      );
+    });
+
+  const changeIndex = cleanLines.findIndex((line) => line.trim().toLowerCase().startsWith('cambio solicitado:'));
+  if (changeIndex >= 0) {
+    cleanLines.splice(changeIndex, 0, statusLine, '');
+    return cleanLines.join('\n').trimEnd();
+  }
+
+  return [
+    cleanLines.join('\n').trimEnd(),
+    '',
+    statusLine,
+  ].join('\n');
+}
+
+function buildVisiblePreviewRefinementMessage(
+  draft: ReturnType<typeof parsePreviewRefinementDraft>,
+  _reused: boolean,
+): string {
+  if (!draft) return '';
+  return draft.requestedChange.trim();
+}
+
+function buildInternalPreviewRefinementMessage(
+  draft: ReturnType<typeof parsePreviewRefinementDraft>,
+  requestedChange: string,
+): string {
+  if (!draft) return requestedChange;
+  const artifactRefs = (draft.artifactRefs || []).join(', ') || 'none';
+  const evidenceRefs = (draft.evidenceRefs || []).join(', ') || 'none';
+  return [
+    'Quiero refinar la app generada desde esta Preview.',
+    '',
+    `Output ID: ${draft.outputId}`,
+    `Output name: ${draft.outputName || ''}`,
+    `Source swarm: ${draft.sourceSwarmId}`,
+    `Source task: ${draft.sourceTaskId || 'unknown'}`,
+    `Validation status: ${draft.validationStatus || 'unknown'}`,
+    `Artifacts: ${artifactRefs}`,
+    `Evidence: ${evidenceRefs}`,
+    '',
+    'Cambio solicitado:',
+    requestedChange,
+  ].join('\n');
+}
+
+function emitOutputIterationsUpdated(outputId: string): void {
+  window.dispatchEvent(new CustomEvent('openswarm:output-iterations-updated', { detail: { outputId } }));
+}
 
 function getSwarmMessageContextText(message: any): string {
   if (!message) return '';
@@ -443,6 +591,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     }));
   }, [dashboard, dashboardId, dispatch]);
 
+  const [pendingPreviewRefinementDraft, setPendingPreviewRefinementDraft] = useState<ReturnType<typeof parsePreviewRefinementDraft> | null>(null);
+
   const activeSwarmMode = getSwarmModeOption(swarmMode).id;
   const activeSwarmModeRef = useRef<SwarmMode>(activeSwarmMode);
   activeSwarmModeRef.current = activeSwarmMode;
@@ -450,6 +600,17 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
   useEffect(() => {
     if (!draftPrompt) return;
+    const refinementDraft = parsePreviewRefinementDraft(draftPrompt);
+    if (refinementDraft) {
+      setPendingPreviewRefinementDraft({ ...refinementDraft, requestedChange: '' });
+      setPrompt('');
+      setCustomIntakeMode(false);
+      window.setTimeout(() => promptInputRef.current?.focus(), 0);
+      onDraftPromptConsumed?.();
+      return;
+    }
+
+    setPendingPreviewRefinementDraft(null);
     setPrompt(draftPrompt);
     setCustomIntakeMode(false);
     window.setTimeout(() => promptInputRef.current?.focus(), 0);
@@ -648,10 +809,15 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     setCustomIntakeMode(false);
     if (!cleanPrompt && !activeSwarmId) return;
 
-    if (cleanPrompt) {
-      setLastSubmittedPrompt(cleanPrompt);
-      setPrompt('');
+    let messageToSend = cleanPrompt || lastSubmittedPrompt || 'Continue';
+    let visibleSubmittedPrompt = messageToSend;
+
+    if (pendingPreviewRefinementDraft && cleanPrompt) {
+      messageToSend = buildInternalPreviewRefinementMessage(pendingPreviewRefinementDraft, cleanPrompt);
+      visibleSubmittedPrompt = cleanPrompt;
     }
+
+    if (cleanPrompt) setPrompt('');
 
     let swarmIdToRun = activeSwarmId;
     const activeIntent = activeSwarm?.intent || swarmState.swarm?.intent || null;
@@ -674,14 +840,40 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
     if (!swarmIdToRun) return;
 
+    const refinementDraft = parsePreviewRefinementDraft(messageToSend);
+    if (refinementDraft) {
+      try {
+        const existingIterations = await dispatch(fetchOutputIterations(refinementDraft.outputId)).unwrap();
+        const latestCandidate = [...existingIterations]
+          .reverse()
+          .find((iteration) => iteration.status === 'candidate' && iteration.candidate_workspace_path);
+        const candidate = latestCandidate || (await dispatch(createCandidateOutputIteration({
+          outputId: refinementDraft.outputId,
+          requestedChange: refinementDraft.requestedChange,
+          sourceSwarmId: refinementDraft.sourceSwarmId,
+          evidenceRefs: refinementDraft.evidenceRefs,
+        })).unwrap()).iteration;
+        const reusedCandidate = Boolean(latestCandidate);
+        messageToSend = appendCandidateMetadataToRefinementDraft(messageToSend, candidate, reusedCandidate);
+        visibleSubmittedPrompt = buildVisiblePreviewRefinementMessage(refinementDraft, reusedCandidate);
+        setPendingPreviewRefinementDraft(null);
+        emitOutputIterationsUpdated(refinementDraft.outputId);
+      } catch (error) {
+        console.error('Failed to prepare candidate iteration for Preview refinement', error);
+        if (cleanPrompt) setPrompt(cleanPrompt);
+        return;
+      }
+    }
+
+    setLastSubmittedPrompt(visibleSubmittedPrompt);
     await dispatch(chatExperimentalSwarm({
       swarmId: swarmIdToRun,
-      message: cleanPrompt || lastSubmittedPrompt || 'Continue',
+      message: messageToSend,
       swarmMode: requestedMode,
       model: activeSwarmModel,
     }));
     dispatch(fetchExperimentalSwarm(swarmIdToRun));
-  }, [activeSwarm?.intent, activeSwarmId, activeSwarmModel, dashboardId, dispatch, lastSubmittedPrompt, onSwarmBound, prompt, swarmCardId, swarmState.swarm?.intent]);
+  }, [activeSwarm?.intent, activeSwarmId, activeSwarmModel, dashboardId, dispatch, lastSubmittedPrompt, onSwarmBound, pendingPreviewRefinementDraft, prompt, swarmCardId, swarmState.swarm?.intent]);
 
   useEffect(() => {
     const intakeStatus = (activeSwarm as any)?.project_intake_state?.status;

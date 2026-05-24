@@ -112,6 +112,76 @@ export const fetchOutputIterations = createAsyncThunk(
   }
 );
 
+export interface CreateCandidateOutputIterationArgs {
+  outputId: string;
+  requestedChange: string;
+  sourceSwarmId?: string | null;
+  parentIterationId?: string | null;
+  evidenceRefs?: string[];
+  validationRefs?: string[];
+}
+
+export const createCandidateOutputIteration = createAsyncThunk(
+  'outputs/createCandidateIteration',
+  async ({
+    outputId,
+    requestedChange,
+    sourceSwarmId,
+    parentIterationId,
+    evidenceRefs = [],
+    validationRefs = [],
+  }: CreateCandidateOutputIterationArgs) => {
+    const res = await fetch(`${OUTPUTS_API}/${outputId}/iterations/candidate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        output_id: outputId,
+        requested_change: requestedChange,
+        source_swarm_id: sourceSwarmId,
+        parent_iteration_id: parentIterationId,
+        evidence_refs: evidenceRefs,
+        validation_refs: validationRefs,
+      }),
+    });
+    if (!res.ok) throw new Error(`Create candidate iteration failed: ${res.status}`);
+    return (await res.json()) as OutputIterationActionResult;
+  }
+);
+
+export interface OutputIterationActionResult {
+  ok: boolean;
+  output?: Output;
+  iteration: OutputIterationRecord;
+  freshness?: Record<string, any>;
+}
+
+export const acceptOutputIteration = createAsyncThunk(
+  'outputs/acceptIteration',
+  async (iterationId: string) => {
+    const res = await fetch(`${OUTPUTS_API}/iterations/${iterationId}/accept`, { method: 'POST' });
+    if (!res.ok) throw new Error(`Accept iteration failed: ${res.status}`);
+    return (await res.json()) as OutputIterationActionResult;
+  }
+);
+
+export const discardOutputIteration = createAsyncThunk(
+  'outputs/discardIteration',
+  async (iterationId: string) => {
+    const res = await fetch(`${OUTPUTS_API}/iterations/${iterationId}/discard`, { method: 'POST' });
+    if (!res.ok) throw new Error(`Discard iteration failed: ${res.status}`);
+    return (await res.json()) as OutputIterationActionResult;
+  }
+);
+
+export const restoreOutputIteration = createAsyncThunk(
+  'outputs/restoreIteration',
+  async (iterationId: string) => {
+    const res = await fetch(`${OUTPUTS_API}/iterations/${iterationId}/restore`, { method: 'POST' });
+    if (!res.ok) throw new Error(`Restore iteration failed: ${res.status}`);
+    return (await res.json()) as OutputIterationActionResult;
+  }
+);
+
 interface OutputsState {
   items: Record<string, Output>;
   loading: boolean;
@@ -239,6 +309,12 @@ const outputsSlice = createSlice({
       .addCase(fetchOutputs.rejected, (state) => { state.loading = false; state.loaded = true; })
       .addCase(createOutput.fulfilled, (state, action) => { state.items[action.payload.id] = action.payload; })
       .addCase(updateOutput.fulfilled, (state, action) => { state.items[action.payload.id] = action.payload; })
+      .addCase(acceptOutputIteration.fulfilled, (state, action) => {
+        if (action.payload.output) state.items[action.payload.output.id] = action.payload.output;
+      })
+      .addCase(restoreOutputIteration.fulfilled, (state, action) => {
+        if (action.payload.output) state.items[action.payload.output.id] = action.payload.output;
+      })
       .addCase(deleteOutput.fulfilled, (state, action) => { delete state.items[action.payload]; });
   },
 });

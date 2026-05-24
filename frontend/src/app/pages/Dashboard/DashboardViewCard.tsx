@@ -13,7 +13,7 @@ import GridViewRoundedIcon from '@mui/icons-material/GridViewRounded';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import CloseFullscreenIcon from '@mui/icons-material/CloseFullscreen';
 import DifferenceIcon from '@mui/icons-material/Difference';
-import { Output, OutputIterationRecord, autoRunOutput, autoRunAgentOutput, executeOutput, OutputExecuteResult, fetchOutputIterations, getBackendCode, SERVE_BASE, workspaceIdFromPath } from '@/shared/state/outputsSlice';
+import { Output, OutputIterationRecord, acceptOutputIteration, autoRunOutput, autoRunAgentOutput, discardOutputIteration, executeOutput, OutputExecuteResult, fetchOutputIterations, getBackendCode, SERVE_BASE, workspaceIdFromPath } from '@/shared/state/outputsSlice';
 import { setViewCardPosition, setViewCardSize, removeViewCard } from '@/shared/state/dashboardLayoutSlice';
 import { useAppDispatch } from '@/shared/hooks';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
@@ -153,30 +153,50 @@ const DashboardViewCard: React.FC<Props> = ({
   const [candidateIteration, setCandidateIteration] = useState<OutputIterationRecord | null>(null);
 
   const [showDiffPanel, setShowDiffPanel] = useState(false);
+  const [iterationActionLoading, setIterationActionLoading] = useState<'accept' | 'discard' | null>(null);
+  const [iterationActionError, setIterationActionError] = useState<string | null>(null);
+
 
   const hasAutoRun = !!(output.auto_run_config?.enabled && output.auto_run_config?.prompt);
   const selectedDevice = DEVICE_PRESETS[selectedPreset];
 
+  const refreshCandidateIterations = useCallback(async () => {
+    const iterations = await dispatch(fetchOutputIterations(output.id)).unwrap();
+    const latestCandidate = [...iterations]
+      .reverse()
+      .find((iteration) => iteration.status === 'candidate' && iteration.candidate_workspace_path);
+    setCandidateIteration(latestCandidate ?? null);
+    if (latestCandidate) {
+      setPreviewMode('candidate');
+      setIterationActionError(null);
+    } else {
+      setPreviewMode('stable');
+      setShowDiffPanel(false);
+    }
+    return latestCandidate ?? null;
+  }, [dispatch, output.id]);
+
   useEffect(() => {
     let cancelled = false;
-    dispatch(fetchOutputIterations(output.id))
-      .unwrap()
-      .then((iterations) => {
-        if (cancelled) return;
-        const latestCandidate = [...iterations]
-          .reverse()
-          .find((iteration) => iteration.status === 'candidate' && iteration.candidate_workspace_path);
-        setCandidateIteration(latestCandidate ?? null);
-        if (!latestCandidate) setPreviewMode('stable');
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setCandidateIteration(null);
-          setPreviewMode('stable');
-        }
-      });
+    refreshCandidateIterations().catch(() => {
+      if (!cancelled) {
+        setCandidateIteration(null);
+        setPreviewMode('stable');
+        setShowDiffPanel(false);
+      }
+    });
     return () => { cancelled = true; };
-  }, [dispatch, output.id]);
+  }, [refreshCandidateIterations]);
+
+  useEffect(() => {
+    const handleOutputIterationsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ outputId?: string }>).detail;
+      if (detail?.outputId && detail.outputId !== output.id) return;
+      void refreshCandidateIterations();
+    };
+    window.addEventListener('openswarm:output-iterations-updated', handleOutputIterationsUpdated);
+    return () => window.removeEventListener('openswarm:output-iterations-updated', handleOutputIterationsUpdated);
+  }, [output.id, refreshCandidateIterations]);
 
   const candidateWorkspaceId = workspaceIdFromPath(candidateIteration?.candidate_workspace_path);
   const activeServeUrl = useMemo(() => {
@@ -185,6 +205,42 @@ const DashboardViewCard: React.FC<Props> = ({
     }
     return `${SERVE_BASE}/${output.id}/serve/index.html`;
   }, [candidateWorkspaceId, output.id, previewMode]);
+
+  const handleAcceptCandidate = useCallback(async () => {
+    if (!candidateIteration || iterationActionLoading) return;
+    setIterationActionLoading('accept');
+    setIterationActionError(null);
+    try {
+      await dispatch(acceptOutputIteration(candidateIteration.iteration_id)).unwrap();
+      await refreshCandidateIterations();
+      setPreviewMode('stable');
+      setShowDiffPanel(false);
+      previewRef.current?.reload();
+      window.dispatchEvent(new CustomEvent('openswarm:output-iterations-updated', { detail: { outputId: output.id } }));
+    } catch (error: any) {
+      setIterationActionError(error?.message || 'Accept candidate failed');
+    } finally {
+      setIterationActionLoading(null);
+    }
+  }, [candidateIteration, dispatch, iterationActionLoading, output.id, refreshCandidateIterations]);
+
+  const handleDiscardCandidate = useCallback(async () => {
+    if (!candidateIteration || iterationActionLoading) return;
+    setIterationActionLoading('discard');
+    setIterationActionError(null);
+    try {
+      await dispatch(discardOutputIteration(candidateIteration.iteration_id)).unwrap();
+      await refreshCandidateIterations();
+      setPreviewMode('stable');
+      setShowDiffPanel(false);
+      previewRef.current?.reload();
+      window.dispatchEvent(new CustomEvent('openswarm:output-iterations-updated', { detail: { outputId: output.id } }));
+    } catch (error: any) {
+      setIterationActionError(error?.message || 'Discard candidate failed');
+    } finally {
+      setIterationActionLoading(null);
+    }
+  }, [candidateIteration, dispatch, iterationActionLoading, output.id, refreshCandidateIterations]);
 
   const outputDiffRows = useMemo(() => buildOutputDiffRows(candidateIteration), [candidateIteration]);
   const changedDiffCount = useMemo(() => countChangedDiffRows(outputDiffRows), [outputDiffRows]);
@@ -600,6 +656,87 @@ const DashboardViewCard: React.FC<Props> = ({
         <Box sx={{ flex: 1 }} />
 
         {candidateIteration && (
+          <Tooltip title={`Candidate iteration ${candidateIteration.iteration_id}`} placement="top">
+            <Box
+              data-preview-control="true"
+              onPointerDown={(e) => e.stopPropagation()}
+              sx={{
+                px: 0.75,
+                py: 0.2,
+                borderRadius: `${c.radius.md}px`,
+                color: c.status.warning,
+                border: `1px solid ${c.status.warning}55`,
+                bgcolor: `${c.status.warning}10`,
+                fontSize: '0.68rem',
+                fontWeight: 600,
+                fontFamily: c.font.mono,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Candidate
+            </Box>
+          </Tooltip>
+        )}
+
+        {candidateIteration && (
+          <Tooltip title="Accept candidate changes" placement="top">
+            <span>
+              <Button
+                size="small"
+                data-preview-control="true"
+                onClick={handleAcceptCandidate}
+                onPointerDown={(e) => e.stopPropagation()}
+                disabled={!!iterationActionLoading}
+                sx={{
+                  minWidth: 0,
+                  px: 0.85,
+                  py: 0.25,
+                  borderRadius: `${c.radius.md}px`,
+                  color: c.status.success,
+                  border: `1px solid ${c.status.success}55`,
+                  bgcolor: `${c.status.success}08`,
+                  fontSize: '0.68rem',
+                  textTransform: 'none',
+                  cursor: 'pointer',
+                  '&:hover': { bgcolor: `${c.status.success}18`, borderColor: c.status.success },
+                }}
+              >
+                {iterationActionLoading === 'accept' ? 'Accepting' : 'Accept'}
+              </Button>
+            </span>
+          </Tooltip>
+        )}
+
+        {candidateIteration && (
+          <Tooltip title="Discard candidate changes" placement="top">
+            <span>
+              <Button
+                size="small"
+                data-preview-control="true"
+                onClick={handleDiscardCandidate}
+                onPointerDown={(e) => e.stopPropagation()}
+                disabled={!!iterationActionLoading}
+                sx={{
+                  minWidth: 0,
+                  px: 0.85,
+                  py: 0.25,
+                  borderRadius: `${c.radius.md}px`,
+                  color: c.status.error,
+                  border: `1px solid ${c.status.error}55`,
+                  bgcolor: `${c.status.error}08`,
+                  fontSize: '0.68rem',
+                  textTransform: 'none',
+                  cursor: 'pointer',
+                  '&:hover': { bgcolor: `${c.status.error}18`, borderColor: c.status.error },
+                }}
+              >
+                {iterationActionLoading === 'discard' ? 'Discarding' : 'Discard'}
+              </Button>
+            </span>
+          </Tooltip>
+        )}
+
+        {candidateIteration && (
           <Tooltip title="View candidate file diff" placement="top">
             <Button
               size="small"
@@ -723,6 +860,29 @@ const DashboardViewCard: React.FC<Props> = ({
           p: `${PREVIEW_BODY_PAD}px`,
         }}
       >
+        {iterationActionError && (
+          <Box
+            data-preview-control="true"
+            onPointerDown={(e) => e.stopPropagation()}
+            sx={{
+              position: 'absolute',
+              top: 12,
+              left: 12,
+              maxWidth: 420,
+              zIndex: 8,
+              px: 1,
+              py: 0.65,
+              borderRadius: `${c.radius.md}px`,
+              color: c.status.error,
+              bgcolor: `${c.status.error}12`,
+              border: `1px solid ${c.status.error}44`,
+              fontSize: '0.72rem',
+              fontFamily: c.font.mono,
+            }}
+          >
+            {iterationActionError}
+          </Box>
+        )}
         {showDiffPanel && candidateIteration && (
           <Box
             data-preview-control="true"
