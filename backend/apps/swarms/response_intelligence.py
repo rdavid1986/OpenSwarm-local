@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from backend.apps.swarms.workspace_intelligence import build_workspace_intelligence
+
 
 @dataclass(frozen=True)
 class RIStateSnapshot:
@@ -357,6 +359,19 @@ def build_response_context(
             f"- summary: {_safe_preview(final_result.get('summary'), limit=500) or 'none'}",
             "",
         ])
+
+    workspace_intelligence = build_workspace_intelligence(swarm=swarm)
+    workspace_files = workspace_intelligence.get("files") if isinstance(workspace_intelligence.get("files"), list) else []
+    workspace_errors = workspace_intelligence.get("errors") if isinstance(workspace_intelligence.get("errors"), list) else []
+    lines.extend([
+        "[workspace_intelligence]",
+        f"- workspace_path: {_safe_preview(workspace_intelligence.get('workspace_path')) or 'none'}",
+        f"- exists: {workspace_intelligence.get('exists')}",
+        f"- freshness: {_safe_preview(workspace_intelligence.get('freshness')) or 'unknown'}",
+        f"- files: {', '.join(_safe_preview(item.get('path')) for item in workspace_files[:max_items] if isinstance(item, dict)) or 'none'}",
+        f"- warnings: {', '.join(_safe_preview(item.get('error')) for item in workspace_errors[:max_items] if isinstance(item, dict)) or 'none'}",
+        "",
+    ])
 
     lines.extend([
         "[artifacts]",
