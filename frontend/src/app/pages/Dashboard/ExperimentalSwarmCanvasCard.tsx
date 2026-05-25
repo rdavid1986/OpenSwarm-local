@@ -425,6 +425,10 @@ function getPendingRefinementAction(message: any): {
 
 function getRefinementExecutionTrace(message: any): {
   status: string;
+  reason: string;
+  detail: string;
+  providerReason: string;
+  requiredAction: string;
   nextAction: string;
   candidateIterationId: string;
   filesChanged: string[];
@@ -433,7 +437,13 @@ function getRefinementExecutionTrace(message: any): {
   const payload = message?.payload || {};
   const refinement = payload.refinement_request || payload.message?.refinement_request || payload.response?.refinement_request || {};
   const execution = payload.refinement_execution_result || payload.message?.refinement_execution_result || payload.response?.refinement_execution_result || {};
+  const planner = execution.planner_result || {};
+  const providerHealth = planner.provider_health || {};
   const status = renderText(execution.status || refinement.status, '').trim();
+  const reason = renderText(execution.reason || planner.reason, '').trim();
+  const detail = renderText(execution.detail || planner.status || planner.error_detail, '').trim();
+  const providerReason = renderText(providerHealth.reason, '').trim();
+  const requiredAction = renderText(providerHealth.required_action, '').trim();
   const nextAction = renderText(refinement.next_action, '').trim();
   const candidateIterationId = renderText(execution.candidate_iteration_id || refinement.candidate_iteration_id, '').trim();
   const outputId = renderText(refinement.output_id || execution.output_id, '').trim();
@@ -441,10 +451,14 @@ function getRefinementExecutionTrace(message: any): {
     ? execution.files_changed.map((item: any) => renderText(item, '').trim()).filter(Boolean)
     : [];
 
-  if (!candidateIterationId && status !== 'executed' && nextAction !== 'review_candidate_diff') return null;
+  if (!candidateIterationId && !status && !reason && nextAction !== 'review_candidate_diff') return null;
 
   return {
     status,
+    reason,
+    detail,
+    providerReason,
+    requiredAction,
     nextAction,
     candidateIterationId,
     filesChanged,
@@ -1736,60 +1750,103 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         </Button>
                       </Box>
                     )}
-                    {!isUser && refinementExecutionTrace && (
-                      <Box
-                        sx={{
-                          mt: 1,
-                          px: 1,
-                          py: 0.8,
-                          borderRadius: 1,
-                          bgcolor: `${c.status.success}0A`,
-                          border: `1px solid ${c.status.success}44`,
-                          maxWidth: '100%',
-                        }}
-                      >
-                        <Typography sx={{ color: c.status.success, fontSize: '0.7rem', fontWeight: 650 }}>
-                          Candidate lista para revisar
-                        </Typography>
-                        <Typography sx={{ color: c.text.secondary, fontSize: '0.68rem', lineHeight: 1.35, mt: 0.25 }}>
-                          El cambio se aplicó sobre la candidate. El Output activo todavía no fue modificado.
-                        </Typography>
-                        {refinementExecutionTrace.filesChanged.length > 0 && (
-                          <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', lineHeight: 1.35, mt: 0.35 }}>
-                            Archivos cambiados: {refinementExecutionTrace.filesChanged.join(', ')}
+                    {!isUser && refinementExecutionTrace && (() => {
+                      const traceStatus = refinementExecutionTrace.status;
+                      const isExecuted = traceStatus === 'executed' || refinementExecutionTrace.nextAction === 'review_candidate_diff';
+                      const isNoChange = traceStatus === 'no_change';
+                      const isFailed = traceStatus === 'failed';
+                      const isBlocked = traceStatus === 'blocked';
+                      const traceColor = isExecuted
+                        ? c.status.success
+                        : isNoChange
+                          ? c.status.warning
+                          : isFailed || isBlocked
+                            ? c.status.error
+                            : c.status.info;
+                      const traceTitle = isExecuted
+                        ? 'Candidate lista para revisar'
+                        : isNoChange
+                          ? 'Refinement sin cambios'
+                          : isBlocked
+                            ? 'Refinement bloqueado'
+                            : isFailed
+                              ? 'Refinement falló'
+                              : 'Refinement actualizado';
+                      const traceMessage = isExecuted
+                        ? 'El cambio se aplicó sobre la candidate. El Output activo todavía no fue modificado.'
+                        : isNoChange
+                          ? 'El modelo no propuso cambios sobre los archivos permitidos. La candidate no fue modificada.'
+                          : isBlocked
+                            ? 'El cambio está preparado, pero no se ejecutó porque el guard o la metadata requerida lo bloqueó.'
+                            : 'No se pudo aplicar el cambio sobre la candidate. El Output activo no fue modificado.';
+                      const traceReason = refinementExecutionTrace.providerReason || refinementExecutionTrace.reason || refinementExecutionTrace.detail;
+                      return (
+                        <Box
+                          sx={{
+                            mt: 1,
+                            px: 1,
+                            py: 0.8,
+                            borderRadius: 1,
+                            bgcolor: `${traceColor}0A`,
+                            border: `1px solid ${traceColor}44`,
+                            maxWidth: '100%',
+                          }}
+                        >
+                          <Typography sx={{ color: traceColor, fontSize: '0.7rem', fontWeight: 650 }}>
+                            {traceTitle}
                           </Typography>
-                        )}
-                        <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', lineHeight: 1.35, mt: 0.35 }}>
-                          Siguiente paso: abrir Preview, revisar Compare/Diff y elegir Accept o Discard.
-                        </Typography>
-                        {(stableOutputBridgeOutputId || canCreateOutputBridge) && (
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenOutputPreview();
-                            }}
-                            onPointerDown={(e) => e.stopPropagation()}
-                            sx={{
-                              mt: 0.65,
-                              minHeight: 26,
-                              px: 0.9,
-                              py: 0.2,
-                              borderRadius: 0.75,
-                              color: '#1d4ed8',
-                              borderColor: '#1d4ed855',
-                              bgcolor: '#1d4ed808',
-                              fontSize: '0.68rem',
-                              textTransform: 'none',
-                              '&:hover': { bgcolor: '#1d4ed814', borderColor: '#1d4ed8' },
-                            }}
-                          >
-                            Abrir Preview
-                          </Button>
-                        )}
-                      </Box>
-                    )}
+                          <Typography sx={{ color: c.text.secondary, fontSize: '0.68rem', lineHeight: 1.35, mt: 0.25 }}>
+                            {traceMessage}
+                          </Typography>
+                          {traceReason && (
+                            <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', lineHeight: 1.35, mt: 0.35 }}>
+                              Motivo real: {traceReason}
+                            </Typography>
+                          )}
+                          {refinementExecutionTrace.requiredAction && (
+                            <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', lineHeight: 1.35, mt: 0.35 }}>
+                              {refinementExecutionTrace.requiredAction}
+                            </Typography>
+                          )}
+                          {refinementExecutionTrace.filesChanged.length > 0 && (
+                            <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', lineHeight: 1.35, mt: 0.35 }}>
+                              Archivos cambiados: {refinementExecutionTrace.filesChanged.join(', ')}
+                            </Typography>
+                          )}
+                          {isExecuted && (
+                            <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', lineHeight: 1.35, mt: 0.35 }}>
+                              Siguiente paso: abrir Preview, revisar Compare/Diff y elegir Accept o Discard.
+                            </Typography>
+                          )}
+                          {isExecuted && (stableOutputBridgeOutputId || canCreateOutputBridge) && (
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenOutputPreview();
+                              }}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              sx={{
+                                mt: 0.65,
+                                minHeight: 26,
+                                px: 0.9,
+                                py: 0.2,
+                                borderRadius: 0.75,
+                                color: '#1d4ed8',
+                                borderColor: '#1d4ed855',
+                                bgcolor: '#1d4ed808',
+                                fontSize: '0.68rem',
+                                textTransform: 'none',
+                                '&:hover': { bgcolor: '#1d4ed814', borderColor: '#1d4ed8' },
+                              }}
+                            >
+                              Abrir Preview
+                            </Button>
+                          )}
+                        </Box>
+                      );
+                    })()}
                     {!isUser && intakeAnswer && (
                       <Box sx={{ mt: 0.85, px: 1, py: 0.75, borderRadius: 1, bgcolor: c.bg.page, border: `1px solid ${c.border.subtle}` }}>
                         <Typography sx={{ color: c.text.tertiary, fontSize: '0.68rem', mb: 0.25 }}>
