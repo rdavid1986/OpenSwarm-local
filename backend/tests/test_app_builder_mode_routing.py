@@ -5,6 +5,7 @@ from backend.apps.agents.orchestration.orchestrator import SwarmOrchestrator
 from backend.apps.agents.orchestration.store import SwarmStore
 from backend.apps.agents.runtime.provider import ProviderEvent
 from backend.apps.swarms import swarms as swarms_module
+from backend.apps.swarms.context_clarification import resolve_context_clarification
 
 
 class _FakeNormalChatAdapter:
@@ -19,10 +20,16 @@ class _FakeNormalChatAdapter:
         )
 
 
+async def _fast_context_clarification(**kwargs):
+    kwargs.pop("model", None)
+    return resolve_context_clarification(**kwargs)
+
+
 def _client(monkeypatch, tmp_path):
     store = SwarmStore(root=tmp_path / "swarms")
     orchestrator = SwarmOrchestrator(store=store)
     monkeypatch.setattr(swarms_module, "swarm_orchestrator", orchestrator)
+    monkeypatch.setattr(swarms_module, "resolve_model_context_clarification", _fast_context_clarification)
     app = FastAPI()
     app.include_router(swarms_module.swarms.router, prefix="/api/swarms")
     return TestClient(app), orchestrator
