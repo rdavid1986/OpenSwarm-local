@@ -145,6 +145,7 @@ const DashboardViewCard: React.FC<Props> = ({
 
   const [previewMode, setPreviewMode] = useState<'stable' | 'candidate' | 'compare'>('stable');
   const [candidateIteration, setCandidateIteration] = useState<OutputIterationRecord | null>(null);
+  const [previewRevision, setPreviewRevision] = useState(0);
 
   const [showDiffPanel, setShowDiffPanel] = useState(false);
   const [iterationActionLoading, setIterationActionLoading] = useState<'accept' | 'discard' | null>(null);
@@ -160,8 +161,9 @@ const DashboardViewCard: React.FC<Props> = ({
       .reverse()
       .find((iteration) => iteration.status === 'candidate' && iteration.candidate_workspace_path);
     setCandidateIteration(latestCandidate ?? null);
+    setPreviewRevision((value) => value + 1);
     if (latestCandidate) {
-      setPreviewMode('candidate');
+      setPreviewMode((mode) => (mode === 'compare' ? 'compare' : 'candidate'));
       setIterationActionError(null);
     } else {
       setPreviewMode('stable');
@@ -194,8 +196,13 @@ const DashboardViewCard: React.FC<Props> = ({
 
   const candidateWorkspaceId = workspaceIdFromPath(candidateIteration?.candidate_workspace_path);
   const stableServeUrl = `${SERVE_BASE}/${output.id}/serve/index.html`;
+  const candidateVersionKey = [
+    candidateIteration?.iteration_id || '',
+    candidateIteration?.updated_at || '',
+    String(previewRevision),
+  ].join(':');
   const candidateServeUrl = candidateWorkspaceId
-    ? `${SERVE_BASE}/workspace/${candidateWorkspaceId}/serve/index.html`
+    ? `${SERVE_BASE}/workspace/${candidateWorkspaceId}/serve/index.html?_candidate_rev=${encodeURIComponent(candidateVersionKey)}`
     : null;
   const activeServeUrl = useMemo(() => {
     if ((previewMode === 'candidate' || previewMode === 'compare') && candidateServeUrl) {
@@ -969,6 +976,7 @@ const DashboardViewCard: React.FC<Props> = ({
                 </Box>
                 <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
                   <ViewPreview
+                    key={`${preview.label}-${preview.url}-${previewRevision}`}
                     serveUrl={preview.url}
                     frontendCode={output.files?.['index.html'] ?? ''}
                     inputData={inputData}
@@ -1012,6 +1020,7 @@ const DashboardViewCard: React.FC<Props> = ({
                 }}
               >
                 <ViewPreview
+                  key={`${previewMode}-${activeServeUrl}-${previewRevision}`}
                   ref={previewRef}
                   serveUrl={activeServeUrl}
                   frontendCode={output.files?.['index.html'] ?? ''}
