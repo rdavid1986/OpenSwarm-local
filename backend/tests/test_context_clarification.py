@@ -183,3 +183,28 @@ async def test_model_context_clarification_falls_back_on_low_confidence():
     assert result["source"] == "fallback"
     assert result["needs_clarification"] is True
     assert result["reason"] == "creation_type_unclear"
+
+
+@pytest.mark.asyncio
+async def test_model_context_clarification_does_not_overask_clear_specific_request():
+    class OveraskingAdapter:
+        async def run_turn(self, context):
+            yield ProviderEvent(
+                type="message_final",
+                payload={
+                    "message": {
+                        "content": '{"needs_clarification":true,"creation_type":"web","confidence":0.92,"reason":"Quiere detalles extra.","clarification_question":"¿Querés backend?","clarification_options":[{"label":"Sí","value":"sí","kind":"possible"},{"label":"No","value":"no","kind":"recommended"}],"risk":"low"}'
+                    }
+                },
+            )
+
+    result = await resolve_model_context_clarification(
+        user_message="Quiero crear una landing para una peluquería con horarios y WhatsApp",
+        swarm_mode="app_builder",
+        adapter_factory=lambda: OveraskingAdapter(),
+    )
+
+    assert result["needs_clarification"] is False
+    assert result["reason"] == "context_sufficient"
+    assert result["source"] == "fallback"
+    assert result["model_reason"] == "Model tried to ask clarification even though deterministic context is sufficient."

@@ -365,6 +365,9 @@ def normalize_model_context_clarification(
         return fallback("Model returned an unknown creation_type.")
 
     needs_clarification = bool(parsed.get("needs_clarification"))
+    if needs_clarification and fallback_decision.get("needs_clarification") is False:
+        return fallback("Model tried to ask clarification even though deterministic context is sufficient.")
+
     question = _as_text(parsed.get("clarification_question")) or None
     risk = _as_text(parsed.get("risk")) or _as_text(fallback_decision.get("risk")) or "low"
     if risk not in {"low", "medium", "high"}:
