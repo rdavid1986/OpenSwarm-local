@@ -747,12 +747,12 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   );
 
   useEffect(() => {
-    const persistentPreviewOutputId = outputBridgeOutputId || refinementOutputId;
+    const persistentPreviewOutputId = outputBridgeOutputId || refinementOutputId || previewOutputId || stableOutputBridgeOutputId;
     if (persistentPreviewOutputId) {
       setLastOutputBridgeOutputId(persistentPreviewOutputId);
       onSwarmBound?.({ swarmCardId, previewOutputId: persistentPreviewOutputId });
     }
-  }, [outputBridgeOutputId, onSwarmBound, refinementOutputId, swarmCardId]);
+  }, [outputBridgeOutputId, onSwarmBound, previewOutputId, refinementOutputId, stableOutputBridgeOutputId, swarmCardId]);
 
   const canCreateOutputBridge = Boolean(
     activeSwarmId
