@@ -1,12 +1,23 @@
 import socket
+
+import pytest
 import urllib.error
 
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.providers.provider_health import (
     check_local_model_provider_health,
+    clear_provider_health_cache,
     normalize_ollama_model_name,
     ollama_unavailable_message,
 )
+
+
+
+@pytest.fixture(autouse=True)
+def _clear_provider_health_cache_between_tests():
+    clear_provider_health_cache()
+    yield
+    clear_provider_health_cache()
 
 
 class _FakeResponse:
@@ -122,3 +133,37 @@ def test_ollama_adapter_healthcheck_returns_normalized_and_compatible_fields(mon
     assert health["available_models"] == ["qwen2.5-coder:14b"]
     assert health["models"] == [{"name": "qwen2.5-coder:14b"}]
     assert health["error"] == ""
+
+
+def test_check_local_model_provider_health_uses_short_ttl_cache(monkeypatch):
+    clear_provider_health_cache()
+    calls = {"count": 0}
+
+    def fake_urlopen(req, timeout):
+        calls["count"] += 1
+        return _FakeResponse('{"models":[{"name":"qwen2.5-coder:14b"}]}')
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    first = check_local_model_provider_health(model="qwen2.5-coder:14b", cache_ttl_seconds=5.0)
+    second = check_local_model_provider_health(model="qwen2.5-coder:14b", cache_ttl_seconds=5.0)
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert calls["count"] == 1
+
+
+def test_check_local_model_provider_health_can_bypass_cache(monkeypatch):
+    clear_provider_health_cache()
+    calls = {"count": 0}
+
+    def fake_urlopen(req, timeout):
+        calls["count"] += 1
+        return _FakeResponse('{"models":[{"name":"qwen2.5-coder:14b"}]}')
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    check_local_model_provider_health(model="qwen2.5-coder:14b", use_cache=False)
+    check_local_model_provider_health(model="qwen2.5-coder:14b", use_cache=False)
+
+    assert calls["count"] == 2
