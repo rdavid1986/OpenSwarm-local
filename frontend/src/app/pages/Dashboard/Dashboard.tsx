@@ -1627,6 +1627,26 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     handleHighlightCard(card.swarm_card_id);
   }, [canvas.actions, canvas.viewportRef, dispatch, handleHighlightCard, selection]);
 
+  const focusViewCard = useCallback((viewCardId: string) => {
+    const card = store.getState().dashboardLayout.viewCards[viewCardId];
+    const viewport = canvas.viewportRef.current;
+    if (!card || !viewport) return;
+
+    const targetZoom = 1.1;
+    const targetPanX = (viewport.clientWidth - card.width * targetZoom) / 2 - card.x * targetZoom;
+    const visualCardH = card.height * targetZoom;
+    const preferredTop = (viewport.clientHeight - visualCardH) / 2;
+    const safeTop = Math.max(96, preferredTop);
+    const targetPanY = safeTop - card.y * targetZoom;
+
+    dispatch(bringToFront({ id: viewCardId, type: 'view' }));
+    selection.selectCard(viewCardId, 'view', false);
+    setFocusedCardId(viewCardId);
+    canvas.actions.setState({ panX: targetPanX, panY: targetPanY, zoom: targetZoom });
+    handleHighlightCard(viewCardId);
+  }, [canvas.actions, canvas.viewportRef, dispatch, handleHighlightCard, selection]);
+
+
   const buildRefinementDraft = useCallback((output: Output, preset: string, sourceSwarmId: string) => {
     const presetLabel = preset || 'current';
     const artifactRefs = (output.artifact_refs || []).join(', ') || 'none';
@@ -2612,6 +2632,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                   onDragEnd={handleCardDragEnd}
                   onDoubleClick={handleCardDoubleClick}
                   onBringToFront={handleBringToFront}
+                  onFocusViewCard={focusViewCard}
                   onRefineOutput={handleRefineOutput}
                 />
               );

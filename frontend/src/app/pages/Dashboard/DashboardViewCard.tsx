@@ -128,6 +128,7 @@ interface Props {
   cardZOrder?: number;
   onDoubleClick?: (id: string, type: 'agent' | 'view' | 'browser') => void;
   onBringToFront?: (id: string, type: 'agent' | 'view' | 'browser') => void;
+  onFocusViewCard?: (id: string) => void;
   onRefineOutput?: (output: Output, preset: DevicePresetKey) => void;
 }
 
@@ -135,7 +136,7 @@ const DashboardViewCard: React.FC<Props> = ({
   viewCardId, output, previewKind = 'stable', iterationId = null, candidateWorkspacePath = null, title = null, devicePreset = null,
   cardX, cardY, cardWidth, cardHeight, zoom = 1, panX = 0, panY = 0, cmdHeld = false,
   isSelected = false, isHighlighted = false, multiDragDelta, onCardSelect, onDragStart, onDragMove, onDragEnd,
-  cardZOrder = 0, onDoubleClick, onBringToFront, onRefineOutput,
+  cardZOrder = 0, onDoubleClick, onBringToFront, onFocusViewCard, onRefineOutput,
 }) => {
   const c = useClaudeTokens();
   const dispatch = useAppDispatch();
@@ -154,7 +155,7 @@ const DashboardViewCard: React.FC<Props> = ({
   const [candidateIteration, setCandidateIteration] = useState<OutputIterationRecord | null>(null);
   const [latestCandidateIteration, setLatestCandidateIteration] = useState<OutputIterationRecord | null>(null);
   const [previewRevision, setPreviewRevision] = useState(0);
-  const [seenCompareIterationId, setSeenCompareIterationId] = useState<string | null>(previewKind === 'stable' ? null : iterationId);
+  const [seenCompareIterationKey, setSeenCompareIterationKey] = useState<string | null>(previewKind === 'stable' ? null : iterationId);
 
   const [showDiffPanel, setShowDiffPanel] = useState(false);
   const [iterationActionLoading, setIterationActionLoading] = useState<'accept' | 'discard' | null>(null);
@@ -284,10 +285,17 @@ const DashboardViewCard: React.FC<Props> = ({
   const changedDiffCount = useMemo(() => countChangedDiffRows(outputDiffRows), [outputDiffRows]);
   const compareDiffRows = useMemo(() => buildOutputDiffRows(compareCandidateIteration), [compareCandidateIteration]);
   const compareChangedDiffCount = useMemo(() => countChangedDiffRows(compareDiffRows), [compareDiffRows]);
+  const compareIterationSeenKey = compareCandidateIteration
+    ? [
+        compareCandidateIteration.iteration_id || '',
+        compareCandidateIteration.updated_at || '',
+        String(compareChangedDiffCount),
+      ].join(':')
+    : null;
   const shouldHighlightCompare = Boolean(
     previewKind === 'stable'
     && compareCandidateIteration
-    && compareCandidateIteration.iteration_id !== seenCompareIterationId
+    && compareIterationSeenKey !== seenCompareIterationKey
     && compareChangedDiffCount > 0
   );
 
@@ -494,7 +502,7 @@ const DashboardViewCard: React.FC<Props> = ({
     e.stopPropagation();
     if (!compareCandidateIteration || !compareCandidateServeUrl) return;
     const candidateViewCardId = `${output.id}::candidate::${compareCandidateIteration.iteration_id}`;
-    setSeenCompareIterationId(compareCandidateIteration.iteration_id);
+    setSeenCompareIterationKey(compareIterationSeenKey);
     dispatch(addViewCard({
       outputId: output.id,
       viewCardId: candidateViewCardId,
@@ -511,6 +519,7 @@ const DashboardViewCard: React.FC<Props> = ({
     window.setTimeout(() => {
       onBringToFront?.(candidateViewCardId, 'view');
       onCardSelect?.(candidateViewCardId, 'view', false);
+      onFocusViewCard?.(candidateViewCardId);
     }, 80);
   };
 

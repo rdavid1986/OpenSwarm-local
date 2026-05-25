@@ -189,6 +189,9 @@ def classify_pending_action(
 ) -> str | None:
     if refinement_request.get("output_id"):
         status = str(refinement_request.get("status") or "received")
+        next_action = str(refinement_request.get("next_action") or "")
+        if status == "executed" or next_action == "review_candidate_diff":
+            return None
         if status == "confirmed":
             return "run_refinement_pipeline"
         return "confirm_refinement"
