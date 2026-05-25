@@ -1530,6 +1530,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 const currentProjectIntakeAction = !isUser && isLatestChatMessage && (activeSwarm as any)?.project_intake_action?.type === 'start_implementation'
                   ? (activeSwarm as any).project_intake_action
                   : projectIntake.action;
+                const localProviderHealth = currentProjectIntakeAction?.capabilities?.local_provider_health || null;
+                const localProviderUnavailable = Boolean(localProviderHealth && localProviderHealth.ok === false);
                 const nextMessage = chatMessages[idx + 1];
                 const nextRole = getSwarmMessageRole(nextMessage);
                 const intakeAnswer = !isUser && projectIntake.options.length > 0 && (nextRole === 'user' || nextRole === 'human')
@@ -1780,7 +1782,32 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                             }}
                           />
                         )}
-                        {!currentProjectIntakeAction.enabled && (
+                        {!currentProjectIntakeAction.enabled && localProviderUnavailable && (
+                          <Box
+                            sx={{
+                              mt: 0.35,
+                              px: 1,
+                              py: 0.75,
+                              borderRadius: 1,
+                              bgcolor: `${c.status.warning}10`,
+                              border: `1px solid ${c.status.warning}44`,
+                              maxWidth: '100%',
+                            }}
+                          >
+                            <Typography sx={{ color: c.status.warning, fontSize: '0.7rem', fontWeight: 650 }}>
+                              Provider local no disponible
+                            </Typography>
+                            <Typography sx={{ color: c.text.secondary, fontSize: '0.68rem', lineHeight: 1.35, mt: 0.25 }}>
+                              {renderText(localProviderHealth.reason || currentProjectIntakeAction.reason, 'Ollama no está corriendo o no responde.')}
+                            </Typography>
+                            {localProviderHealth.required_action && (
+                              <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', lineHeight: 1.35, mt: 0.35 }}>
+                                {renderText(localProviderHealth.required_action)}
+                              </Typography>
+                            )}
+                          </Box>
+                        )}
+                        {!currentProjectIntakeAction.enabled && !localProviderUnavailable && (
                           <Typography sx={{ color: c.text.tertiary, fontSize: '0.68rem' }}>
                             {renderText(currentProjectIntakeAction.reason, 'La implementacion se habilita cuando el runner experimental esta activo.')}
                           </Typography>
