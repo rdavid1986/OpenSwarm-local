@@ -4,6 +4,7 @@ import pytest
 
 from backend.apps.agents.orchestration.models import EvidenceRecord, SwarmState
 from backend.apps.outputs.models import Output, OutputIterationRecord
+from backend.apps.outputs import outputs as outputs_module
 from backend.apps.swarms import refinement_action_guard
 from backend.apps.swarms.refinement_action_guard import evaluate_refinement_execution_guard
 
@@ -383,6 +384,64 @@ def test_refinement_execution_guard_accepts_candidate_iteration_as_snapshot(tmp_
     assert "execution_pipeline_unavailable" not in _codes(result)
     assert result["metadata"]["has_candidate_iteration"] is True
     assert result["metadata"]["candidate_iteration_id"] == candidate.iteration_id
+    assert result["metadata"]["has_snapshot"] is True
+    assert result["metadata"]["has_rollback"] is True
+    assert result["metadata"]["execution_pipeline_state"] == "available"
+
+
+def test_refinement_execution_guard_uses_candidate_base_workspace_when_output_has_no_workspace_id(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    data_dir = tmp_path / "outputs"
+    workspace_dir = tmp_path / "outputs_workspace"
+    iterations_dir = data_dir / "_iterations"
+    monkeypatch.setattr(outputs_module, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(outputs_module, "WORKSPACE_DIR", str(workspace_dir))
+    monkeypatch.setattr(outputs_module, "ITERATIONS_DIR", str(iterations_dir))
+    data_dir.mkdir(parents=True)
+    workspace_dir.mkdir(parents=True)
+    iterations_dir.mkdir(parents=True)
+
+    source_workspace = _workspace(tmp_path, name="guard-source-no-output-workspace")
+    output = _output_from_workspace(source_workspace, output_id="out-candidate-workspace")
+    output.workspace_id = None
+    outputs_module._save(output)
+    candidate = outputs_module._create_candidate_iteration_from_output(
+        output=output,
+        requested_change="Mejorar hero.",
+        source_swarm_id="swarm-guard",
+    )
+
+    swarm = _prepared_swarm(
+        tmp_path / ".openswarm" / "workspaces" / "missing-swarm-workspace",
+        output_id=output.id,
+        requested_change="Mejorar hero.",
+    )
+    swarm.workspace_path = None
+
+    result = evaluate_refinement_execution_guard(
+        swarm=swarm,
+        output_id=output.id,
+        requested_change="Mejorar hero.",
+        approve=True,
+    )
+
+    codes = _codes(result)
+    assert result["allowed"] is True
+    assert result["guard_status"] == "allowed"
+    assert "workspace_missing" not in codes
+    assert "workspace_unknown" not in codes
+    assert "workspace_outside_allowed_root" not in codes
+    assert "candidate_iteration_missing" not in codes
+    assert "snapshot_missing" not in codes
+    assert "rollback_missing" not in codes
+    assert result["metadata"]["workspace_freshness"] == "fresh"
+    assert result["metadata"]["workspace_source"] == "candidate_base_workspace"
+    assert result["metadata"]["workspace_path"] == str(Path(candidate.base_workspace_path).resolve())
+    assert result["metadata"]["has_workspace"] is True
+    assert result["metadata"]["has_candidate_iteration"] is True
     assert result["metadata"]["has_snapshot"] is True
     assert result["metadata"]["has_rollback"] is True
     assert result["metadata"]["execution_pipeline_state"] == "available"

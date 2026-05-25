@@ -11,6 +11,7 @@ import hashlib
 from pathlib import Path
 from typing import Any, Literal
 
+from backend.apps.outputs import outputs as outputs_module
 from backend.apps.outputs.outputs import STATIC_OUTPUT_ALLOWED_FILES, STATIC_OUTPUT_REQUIRED_FILES, load_output, load_output_iterations
 
 
@@ -39,17 +40,33 @@ def _safe_workspace_root() -> Path:
     return (Path.home() / ".openswarm" / "workspaces").resolve()
 
 
+def _allowed_workspace_roots() -> list[Path]:
+    roots = [_safe_workspace_root()]
+    outputs_workspace_root = Path(outputs_module.WORKSPACE_DIR).resolve()
+    if outputs_workspace_root not in roots:
+        roots.append(outputs_workspace_root)
+    return roots
+
+
 def _resolve_workspace_path(raw_path: str | None) -> tuple[Path | None, list[dict[str, Any]]]:
     if not raw_path:
         return None, [{"error": "workspace_path_missing"}]
 
     workspace = Path(raw_path).expanduser().resolve()
-    allowed_root = _safe_workspace_root()
-    try:
-        workspace.relative_to(allowed_root)
-    except ValueError:
-        return workspace, [{"error": "workspace_outside_allowed_root", "workspace_path": str(workspace)}]
-    return workspace, []
+    allowed_roots = _allowed_workspace_roots()
+    for allowed_root in allowed_roots:
+        try:
+            workspace.relative_to(allowed_root)
+            return workspace, []
+        except ValueError:
+            continue
+    return workspace, [
+        {
+            "error": "workspace_outside_allowed_root",
+            "workspace_path": str(workspace),
+            "allowed_roots": [str(root) for root in allowed_roots],
+        }
+    ]
 
 
 def _hash_text(content: str) -> str:
@@ -231,7 +248,8 @@ def build_workspace_intelligence(
     """Return a read-only snapshot of workspace/output freshness.
 
     The helper fail-closed on workspace root violations: it reports an error and
-    does not inspect file contents outside ``~/.openswarm/workspaces``.
+    does not inspect file contents outside the Swarm workspace root or the
+    managed Output workspace root.
     """
 
     if output is None and output_id:

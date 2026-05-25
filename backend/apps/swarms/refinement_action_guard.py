@@ -280,7 +280,25 @@ def evaluate_refinement_execution_guard(
     action_stage = ri_state.action_stage
     output = load_output(requested_output_id) if requested_output_id else None
     output_data = _as_dict(output)
-    workspace_intelligence = build_workspace_intelligence(swarm=swarm, output=output)
+    has_output = output is not None
+    candidate_iteration = _latest_candidate_iteration(requested_output_id) if has_output and requested_output_id else {}
+    has_candidate_iteration = bool(candidate_iteration)
+
+    workspace_source = "output_workspace"
+    workspace_path_override = None
+    workspace_reference_output: Any = output
+    if candidate_iteration:
+        workspace_path_override = _as_text(candidate_iteration.get("base_workspace_path")) or None
+        files_before = candidate_iteration.get("files_before")
+        if isinstance(files_before, dict) and files_before:
+            workspace_reference_output = {**output_data, "files": dict(files_before)}
+        workspace_source = "candidate_base_workspace"
+
+    workspace_intelligence = build_workspace_intelligence(
+        swarm=swarm,
+        output=workspace_reference_output,
+        workspace_path=workspace_path_override,
+    )
 
     workspace_errors = [
         error for error in _list(workspace_intelligence.get("errors"))
@@ -293,9 +311,6 @@ def evaluate_refinement_execution_guard(
     }
     workspace_freshness = _as_text(workspace_intelligence.get("freshness")) or "unknown"
     has_workspace = bool(workspace_intelligence.get("exists"))
-    has_output = output is not None
-    candidate_iteration = _latest_candidate_iteration(requested_output_id) if has_output and requested_output_id else {}
-    has_candidate_iteration = bool(candidate_iteration)
     has_snapshot = _has_snapshot(prepare_metadata, output_data) or has_candidate_iteration
     has_rollback = (
         _has_rollback(prepare_metadata)
@@ -485,7 +500,10 @@ def evaluate_refinement_execution_guard(
             "refinement_request_output_id": refinement_output_id or None,
             "refinement_request_requested_change": refinement_change,
             "workspace_path": workspace_intelligence.get("workspace_path"),
+            "workspace_source": workspace_source,
             "workspace_errors": workspace_errors,
+            "candidate_base_workspace_path": candidate_iteration.get("base_workspace_path"),
+            "candidate_workspace_path": candidate_iteration.get("candidate_workspace_path"),
             "artifact_count": artifact_count,
             "evidence_count": evidence_count,
             "execution_pipeline_state": "available" if execution_pipeline_available else "unavailable",
