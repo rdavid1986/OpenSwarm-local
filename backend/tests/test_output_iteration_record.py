@@ -508,3 +508,33 @@ def test_apply_candidate_iteration_blocks_non_candidate(tmp_path, monkeypatch):
     )
 
     assert apply.status_code == 400
+
+
+def test_candidate_workspace_preserves_exact_newlines(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+
+    output = Output(
+        name="Newlines",
+        files={
+            "index.html": "<!doctype html>\r\n<html>\r\n<body>Hi</body>\r\n</html>\r\n",
+            "styles.css": ":root {\r\n  color-scheme: light;\r\n}\r\n",
+            "content.json": "{\r\n  \"title\": \"Exact\"\r\n}\r\n",
+        },
+    )
+    outputs_module._save(output)
+
+    response = client.post(
+        f"/api/outputs/{output.id}/iterations/candidate",
+        json={"output_id": output.id, "requested_change": "Prepare exact newline candidate"},
+    )
+
+    assert response.status_code == 200
+    iteration = response.json()["iteration"]
+
+    for rel_path, expected in output.files.items():
+        base_file = Path(iteration["base_workspace_path"]) / rel_path
+        candidate_file = Path(iteration["candidate_workspace_path"]) / rel_path
+        with open(base_file, encoding="utf-8", newline="") as f:
+            assert f.read() == expected
+        with open(candidate_file, encoding="utf-8", newline="") as f:
+            assert f.read() == expected

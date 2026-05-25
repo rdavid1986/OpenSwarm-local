@@ -266,7 +266,7 @@ def _write_output_files_to_workspace(*, workspace_id: str, files: dict[str, str]
             target.relative_to(workspace)
         except ValueError:
             raise HTTPException(status_code=403, detail="Candidate file path traversal not allowed")
-        target.write_text(content, encoding="utf-8")
+        target.write_text(content, encoding="utf-8", newline="")
 
     return str(workspace)
 
