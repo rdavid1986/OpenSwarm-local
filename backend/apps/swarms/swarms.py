@@ -69,7 +69,7 @@ from backend.apps.swarms.response_intelligence import (
 )
 from backend.apps.outputs.outputs import apply_candidate_iteration_files, load_output_iteration
 from backend.apps.swarms.candidate_refinement_planner import plan_candidate_refinement_file_updates
-from backend.apps.swarms.context_clarification import resolve_context_clarification
+from backend.apps.swarms.context_clarification import resolve_model_context_clarification
 from backend.apps.swarms.dynamic_intake_policy import resolve_dynamic_intake_policy
 from backend.apps.swarms.dynamic_intake_plan import enrich_dynamic_intake_plan
 
@@ -2839,7 +2839,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
         route = "normal_chat"
 
     if swarm_mode in {"plan", "debug", "skill_builder", "app_builder"} and not _is_project_intake_collecting(swarm):
-        clarification = resolve_context_clarification(
+        clarification = await resolve_model_context_clarification(
             user_message=user_message,
             swarm_mode=swarm_mode,
             intent=getattr(swarm, "intent", None),
@@ -2849,6 +2849,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
                 "logs": None,
                 "files": bool(getattr(swarm, "artifacts", None) or getattr(swarm, "evidence", None)),
             },
+            model=body.model,
         )
         if clarification.get("needs_clarification"):
             assistant_content = str(clarification.get("clarification_question") or "Necesito más contexto para continuar.")
