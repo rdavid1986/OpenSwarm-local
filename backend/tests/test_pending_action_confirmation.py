@@ -181,6 +181,85 @@ def test_confirmation_phrase_overrides_needs_clarification(monkeypatch, tmp_path
     assert body["final_result"]["refinement_request"]["status"] == "confirmed"
 
 
+def test_structured_confirm_action_bypasses_text_resolver(monkeypatch, tmp_path):
+    client, orchestrator, store = _client(monkeypatch, tmp_path)
+    swarm = _create_chat_swarm(store, orchestrator)
+    called = {"prepare": False, "resolver": False}
+
+    async def fake_resolver(**kwargs):
+        called["resolver"] = True
+        raise AssertionError("structured action should not call model resolver")
+
+    def fake_prepare(**kwargs):
+        called["prepare"] = True
+        current = store.load(kwargs["swarm_id"])
+        metadata = {
+            "source_swarm_id": kwargs["swarm_id"],
+            "output_id": kwargs["output_id"],
+            "requested_change": kwargs["requested_change"],
+            "refinement_status": "prepared",
+        }
+        return store.save(current), [], metadata
+
+    monkeypatch.setattr(swarms_module, "resolve_pending_action_intent", fake_resolver)
+    monkeypatch.setattr(orchestrator, "prepare_output_refinement", fake_prepare)
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "__openswarm_pending_action__:confirm_refinement", "swarm_mode": "app_builder"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert called["resolver"] is False
+    assert called["prepare"] is True
+    assert body["final_result"]["pending_action_resolution"]["classification"] == "confirm_pending_action"
+    assert body["final_result"]["refinement_request"]["status"] == "confirmed"
+
+
+def test_confirmation_typo_phrase_overrides_needs_clarification(monkeypatch, tmp_path):
+    client, orchestrator, store = _client(monkeypatch, tmp_path)
+    swarm = _create_chat_swarm(store, orchestrator)
+    called = {"prepare": False}
+
+    async def fake_resolver(**kwargs):
+        return {
+            "classification": "needs_clarification",
+            "pending_action": "confirm_refinement",
+            "output_id": "out-123",
+            "requested_change": "Make the hero blue.",
+            "confidence": 0.2,
+            "safe_to_prepare": False,
+            "reason": "Model was unsure.",
+            "clarification_question": "Queres confirmar, actualizar, cancelar o solo revisar este refinamiento pendiente?",
+        }
+
+    def fake_prepare(**kwargs):
+        called["prepare"] = True
+        current = store.load(kwargs["swarm_id"])
+        metadata = {
+            "source_swarm_id": kwargs["swarm_id"],
+            "output_id": kwargs["output_id"],
+            "requested_change": kwargs["requested_change"],
+            "refinement_status": "prepared",
+        }
+        return store.save(current), [], metadata
+
+    monkeypatch.setattr(swarms_module, "resolve_pending_action_intent", fake_resolver)
+    monkeypatch.setattr(orchestrator, "prepare_output_refinement", fake_prepare)
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "comfirmo, quiero confirmar el cambio", "swarm_mode": "app_builder"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert called["prepare"] is True
+    assert body["final_result"]["pending_action_resolution"]["classification"] == "confirm_pending_action"
+    assert body["final_result"]["refinement_request"]["status"] == "confirmed"
+
+
 def test_no_pending_action_ok_does_not_prepare(monkeypatch, tmp_path):
     client, orchestrator, store = _client(monkeypatch, tmp_path)
     swarm = _create_chat_swarm(store, orchestrator, pending=False)

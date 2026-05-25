@@ -655,6 +655,7 @@ def _is_refinement_confirmation(user_message: str, swarm) -> bool:
         return False
 
     normalized = (user_message or "").strip().lower()
+    normalized = normalized.replace("comfirmo", "confirmo")
     confirmation_phrases = {
         "hazlo",
         "hacelo",
@@ -677,8 +678,78 @@ def _is_refinement_confirmation(user_message: str, swarm) -> bool:
         "haz los cambios",
         "hacé los cambios",
         "hace los cambios",
+        "confirmar",
     }
-    return normalized in confirmation_phrases
+    if normalized in confirmation_phrases:
+        return True
+    confirmation_markers = (
+        "quiero confirmar",
+        "confirmo",
+        "confirmar el cambio",
+        "confirmar este cambio",
+        "aplica el cambio",
+        "aplicá el cambio",
+        "aplicar el cambio",
+        "haz los cambios",
+        "hacé los cambios",
+        "hace los cambios",
+    )
+    return any(marker in normalized for marker in confirmation_markers)
+
+
+def _structured_pending_refinement_resolution(
+    user_message: str,
+    pending_refinement: dict[str, Any],
+) -> dict[str, Any] | None:
+    normalized = (user_message or "").strip()
+    lowered = normalized.lower()
+    prefix = "__openswarm_pending_action__:"
+    if not lowered.startswith(prefix):
+        return None
+
+    action = lowered[len(prefix):].splitlines()[0].strip()
+    output_id = str(pending_refinement.get("output_id") or "").strip() or None
+    requested_change = str(pending_refinement.get("requested_change") or "").strip() or None
+
+    if action in {"confirm_refinement", "confirm"}:
+        return {
+            "classification": "confirm_pending_action",
+            "pending_action": "confirm_refinement",
+            "output_id": output_id,
+            "requested_change": requested_change,
+            "confidence": 1.0,
+            "safe_to_prepare": True,
+            "reason": "Structured UI action confirmed the pending refinement.",
+            "clarification_question": None,
+        }
+    if action in {"cancel_refinement", "cancel_pending_action", "cancel"}:
+        return {
+            "classification": "cancel_pending_action",
+            "pending_action": "confirm_refinement",
+            "output_id": output_id,
+            "requested_change": requested_change,
+            "confidence": 1.0,
+            "safe_to_prepare": False,
+            "reason": "Structured UI action cancelled the pending refinement.",
+            "clarification_question": None,
+        }
+    if action in {"edit_refinement_request", "update_refinement", "update"}:
+        updated_change = ""
+        for line in normalized.splitlines()[1:]:
+            if line.lower().startswith("requested_change:"):
+                updated_change = line.split(":", 1)[1].strip()
+                break
+        return {
+            "classification": "update_pending_action" if updated_change else "needs_clarification",
+            "pending_action": "confirm_refinement",
+            "output_id": output_id,
+            "requested_change": updated_change or requested_change,
+            "confidence": 1.0 if updated_change else 0.0,
+            "safe_to_prepare": False,
+            "reason": "Structured UI action updated the pending refinement." if updated_change else "Structured edit action requires a requested_change.",
+            "clarification_question": None if updated_change else "Escribí el nuevo pedido de cambio para actualizar el refinamiento pendiente.",
+        }
+    return None
 
 
 def _refinement_request_response(user_message: str, swarm=None, swarm_mode: str | None = None) -> tuple[str, dict[str, Any]]:
@@ -2199,12 +2270,14 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
 
     pending_refinement = _get_pending_refinement_request(swarm)
     if swarm_mode == "app_builder" and pending_refinement:
-        resolution = await resolve_pending_action_intent(
-            swarm=swarm,
-            user_message=user_message,
-            swarm_mode=swarm_mode,
-            model=body.model,
-        )
+        resolution = _structured_pending_refinement_resolution(user_message, pending_refinement)
+        if resolution is None:
+            resolution = await resolve_pending_action_intent(
+                swarm=swarm,
+                user_message=user_message,
+                swarm_mode=swarm_mode,
+                model=body.model,
+            )
         classification = str(resolution.get("classification") or "needs_clarification")
         if classification in {"no_pending_action", "needs_clarification"} and _is_refinement_confirmation(user_message, swarm):
             resolution = {

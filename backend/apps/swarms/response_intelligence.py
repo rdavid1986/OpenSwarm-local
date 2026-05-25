@@ -226,6 +226,9 @@ def build_available_actions(
         actions.append(pending_action)
 
     if refinement_request.get("output_id"):
+        if pending_action == "confirm_refinement":
+            actions.extend(["edit_refinement_request", "cancel_refinement_request"])
+            return list(dict.fromkeys(actions))
         actions.extend(["open_preview", "edit_refinement_request"])
         return list(dict.fromkeys(actions))
 

@@ -373,6 +373,30 @@ function getSwarmMessageMetadata(message: any): {
   return { route, source, guard, reason, pendingAction, targetOutputId, availableActions };
 }
 
+function getPendingRefinementAction(message: any): {
+  outputId: string;
+  requestedChange: string;
+  pendingAction: string;
+  availableActions: string[];
+} | null {
+  const payload = message?.payload || {};
+  const riState = payload.ri_state || payload.message?.ri_state || payload.response?.ri_state || {};
+  const refinement = payload.refinement_request || payload.message?.refinement_request || payload.response?.refinement_request || {};
+  const pendingAction = renderText(riState.pending_action || refinement.next_action, '').trim();
+  const status = renderText(refinement.status, '').trim().toLowerCase();
+  const availableActions = Array.isArray(riState.available_actions)
+    ? riState.available_actions.map((action: any) => renderText(action, '').trim()).filter(Boolean)
+    : [];
+  const outputId = renderText(refinement.output_id || riState.target_output_id, '').trim();
+  const requestedChange = renderText(refinement.requested_change, '').trim();
+  const isPendingConfirm =
+    pendingAction === 'confirm_refinement' ||
+    availableActions.includes('confirm_refinement') ||
+    (status === 'received' && Boolean(outputId));
+  if (!isPendingConfirm || !outputId) return null;
+  return { outputId, requestedChange, pendingAction: 'confirm_refinement', availableActions };
+}
+
 function getSwarmProjectIntake(message: any): {
   question: any | null;
   options: any[];
@@ -934,6 +958,31 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     dispatch(fetchExperimentalSwarm(activeSwarmId));
   }, [activeSwarmId, activeSwarmModel, dispatch, swarmState.actionLoading]);
 
+  const handlePendingRefinementAction = useCallback(async (
+    action: 'confirm' | 'edit' | 'cancel',
+    pending: { requestedChange: string },
+  ) => {
+    if (action === 'edit') {
+      setPrompt(pending.requestedChange || '');
+      window.setTimeout(() => promptInputRef.current?.focus(), 0);
+      return;
+    }
+    if (!activeSwarmId || swarmState.actionLoading) return;
+    const message = action === 'confirm'
+      ? '__openswarm_pending_action__:confirm_refinement'
+      : '__openswarm_pending_action__:cancel_refinement';
+    const label = action === 'confirm' ? 'Confirmar cambio' : 'Cancelar';
+    setLastSubmittedPrompt(label);
+    const requestedMode = getSwarmModeOption(activeSwarmModeRef.current).id;
+    await dispatch(chatExperimentalSwarm({
+      swarmId: activeSwarmId,
+      message,
+      swarmMode: requestedMode,
+      model: activeSwarmModel,
+    }));
+    dispatch(fetchExperimentalSwarm(activeSwarmId));
+  }, [activeSwarmId, activeSwarmModel, dispatch, swarmState.actionLoading]);
+
   const handleStartImplementation = useCallback(async (action?: any) => {
     if (!activeSwarmId || swarmState.actionLoading || startImplementationInFlightRef.current) return;
     if (action?.enabled === false) return;
@@ -1369,6 +1418,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 const isUser = role === 'user' || role === 'human';
                 const body = getSwarmMessageText(message);
                 const metadata = getSwarmMessageMetadata(message);
+                const pendingRefinementAction = !isUser ? getPendingRefinementAction(message) : null;
                 const projectIntake = getSwarmProjectIntake(message);
                 const isLatestChatMessage = idx === chatMessages.length - 1;
                 const nextMessage = chatMessages[idx + 1];
@@ -1469,6 +1519,79 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                             </Button>
                           );
                         })}
+                      </Box>
+                    )}
+                    {!isUser && pendingRefinementAction && (
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 1 }}>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          disabled={swarmState.actionLoading || !isLatestChatMessage}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePendingRefinementAction('confirm', pendingRefinementAction);
+                          }}
+                          sx={{
+                            minHeight: 28,
+                            px: 1,
+                            py: 0.25,
+                            fontSize: '0.72rem',
+                            textTransform: 'none',
+                            borderRadius: 0.75,
+                            color: '#1d4ed8',
+                            borderColor: '#1d4ed855',
+                            bgcolor: '#1d4ed808',
+                            '&:hover': { bgcolor: '#1d4ed814', borderColor: '#1d4ed8' },
+                          }}
+                        >
+                          Confirmar cambio
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          disabled={swarmState.actionLoading || !isLatestChatMessage}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePendingRefinementAction('edit', pendingRefinementAction);
+                          }}
+                          sx={{
+                            minHeight: 28,
+                            px: 1,
+                            py: 0.25,
+                            fontSize: '0.72rem',
+                            textTransform: 'none',
+                            borderRadius: 0.75,
+                            color: c.text.secondary,
+                            borderColor: c.border.medium,
+                            bgcolor: 'transparent',
+                            '&:hover': { bgcolor: c.bg.muted, borderColor: c.border.strong },
+                          }}
+                        >
+                          Editar pedido
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          disabled={swarmState.actionLoading || !isLatestChatMessage}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePendingRefinementAction('cancel', pendingRefinementAction);
+                          }}
+                          sx={{
+                            minHeight: 28,
+                            px: 1,
+                            py: 0.25,
+                            fontSize: '0.72rem',
+                            textTransform: 'none',
+                            borderRadius: 0.75,
+                            color: c.status.error,
+                            borderColor: `${c.status.error}55`,
+                            bgcolor: `${c.status.error}08`,
+                            '&:hover': { bgcolor: `${c.status.error}14`, borderColor: c.status.error },
+                          }}
+                        >
+                          Cancelar
+                        </Button>
                       </Box>
                     )}
                     {!isUser && intakeAnswer && (

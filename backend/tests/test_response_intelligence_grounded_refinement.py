@@ -43,6 +43,9 @@ def test_grounded_refinement_received_preserves_payload_and_ri_state():
     assert result.payload["ri_state"]["action_stage"] == "registered"
     assert result.payload["ri_state"]["target_output_id"] == "out-123"
     assert "confirm_refinement" in result.payload["ri_state"]["available_actions"]
+    assert "edit_refinement_request" in result.payload["ri_state"]["available_actions"]
+    assert "cancel_refinement_request" in result.payload["ri_state"]["available_actions"]
+    assert "open_preview" not in result.payload["ri_state"]["available_actions"]
     assert "Refinamiento registrado para el Output out-123." in (result.assistant_content or "")
     assert "Cambio solicitado:" in (result.assistant_content or "")
     assert "Cambiar el hero a azul." in (result.assistant_content or "")
