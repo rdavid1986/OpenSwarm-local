@@ -492,7 +492,7 @@ def test_plan_mode_vague_request_returns_context_clarification(monkeypatch, tmp_
     assert clarification["clarification_options"]
 
 
-def test_app_builder_vague_request_still_uses_project_intake(monkeypatch, tmp_path):
+def test_app_builder_vague_request_uses_context_clarification_before_intake(monkeypatch, tmp_path):
     client, orchestrator = _client(monkeypatch, tmp_path)
     swarm = _create_chat_swarm(orchestrator)
 
@@ -503,6 +503,9 @@ def test_app_builder_vague_request_still_uses_project_intake(monkeypatch, tmp_pa
 
     assert response.status_code == 200
     body = response.json()
+    clarification = body["final_result"]["context_clarification"]
 
-    assert body["final_result"]["route"] == "implementation_request"
-    assert body["final_result"]["project_intake_state"]["status"] == "collecting"
+    assert body["final_result"]["route"] == "context_clarification"
+    assert clarification["needs_clarification"] is True
+    assert clarification["clarification_state"]["status"] == "pending_clarification"
+    assert body["project_intake_state"] == {}

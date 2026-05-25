@@ -2838,7 +2838,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
     if swarm_mode == "ask" and route == "implementation_request":
         route = "normal_chat"
 
-    if swarm_mode in {"plan", "debug", "skill_builder"}:
+    if swarm_mode in {"plan", "debug", "skill_builder", "app_builder"} and not _is_project_intake_collecting(swarm):
         clarification = resolve_context_clarification(
             user_message=user_message,
             swarm_mode=swarm_mode,
