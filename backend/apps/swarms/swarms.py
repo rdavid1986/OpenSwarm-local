@@ -70,6 +70,7 @@ from backend.apps.swarms.response_intelligence import (
 from backend.apps.outputs.outputs import apply_candidate_iteration_files, load_output_iteration
 from backend.apps.swarms.candidate_refinement_planner import plan_candidate_refinement_file_updates
 from backend.apps.swarms.dynamic_intake_policy import resolve_dynamic_intake_policy
+from backend.apps.swarms.dynamic_intake_plan import enrich_dynamic_intake_plan
 
 
 @asynccontextmanager
@@ -1720,7 +1721,7 @@ async def _start_project_intake(swarm, user_message: str, model: str = "qwen2.5-
     }
 
 
-def _advance_project_intake(swarm, user_message: str) -> tuple[str, dict[str, Any]]:
+async def _advance_project_intake(swarm, user_message: str, model: str = "qwen2.5-coder:14b") -> tuple[str, dict[str, Any]]:
     state = dict(_get_project_intake_state(swarm))
     answers = dict(state.get("answers") or {})
     current_question_id = str(state.get("current_question_id") or "")
@@ -1742,6 +1743,19 @@ def _advance_project_intake(swarm, user_message: str) -> tuple[str, dict[str, An
         }
 
     generated_plan = _build_project_intake_plan(state)
+    enrichment_result = await enrich_dynamic_intake_plan(
+        generated_plan=generated_plan,
+        intake_state=state,
+        model=model,
+    )
+    if isinstance(enrichment_result.get("plan_enrichment"), dict) and enrichment_result.get("plan_enrichment"):
+        generated_plan["plan_enrichment"] = enrichment_result["plan_enrichment"]
+        generated_plan["plan_enrichment_source"] = enrichment_result.get("source")
+        generated_plan["plan_enrichment_confidence"] = enrichment_result.get("confidence")
+        generated_plan["plan_enrichment_reason"] = enrichment_result.get("reason")
+    else:
+        generated_plan["plan_enrichment_source"] = enrichment_result.get("source") or "fallback"
+        generated_plan["plan_enrichment_reason"] = enrichment_result.get("reason")
     state["status"] = "ready_to_implement"
     state["current_question_id"] = None
     state["generated_plan"] = generated_plan
@@ -2847,7 +2861,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
     if swarm_mode == "app_builder" and route == "refinement_request":
         assistant_content, project_intake_payload = _refinement_request_response(user_message, swarm, swarm_mode=swarm_mode)
     elif swarm_mode == "app_builder" and _is_project_intake_collecting(swarm):
-        assistant_content, project_intake_payload = _advance_project_intake(swarm, user_message)
+        assistant_content, project_intake_payload = await _advance_project_intake(swarm, user_message, model=body.model)
     elif swarm_mode == "app_builder" and route == "implementation_request":
         assistant_content, project_intake_payload = await _start_project_intake(swarm, user_message, model=body.model)
 

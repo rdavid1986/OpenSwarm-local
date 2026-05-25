@@ -336,3 +336,63 @@ def test_app_builder_applies_model_question_overrides(monkeypatch, tmp_path):
     assert question["prompt"] == "¿Qué tipo de landing querés crear para este proyecto?"
     assert [option["label"] for option in options[:3]] == ["Landing informativa", "Landing con formulario", "Portfolio simple"]
     assert options[-1]["value"] == "__custom__"
+
+
+def test_app_builder_merges_plan_enrichment_without_replacing_core_fields(monkeypatch, tmp_path):
+    client, orchestrator = _client(monkeypatch, tmp_path)
+    swarm = _create_chat_swarm(orchestrator)
+
+    async def fake_resolve_dynamic_intake_policy(**kwargs):
+        return {
+            "ok": False,
+            "source": "fallback",
+            "profile": "static_site",
+            "confidence": 0.7,
+            "skipped_questions": ["backend", "database", "auth", "payments"],
+            "required_questions": [],
+            "reason": "Fallback static site.",
+            "question_overrides": {},
+        }
+
+    async def fake_enrich_dynamic_intake_plan(**kwargs):
+        return {
+            "ok": True,
+            "source": "model",
+            "confidence": 0.88,
+            "reason": "Model-assisted plan enrichment.",
+            "plan_enrichment": {
+                "mvp_scope": ["Crear landing estática", "Agregar formulario visual"],
+                "recommended_stack_reason": "HTML/CSS simple alcanza para el primer MVP.",
+                "implementation_notes": ["Priorizar contenido visible"],
+                "risks": ["El formulario no enviará datos sin backend"],
+                "out_of_scope_reason": "Pagos y login quedan fuera.",
+            },
+        }
+
+    monkeypatch.setattr(swarms_module, "resolve_dynamic_intake_policy", fake_resolve_dynamic_intake_policy)
+    monkeypatch.setattr(swarms_module, "enrich_dynamic_intake_plan", fake_enrich_dynamic_intake_plan)
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "Quiero una landing informativa", "swarm_mode": "app_builder"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+
+    while body["project_intake_state"]["status"] != "ready_to_implement":
+        current_id = body["project_intake_state"]["current_question_id"]
+        response = client.post(
+            f"/api/swarms/{swarm.id}/experimental/chat",
+            json={"message": f"respuesta para {current_id}", "swarm_mode": "app_builder"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+
+    plan = body["project_intake_state"]["generated_plan"]
+    assert plan["backend"] == "Sin backend por ahora"
+    assert plan["database"] == "No necesita base por ahora"
+    assert plan["auth"] == "Sin login"
+    assert plan["payments"] == "No"
+    assert plan["plan_enrichment_source"] == "model"
+    assert plan["plan_enrichment"]["mvp_scope"] == ["Crear landing estática", "Agregar formulario visual"]
+    assert plan["plan_enrichment"]["risks"] == ["El formulario no enviará datos sin backend"]

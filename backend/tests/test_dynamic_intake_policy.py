@@ -176,3 +176,27 @@ def test_normalize_dynamic_intake_policy_rejects_invalid_question_override_shape
 
     assert result["ok"] is True
     assert result["question_overrides"] == {}
+
+
+def test_normalize_dynamic_intake_policy_blocks_full_app_skipping_any_question():
+    result = normalize_dynamic_intake_policy(
+        {
+            "profile": "full_app",
+            "confidence": 0.95,
+            "skipped_questions": ["visual_style"],
+            "required_questions": ["app_type", "backend", "database", "auth", "payments"],
+            "reason": "bad skip",
+        },
+        questions=QUESTIONS,
+        fallback_profile={
+            "profile": "full_app",
+            "confidence": 0.75,
+            "skipped_questions": [],
+            "reason": "full app fallback",
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["source"] == "fallback"
+    assert result["profile"] == "full_app"
+    assert result["skipped_questions"] == []

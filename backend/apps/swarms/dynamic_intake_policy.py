@@ -198,9 +198,8 @@ def normalize_dynamic_intake_policy(
     if skipped_set & required_set:
         return fallback("Model marked the same question as skipped and required.")
 
-    risky_questions = {"backend", "database", "auth", "payments"}
-    if profile == "full_app" and skipped_set & risky_questions:
-        return fallback("Model tried to skip technical questions for a full app.")
+    if profile == "full_app" and skipped_set:
+        return fallback("Model tried to skip questions for a full app.")
 
     if not required:
         required = [
