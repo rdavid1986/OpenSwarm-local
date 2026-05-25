@@ -15,6 +15,7 @@ from backend.apps.agents.models import (
 )
 from backend.apps.agents.ws_manager import ws_manager
 from backend.apps.agents.plans import create_plan_from_text
+from backend.apps.agents.providers.provider_health import check_local_model_provider_health
 from backend.apps.modes.modes import load_mode
 from backend.apps.outputs.outputs import _load_all as load_all_outputs
 from backend.apps.settings.settings import load_settings
@@ -1996,6 +1997,26 @@ class AgentManager:
                     user_text = str(prompt_content)
 
                 logger.info(f"[OLLAMA] local tool loop route model={ollama_model} url={ollama_url}")
+
+                provider_health = check_local_model_provider_health(model=ollama_model, timeout_seconds=2.0)
+                if not provider_health.get("ok"):
+                    reason = str(provider_health.get("reason") or "Ollama local provider is unavailable.")
+                    required_action = str(provider_health.get("required_action") or "").strip()
+                    content = reason if not required_action else f"{reason}\n{required_action}"
+                    err_msg = Message(
+                        id=uuid4().hex,
+                        role="system",
+                        content=content,
+                        branch_id=session.active_branch_id,
+                    )
+                    session.messages.append(err_msg)
+                    await ws_manager.send_to_session(session_id, "agent:message", {
+                        "session_id": session_id,
+                        "message": err_msg.model_dump(mode="json"),
+                    })
+                    session.status = "error"
+                    _save_session(session_id, session.model_dump(mode="json"))
+                    return
 
                 def _ollama_workspace_base() -> Path:
                     base = Path(session.cwd or os.getcwd()).resolve()
