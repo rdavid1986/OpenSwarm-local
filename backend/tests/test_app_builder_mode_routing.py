@@ -516,3 +516,31 @@ def test_app_builder_vague_request_uses_context_clarification_before_intake(monk
     assert clarification["needs_clarification"] is True
     assert clarification["clarification_state"]["status"] == "pending_clarification"
     assert body["project_intake_state"] == {}
+
+
+def test_app_builder_clarification_selection_continues_to_intake(monkeypatch, tmp_path):
+    client, orchestrator = _client(monkeypatch, tmp_path)
+    swarm = _create_chat_swarm(orchestrator)
+
+    first_response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "hacelo", "swarm_mode": "app_builder"},
+    )
+
+    assert first_response.status_code == 200
+    first_body = first_response.json()
+    assert first_body["final_result"]["route"] == "context_clarification"
+    assert first_body["project_intake_state"] == {}
+
+    second_response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "Web app", "swarm_mode": "app_builder"},
+    )
+
+    assert second_response.status_code == 200
+    second_body = second_response.json()
+
+    assert second_body["final_result"]["route"] == "implementation_request"
+    assert second_body["project_intake_state"]["status"] == "collecting"
+    assert second_body["final_result"]["project_intake_state"]["status"] == "collecting"
+    assert second_body["final_result"].get("context_clarification", {}).get("needs_clarification") is not True
