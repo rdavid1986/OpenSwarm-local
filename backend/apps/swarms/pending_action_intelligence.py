@@ -12,6 +12,7 @@ import json
 from typing import Any, Callable
 
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
+from backend.apps.agents.providers.provider_health import check_local_model_provider_health, is_local_model
 from backend.apps.agents.runtime.provider import ProviderTurnContext
 from backend.apps.swarms.response_intelligence import RIStateSnapshot, build_ri_state_snapshot
 
@@ -64,8 +65,9 @@ def _default_resolution(
     safe_to_prepare: bool = False,
     reason: str = "Unable to safely resolve pending action intent.",
     clarification_question: str | None = "Queres confirmar, actualizar, cancelar o solo revisar este refinamiento pendiente?",
+    provider_health: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    result = {
         "classification": classification,
         "pending_action": pending_action,
         "output_id": output_id,
@@ -75,6 +77,9 @@ def _default_resolution(
         "reason": reason,
         "clarification_question": clarification_question,
     }
+    if provider_health is not None:
+        result["provider_health"] = provider_health
+    return result
 
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:
@@ -253,6 +258,21 @@ async def resolve_pending_action_intent(
         )
 
     adapter = adapter_factory() if adapter_factory else OllamaAdapter(allow_network=True, supports_json_mode=True)
+    if (adapter_factory is None or isinstance(adapter, OllamaAdapter)) and is_local_model(model):
+        health = check_local_model_provider_health(
+            model=model,
+            base_url=getattr(adapter, "base_url", None),
+            timeout_seconds=2.0,
+        )
+        if not health.get("ok"):
+            return _default_resolution(
+                pending_action=ri_state.pending_action,
+                output_id=output_id,
+                requested_change=requested_change,
+                reason=_as_text(health.get("reason")) or "Local model provider is unavailable.",
+                provider_health=health,
+            )
+
     prompt = build_pending_action_resolver_prompt(
         user_message=user_message,
         swarm_mode=swarm_mode,

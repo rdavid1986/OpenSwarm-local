@@ -14,6 +14,7 @@ import urllib.error
 import urllib.request
 from typing import Any, AsyncIterator, Literal
 
+from backend.apps.agents.providers.provider_health import check_local_model_provider_health
 from backend.apps.agents.runtime import (
     ProviderCapabilities,
     ProviderEvent,
@@ -60,17 +61,13 @@ class OllamaAdapter:
     def openai_chat_url(self) -> str:
         return f"{self.base_url}/v1/chat/completions"
 
-    def healthcheck(self, timeout_seconds: float = 2.0) -> dict[str, Any]:
+    def healthcheck(self, timeout_seconds: float = 2.0, model: str | None = None) -> dict[str, Any]:
         """Best-effort local Ollama availability check."""
-        req = urllib.request.Request(f"{self.base_url}/api/tags", method="GET")
-        try:
-            with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
-                payload = json.loads(resp.read().decode("utf-8", errors="replace"))
-            return {"ok": True, "base_url": self.base_url, "models": payload.get("models", [])}
-        except urllib.error.URLError as exc:
-            return {"ok": False, "base_url": self.base_url, "error": str(exc)}
-        except Exception as exc:
-            return {"ok": False, "base_url": self.base_url, "error": str(exc)}
+        health = check_local_model_provider_health(model=model, base_url=self.base_url, timeout_seconds=timeout_seconds)
+        # Backward compatibility for existing callers that look at ok/base_url/error/models.
+        health.setdefault("error", "" if health.get("ok") else health.get("error_detail") or health.get("reason") or "")
+        health.setdefault("models", [{"name": name} for name in health.get("available_models", [])])
+        return health
 
     def build_request_payload(self, context: ProviderTurnContext, *, stream: bool = True) -> dict[str, Any]:
         """Build the provider request payload without executing it."""

@@ -118,3 +118,65 @@ async def test_plan_candidate_refinement_file_updates_fails_closed_on_bad_json()
     assert result["ok"] is False
     assert result["status"] == "failed"
     assert result["file_updates"] == {}
+
+
+@pytest.mark.asyncio
+async def test_plan_candidate_refinement_file_updates_preflights_ollama_health(monkeypatch):
+    def fake_health(**kwargs):
+        return {
+            "ok": False,
+            "provider": "ollama",
+            "base_url": "http://localhost:11434",
+            "model": "qwen2.5-coder:14b",
+            "status": "unavailable",
+            "reason": "Ollama no está corriendo o no responde en http://localhost:11434",
+            "available_models": [],
+            "error_detail": "connection refused",
+            "required_action": "Abrí Ollama o ejecutá `ollama serve`, verificá que el modelo esté instalado con `ollama list`.",
+        }
+
+    monkeypatch.setattr(
+        "backend.apps.swarms.candidate_refinement_planner.check_local_model_provider_health",
+        fake_health,
+    )
+
+    result = await plan_candidate_refinement_file_updates(
+        requested_change="Make hero blue.",
+        files_after={"index.html": "<html><body>Before</body></html>"},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "provider_unavailable"
+    assert result["reason"] == "Ollama no está corriendo o no responde en http://localhost:11434"
+    assert result["file_updates"] == {}
+    assert result["provider_health"]["status"] == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_plan_candidate_refinement_file_updates_reports_missing_model(monkeypatch):
+    def fake_health(**kwargs):
+        return {
+            "ok": False,
+            "provider": "ollama",
+            "base_url": "http://localhost:11434",
+            "model": "qwen2.5-coder:14b",
+            "status": "model_missing",
+            "reason": "El modelo Ollama 'qwen2.5-coder:14b' no está instalado en http://localhost:11434",
+            "available_models": ["codellama:34b"],
+            "error_detail": "Model not found in /api/tags.",
+            "required_action": "Abrí Ollama o ejecutá `ollama serve`, verificá que el modelo esté instalado con `ollama list`.",
+        }
+
+    monkeypatch.setattr(
+        "backend.apps.swarms.candidate_refinement_planner.check_local_model_provider_health",
+        fake_health,
+    )
+
+    result = await plan_candidate_refinement_file_updates(
+        requested_change="Make hero blue.",
+        files_after={"index.html": "<html><body>Before</body></html>"},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "model_missing"
+    assert result["provider_health"]["available_models"] == ["codellama:34b"]

@@ -96,6 +96,58 @@ def test_invalid_model_json_falls_back_to_clarification():
     assert result["safe_to_prepare"] is False
 
 
+def test_pending_action_resolver_preflights_ollama_health(monkeypatch):
+    from backend.apps.agents.orchestration.models import AgentContract, SwarmState
+
+    coordinator = AgentContract(role="CoordinatorAgent", objective="Coordinate", allowed_tools=[])
+    swarm = SwarmState(
+        title="resolver test",
+        user_prompt="Build app",
+        intent="chat",
+        coordinator_contract_id=coordinator.id,
+        contracts=[coordinator],
+        final_result={
+            "refinement_request": {
+                "output_id": "out-123",
+                "requested_change": "Make the hero blue.",
+                "status": "received",
+            }
+        },
+    )
+    def fake_health(**kwargs):
+        return {
+            "ok": False,
+            "provider": "ollama",
+            "base_url": "http://localhost:11434",
+            "model": "qwen2.5-coder:14b",
+            "status": "unavailable",
+            "reason": "Ollama no está corriendo o no responde en http://localhost:11434",
+            "available_models": [],
+            "error_detail": "connection refused",
+            "required_action": "Abrí Ollama o ejecutá `ollama serve`, verificá que el modelo esté instalado con `ollama list`.",
+        }
+
+    monkeypatch.setattr(
+        "backend.apps.swarms.pending_action_intelligence.check_local_model_provider_health",
+        fake_health,
+    )
+
+    result = asyncio.run(
+        resolve_pending_action_intent(
+            swarm=swarm,
+            user_message="go ahead",
+            swarm_mode="app_builder",
+        )
+    )
+
+    assert result["classification"] == "needs_clarification"
+    assert result["safe_to_prepare"] is False
+    assert result["pending_action"] == "confirm_refinement"
+    assert result["requested_change"] == "Make the hero blue."
+    assert result["reason"] == "Ollama no está corriendo o no responde en http://localhost:11434"
+    assert result["provider_health"]["status"] == "unavailable"
+
+
 def test_semantic_confirm_triggers_prepare(monkeypatch, tmp_path):
     client, orchestrator, store = _client(monkeypatch, tmp_path)
     swarm = _create_chat_swarm(store, orchestrator)

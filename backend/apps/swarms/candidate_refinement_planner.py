@@ -12,6 +12,7 @@ import json
 from typing import Any, Callable
 
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
+from backend.apps.agents.providers.provider_health import check_local_model_provider_health
 from backend.apps.agents.runtime.provider import ProviderTurnContext
 
 
@@ -189,6 +190,24 @@ async def plan_candidate_refinement_file_updates(
         }
 
     adapter = adapter_factory() if adapter_factory else OllamaAdapter(allow_network=True, supports_json_mode=True)
+    if adapter_factory is None or isinstance(adapter, OllamaAdapter):
+        health = check_local_model_provider_health(
+            model=model,
+            base_url=getattr(adapter, "base_url", None),
+            timeout_seconds=2.0,
+        )
+        if not health.get("ok"):
+            status = _as_text(health.get("status")) or "provider_unavailable"
+            if status != "model_missing":
+                status = "provider_unavailable"
+            return {
+                "ok": False,
+                "status": status,
+                "reason": _as_text(health.get("reason")) or "Local model provider is unavailable.",
+                "file_updates": {},
+                "provider_health": health,
+            }
+
     context = ProviderTurnContext(
         session_id="candidate-refinement-planner",
         agent_id="candidate-refinement-planner",
