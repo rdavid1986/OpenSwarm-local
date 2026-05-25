@@ -515,7 +515,16 @@ def test_confirm_pending_refinement_executes_candidate_iteration_without_mutatin
         current.decisions.append({"kind": "output_refinement_prepared", "status": "accepted", "metadata": metadata})
         return store.save(current), [], metadata
 
+    async def fake_plan_candidate_refinement_file_updates(**kwargs):
+        return {
+            "ok": True,
+            "status": "planned",
+            "reason": "Test planner update.",
+            "file_updates": {"content.json": '{"title":"After"}'},
+        }
+
     monkeypatch.setattr(swarms_module, "resolve_pending_action_intent", fake_resolver)
+    monkeypatch.setattr(swarms_module, "plan_candidate_refinement_file_updates", fake_plan_candidate_refinement_file_updates)
     monkeypatch.setattr(orchestrator, "prepare_output_refinement", fake_prepare)
 
     response = client.post(

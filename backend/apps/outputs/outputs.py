@@ -218,6 +218,11 @@ def _load_iteration(iteration_id: str) -> OutputIterationRecord:
         return OutputIterationRecord(**json.load(f))
 
 
+def load_output_iteration(iteration_id: str) -> OutputIterationRecord:
+    """Public helper for guarded flows to load one Output iteration."""
+    return _load_iteration(iteration_id)
+
+
 def _load_output_iterations(output_id: str) -> list[OutputIterationRecord]:
     if not os.path.exists(ITERATIONS_DIR):
         return []

@@ -65,7 +65,8 @@ from backend.apps.swarms.response_intelligence import (
     build_ri_state_snapshot,
     snapshot_payload,
 )
-from backend.apps.outputs.outputs import apply_candidate_iteration_files
+from backend.apps.outputs.outputs import apply_candidate_iteration_files, load_output_iteration
+from backend.apps.swarms.candidate_refinement_planner import plan_candidate_refinement_file_updates
 
 
 @asynccontextmanager
@@ -1696,32 +1697,16 @@ def _is_project_intake_collecting(swarm) -> bool:
     return _get_project_intake_state(swarm).get("status") == "collecting"
 
 
-def _build_minimal_refinement_file_updates(refinement_request: dict[str, Any]) -> dict[str, str]:
-    """Construye una modificación mínima y segura para REFINE-REAL v0.
-
-    Esta subfase prueba ejecución real sobre candidate sin tocar Output activo.
-    No intenta editar HTML/CSS libremente todavía. La edición inteligente por
-    modelo queda para REFINE-REAL.1.
-    """
-    requested_change = str(refinement_request.get("requested_change") or "").strip()
-    payload = {
-        "title": "Candidate refinement",
-        "requested_change": requested_change,
-        "status": "candidate_applied",
-    }
-    return {"content.json": json.dumps(payload, ensure_ascii=False, indent=2) + "\n"}
-
-
-def _execute_minimal_candidate_refinement(
+async def _execute_candidate_refinement(
     *,
     refinement_request: dict[str, Any],
     guard_result: dict[str, Any] | None,
+    model: str = "qwen2.5-coder:14b",
 ) -> dict[str, Any]:
-    """Aplica REFINE-REAL v0 sobre la candidate iteration.
+    """Aplica REFINE-REAL.1 sobre la candidate iteration.
 
-    Requiere candidate_iteration_id y approval implícito ya resuelto por el
-    flujo confirm_pending_action. Falla cerrado si el guard no llegó a estado
-    preparado con candidate.
+    El modelo solo planifica file_updates. La mutación real sigue pasando por
+    apply_candidate_iteration_files, allowlist, candidate workspace y guard.
     """
     metadata = (guard_result or {}).get("metadata") if isinstance(guard_result, dict) else {}
     if not isinstance(metadata, dict):
@@ -1757,12 +1742,43 @@ def _execute_minimal_candidate_refinement(
             "metadata": metadata,
         }
 
+    try:
+        iteration = load_output_iteration(candidate_iteration_id)
+    except HTTPException as exc:
+        return {
+            "status": "failed",
+            "reason": "candidate_iteration_load_failed",
+            "detail": exc.detail,
+            "status_code": exc.status_code,
+        }
+
     requested_change = str(refinement_request.get("requested_change") or "").strip()
+    plan = await plan_candidate_refinement_file_updates(
+        requested_change=requested_change,
+        files_after=dict(iteration.files_after or {}),
+        model=model,
+    )
+
+    if not plan.get("ok"):
+        return {
+            "status": "failed",
+            "reason": "candidate_refinement_plan_failed",
+            "planner_result": plan,
+        }
+
+    file_updates = plan.get("file_updates") if isinstance(plan.get("file_updates"), dict) else {}
+    if not file_updates:
+        return {
+            "status": "no_change",
+            "candidate_iteration_id": candidate_iteration_id,
+            "planner_result": plan,
+        }
+
     try:
         record = apply_candidate_iteration_files(
             iteration_id=candidate_iteration_id,
             requested_change=requested_change,
-            file_updates=_build_minimal_refinement_file_updates(refinement_request),
+            file_updates=file_updates,
             evidence_refs=[],
             validation_refs=[],
         )
@@ -1772,6 +1788,7 @@ def _execute_minimal_candidate_refinement(
             "reason": "candidate_apply_failed",
             "detail": exc.detail,
             "status_code": exc.status_code,
+            "planner_result": plan,
         }
 
     return {
@@ -1779,6 +1796,7 @@ def _execute_minimal_candidate_refinement(
         "candidate_iteration_id": record.iteration_id,
         "files_changed": list((record.diff_summary or {}).get("changed") or []),
         "diff_summary": record.diff_summary,
+        "planner_result": plan,
     }
 
 
@@ -2242,9 +2260,10 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
                             requested_change=str(refinement.get("requested_change") or ""),
                             approve=True,
                         )
-                        execution_result = _execute_minimal_candidate_refinement(
+                        execution_result = await _execute_candidate_refinement(
                             refinement_request=refinement,
                             guard_result=guard_result,
+                            model=body.model,
                         )
                         if execution_result.get("status") == "executed":
                             refinement["status"] = "executed"
