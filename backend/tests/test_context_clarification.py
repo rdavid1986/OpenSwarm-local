@@ -45,3 +45,15 @@ def test_context_clarification_allows_debug_when_context_exists():
 
     assert result["ok"] is True
     assert result["needs_clarification"] is False
+
+
+def test_context_clarification_uses_mode_specific_empty_question():
+    result = resolve_context_clarification(user_message="", swarm_mode="skill_builder")
+
+    assert result["clarification_question"] == "¿Qué skill querés crear o mejorar?"
+
+
+def test_context_clarification_uses_mode_specific_vague_question():
+    result = resolve_context_clarification(user_message="continuar", swarm_mode="app_builder")
+
+    assert result["clarification_question"] == "¿Qué tipo de app o web querés construir?"

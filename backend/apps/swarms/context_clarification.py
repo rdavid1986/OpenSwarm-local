@@ -26,6 +26,30 @@ def _has_any(text: str, terms: set[str]) -> bool:
     return any(term in text for term in terms)
 
 
+def build_clarification_question(*, mode: str, reason: str) -> str:
+    normalized_mode = _lower(mode or "ask")
+    if reason == "empty_user_message":
+        return {
+            "plan": "¿Qué querés planear?",
+            "app_builder": "¿Qué querés construir?",
+            "debug": "¿Qué error, archivo, app o salida querés revisar?",
+            "skill_builder": "¿Qué skill querés crear o mejorar?",
+        }.get(normalized_mode, "¿Qué querés hacer?")
+
+    if reason == "debug_request_without_target_context":
+        return "¿Qué error, archivo, app o salida querés revisar?"
+
+    if reason == "project_mode_request_too_vague":
+        return {
+            "plan": "¿Qué querés planear y con qué objetivo?",
+            "app_builder": "¿Qué tipo de app o web querés construir?",
+            "debug": "¿Qué problema querés corregir y dónde ocurre?",
+            "skill_builder": "¿Qué skill querés crear o mejorar y para qué tarea?",
+        }.get(normalized_mode, "¿Qué querés construir, planear o corregir?")
+
+    return "¿Qué información falta para continuar?"
+
+
 def resolve_context_clarification(
     *,
     user_message: str,
@@ -54,7 +78,7 @@ def resolve_context_clarification(
             "source": "deterministic",
             "needs_clarification": True,
             "reason": "empty_user_message",
-            "clarification_question": "¿Qué querés hacer?",
+            "clarification_question": build_clarification_question(mode=mode, reason="empty_user_message"),
             "mode": mode,
             "risk": "low",
         }
@@ -69,7 +93,7 @@ def resolve_context_clarification(
             "source": "deterministic",
             "needs_clarification": True,
             "reason": "debug_request_without_target_context",
-            "clarification_question": "¿Qué error, archivo, app o salida querés revisar?",
+            "clarification_question": build_clarification_question(mode=mode, reason="debug_request_without_target_context"),
             "mode": mode,
             "risk": "medium",
         }
@@ -80,7 +104,7 @@ def resolve_context_clarification(
             "source": "deterministic",
             "needs_clarification": True,
             "reason": "project_mode_request_too_vague",
-            "clarification_question": "¿Qué querés construir, planear o corregir?",
+            "clarification_question": build_clarification_question(mode=mode, reason="project_mode_request_too_vague"),
             "mode": mode,
             "risk": "low",
         }
