@@ -381,7 +381,17 @@ def build_output_version_freshness(
     candidate_matches_files_after = candidate.get("freshness") == "fresh"
 
     errors: list[dict[str, Any]] = []
-    errors.extend({"scope": "stable", **error} for error in stable.get("errors", []))
+    stable_errors = list(stable.get("errors", []) or [])
+    if not output_changed_since_candidate:
+        stable_errors = [
+            error for error in stable_errors
+            if not (
+                isinstance(error, dict)
+                and error.get("error") == "workspace_path_missing"
+            )
+        ]
+
+    errors.extend({"scope": "stable", **error} for error in stable_errors)
     errors.extend({"scope": "base", **error} for error in base.get("errors", []))
     errors.extend({"scope": "candidate", **error} for error in candidate.get("errors", []))
 

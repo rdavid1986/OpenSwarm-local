@@ -367,3 +367,63 @@ def test_output_version_freshness_reports_missing_candidate(tmp_path: Path, monk
 
     assert snapshot["status"] == "missing_candidate"
     assert snapshot["errors"][0]["error"] == "candidate_iteration_not_found"
+
+
+def test_output_version_freshness_accepts_missing_stable_workspace_when_output_matches_candidate_base(
+    tmp_path,
+    monkeypatch,
+):
+    from backend.apps.outputs import outputs as outputs_module
+    from backend.apps.outputs.models import Output
+    from backend.apps.swarms.workspace_intelligence import build_output_version_freshness
+
+    data_dir = tmp_path / "outputs"
+    workspace_dir = tmp_path / "outputs_workspace"
+    iterations_dir = data_dir / "_iterations"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    iterations_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(outputs_module, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(outputs_module, "WORKSPACE_DIR", str(workspace_dir))
+    monkeypatch.setattr(outputs_module, "ITERATIONS_DIR", str(iterations_dir))
+
+    output = Output(
+        id="out-no-stable-workspace",
+        name="No stable workspace",
+        files={
+            "index.html": "<html>Before</html>",
+            "styles.css": "body{}",
+            "content.json": "{\"title\":\"Before\"}",
+        },
+        workspace_id=None,
+        validation_status="passed",
+    )
+    outputs_module._save(output)
+
+    candidate = outputs_module._create_candidate_iteration_from_output(
+        output=output,
+        requested_change="Change title.",
+    )
+    candidate = outputs_module.apply_candidate_iteration_files(
+        iteration_id=candidate.iteration_id,
+        requested_change="Change title.",
+        file_updates={
+            "index.html": "<html>After</html>",
+            "content.json": "{\"title\":\"After\"}",
+        },
+    )
+
+    result = build_output_version_freshness(
+        output_id=output.id,
+        iteration_id=candidate.iteration_id,
+    )
+
+    assert result["output_changed_since_candidate"] is False
+    assert result["base_matches_files_before"] is True
+    assert result["candidate_matches_files_after"] is True
+    assert result["stable_freshness"] == "unknown"
+    assert result["base_freshness"] == "fresh"
+    assert result["candidate_freshness"] == "fresh"
+    assert result["status"] == "fresh"
+    assert result["errors"] == []
