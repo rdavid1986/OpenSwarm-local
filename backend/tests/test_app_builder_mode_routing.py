@@ -208,6 +208,11 @@ def test_app_builder_static_site_intake_skips_irrelevant_questions(monkeypatch, 
     assert plan["auth"] == "Sin login"
     assert plan["payments"] == "No"
     assert set(plan["skipped_questions"]) == {"backend", "database", "auth", "payments"}
+    summary = body["final_result"]["summary"]
+    assert "Decisiones inferidas por intake adaptado:" in summary
+    assert "Backend deseado: Sin backend por ahora" in summary
+    assert "Autenticación: Sin login" in summary
+    assert "Criterio aplicado:" in summary
     assert body["final_result"]["project_intake_action"]["enabled"] is True
 
 

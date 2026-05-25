@@ -1624,6 +1624,20 @@ def _project_intake_skipped_questions(state: dict[str, Any]) -> set[str]:
     return {str(item) for item in skipped if str(item).strip()}
 
 
+def _project_intake_question_title(question_id: str) -> str:
+    question = _project_intake_question_by_id(question_id)
+    return str((question or {}).get("title") or question_id)
+
+
+def _project_intake_inferred_decisions(state: dict[str, Any], plan: dict[str, Any]) -> list[tuple[str, Any]]:
+    decisions: list[tuple[str, Any]] = []
+    for question_id in sorted(_project_intake_skipped_questions(state)):
+        value = plan.get(question_id)
+        if value is not None:
+            decisions.append((_project_intake_question_title(question_id), value))
+    return decisions
+
+
 def _next_project_intake_question_id(answers: dict[str, Any], state: dict[str, Any] | None = None) -> str | None:
     skipped_questions = _project_intake_skipped_questions(state or {})
     for question in _project_intake_questions():
@@ -1730,9 +1744,26 @@ def _build_project_intake_message(state: dict[str, Any]) -> str:
             f"- Deploy: {plan.get('deploy', 'no definido')}",
             f"- Prioridad MVP: {plan.get('mvp_priority', 'no definido')}",
             f"- Fuera del MVP: {plan.get('out_of_scope', 'no definido')}",
+        ]
+
+        inferred_decisions = _project_intake_inferred_decisions(state, plan)
+        if inferred_decisions:
+            lines.extend([
+                "",
+                "Decisiones inferidas por intake adaptado:",
+            ])
+            for title, value in inferred_decisions:
+                lines.append(f"- {title}: {value}")
+
+            policy = state.get("question_policy") if isinstance(state.get("question_policy"), dict) else {}
+            policy_reason = str(policy.get("reason") or "").strip()
+            if policy_reason:
+                lines.extend(["", f"Criterio aplicado: {policy_reason}"])
+
+        lines.extend([
             "",
             "El botón de implementación queda preparado y se habilita cuando el runner experimental está activo.",
-        ]
+        ])
         return "\n".join(lines)
 
     question = _project_intake_question_by_id(str(state.get("current_question_id") or ""))
