@@ -69,6 +69,7 @@ from backend.apps.swarms.response_intelligence import (
 )
 from backend.apps.outputs.outputs import apply_candidate_iteration_files, load_output_iteration
 from backend.apps.swarms.candidate_refinement_planner import plan_candidate_refinement_file_updates
+from backend.apps.swarms.context_clarification import resolve_context_clarification
 from backend.apps.swarms.dynamic_intake_policy import resolve_dynamic_intake_policy
 from backend.apps.swarms.dynamic_intake_plan import enrich_dynamic_intake_plan
 
@@ -2443,6 +2444,8 @@ def _save_local_chat_message(swarm, coordinator_id: str, assistant_content: str,
         swarm.final_result["ri_state"] = payload["ri_state"]
     if "pending_action_resolution" in payload:
         swarm.final_result["pending_action_resolution"] = payload["pending_action_resolution"]
+    if "context_clarification" in payload:
+        swarm.final_result["context_clarification"] = payload["context_clarification"]
     if "prepare_output_refinement" in payload:
         swarm.final_result["prepare_output_refinement"] = payload["prepare_output_refinement"]
     if "refinement_execution_guard" in payload:
@@ -2834,6 +2837,41 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
         route = "implementation_request"
     if swarm_mode == "ask" and route == "implementation_request":
         route = "normal_chat"
+
+    if swarm_mode in {"plan", "debug", "skill_builder"}:
+        clarification = resolve_context_clarification(
+            user_message=user_message,
+            swarm_mode=swarm_mode,
+            intent=getattr(swarm, "intent", None),
+            available_context={
+                "output_id": (getattr(swarm, "output_bridge", {}) or {}).get("output_id") if isinstance(getattr(swarm, "output_bridge", None), dict) else None,
+                "active_output": bool((getattr(swarm, "output_bridge", {}) or {}).get("output_id")) if isinstance(getattr(swarm, "output_bridge", None), dict) else False,
+                "logs": None,
+                "files": bool(getattr(swarm, "artifacts", None) or getattr(swarm, "evidence", None)),
+            },
+        )
+        if clarification.get("needs_clarification"):
+            assistant_content = str(clarification.get("clarification_question") or "Necesito más contexto para continuar.")
+            payload = {
+                "route": "context_clarification",
+                "swarm_mode": swarm_mode,
+                "context_clarification": clarification,
+                **snapshot_payload(build_ri_state_snapshot(swarm, route="context_clarification", user_message=user_message)),
+            }
+            _save_local_chat_message(swarm, coordinator_id, assistant_content, payload)
+            swarm = swarm_orchestrator.store.save(swarm)
+            event_trace_runtime.create(
+                swarm_id=swarm.id,
+                event_type="chat_completed",
+                payload={
+                    "message": "context_clarification_requested",
+                    "source": "context_clarification",
+                    "route": "context_clarification",
+                    "swarm_mode": swarm_mode,
+                    "reason": clarification.get("reason"),
+                },
+            )
+            return {**_dump(swarm), "provider_events": []}
 
     mode_response = _swarm_mode_local_response(swarm_mode, user_message, swarm)
     if mode_response:

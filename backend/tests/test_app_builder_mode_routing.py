@@ -248,6 +248,21 @@ def test_app_builder_full_app_intake_keeps_all_questions(monkeypatch, tmp_path):
     client, orchestrator = _client(monkeypatch, tmp_path)
     swarm = _create_chat_swarm(orchestrator)
 
+    async def fake_resolve_dynamic_intake_policy(**kwargs):
+        fallback = kwargs["fallback_profile"]
+        return {
+            "ok": False,
+            "source": "fallback",
+            "profile": fallback["profile"],
+            "confidence": fallback["confidence"],
+            "skipped_questions": fallback["skipped_questions"],
+            "required_questions": [],
+            "reason": fallback["reason"],
+            "question_overrides": {},
+        }
+
+    monkeypatch.setattr(swarms_module, "resolve_dynamic_intake_policy", fake_resolve_dynamic_intake_policy)
+
     response = client.post(
         f"/api/swarms/{swarm.id}/experimental/chat",
         json={"message": "Quiero un dashboard con login, backend y base de datos", "swarm_mode": "app_builder"},
@@ -455,3 +470,39 @@ def test_app_builder_landing_skipped_questions_get_defaults(monkeypatch, tmp_pat
     assert "No necesita base por ahora" in summary
     assert "Autenticación: Sin login" in summary
     assert "Pagos: No" in summary
+
+
+def test_plan_mode_vague_request_returns_context_clarification(monkeypatch, tmp_path):
+    client, orchestrator = _client(monkeypatch, tmp_path)
+    swarm = _create_chat_swarm(orchestrator)
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "hacelo", "swarm_mode": "plan"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    final_result = body["final_result"]
+    clarification = final_result["context_clarification"]
+
+    assert final_result["route"] == "context_clarification"
+    assert clarification["needs_clarification"] is True
+    assert clarification["clarification_state"]["status"] == "pending_clarification"
+    assert clarification["clarification_options"]
+
+
+def test_app_builder_vague_request_still_uses_project_intake(monkeypatch, tmp_path):
+    client, orchestrator = _client(monkeypatch, tmp_path)
+    swarm = _create_chat_swarm(orchestrator)
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "hacelo", "swarm_mode": "app_builder"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["final_result"]["route"] == "implementation_request"
+    assert body["final_result"]["project_intake_state"]["status"] == "collecting"
