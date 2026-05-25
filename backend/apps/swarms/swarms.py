@@ -1654,13 +1654,24 @@ def _project_intake_question_payload(state: dict[str, Any]) -> dict[str, Any]:
     question = _project_intake_question_by_id(str(state.get("current_question_id") or ""))
     if not question:
         return {}
+
+    question_id = str(question["id"])
+    overrides = state.get("question_overrides") if isinstance(state.get("question_overrides"), dict) else {}
+    override = overrides.get(question_id) if isinstance(overrides.get(question_id), dict) else {}
+    custom_option = {"label": "Otra opción / escribir respuesta personalizada", "value": "__custom__"}
+    override_options = override.get("options") if isinstance(override.get("options"), list) else None
+
     return {
         "project_intake_question": {
-            "id": question["id"],
-            "title": question["title"],
-            "prompt": question["prompt"],
+            "id": question_id,
+            "title": str(override.get("title") or question["title"]),
+            "prompt": str(override.get("prompt") or question["prompt"]),
         },
-        "project_intake_options": question["options"],
+        "project_intake_options": (
+            [{"label": str(option), "value": str(option)} for option in override_options if str(option).strip()] + [custom_option]
+            if override_options
+            else question["options"]
+        ),
     }
 
 
@@ -1674,6 +1685,7 @@ async def _start_project_intake(swarm, user_message: str, model: str = "qwen2.5-
         model=model,
     )
     skipped_questions = policy.get("skipped_questions") if isinstance(policy.get("skipped_questions"), list) else fallback_profile.get("skipped_questions", [])
+    question_overrides = policy.get("question_overrides") if isinstance(policy.get("question_overrides"), dict) else {}
     intake_profile = {
         "profile": policy.get("profile") or fallback_profile.get("profile"),
         "confidence": policy.get("confidence", fallback_profile.get("confidence")),
@@ -1691,6 +1703,7 @@ async def _start_project_intake(swarm, user_message: str, model: str = "qwen2.5-
         "intake_mode": "model_assisted" if policy.get("source") == "model" else "dynamic_fallback",
         "intake_profile": intake_profile,
         "skipped_questions": skipped_questions,
+        "question_overrides": question_overrides,
         "question_policy": {
             "source": policy.get("source") or "fallback",
             "reason": policy.get("reason") or fallback_profile.get("reason"),

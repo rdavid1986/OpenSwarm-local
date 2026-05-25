@@ -292,3 +292,47 @@ def test_app_builder_model_assisted_intake_policy_is_used(monkeypatch, tmp_path)
     assert state["intake_profile"]["profile"] == "landing"
     assert state["question_policy"]["source"] == "model"
     assert set(state["skipped_questions"]) == {"database", "auth", "payments"}
+
+
+def test_app_builder_applies_model_question_overrides(monkeypatch, tmp_path):
+    client, orchestrator = _client(monkeypatch, tmp_path)
+    swarm = _create_chat_swarm(orchestrator)
+
+    async def fake_resolve_dynamic_intake_policy(**kwargs):
+        return {
+            "ok": True,
+            "source": "model",
+            "profile": "landing",
+            "confidence": 0.92,
+            "skipped_questions": ["database", "auth", "payments"],
+            "required_questions": ["app_type", "backend", "visual_style"],
+            "reason": "Landing con formulario.",
+            "question_overrides": {
+                "app_type": {
+                    "title": "Tipo de landing",
+                    "prompt": "¿Qué tipo de landing querés crear para este proyecto?",
+                    "options": ["Landing informativa", "Landing con formulario", "Portfolio simple"],
+                }
+            },
+        }
+
+    monkeypatch.setattr(swarms_module, "resolve_dynamic_intake_policy", fake_resolve_dynamic_intake_policy)
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "Quiero una landing con formulario", "swarm_mode": "app_builder"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assistant_payload = body["messages"][-1]["payload"]
+    question = assistant_payload["project_intake_question"]
+    options = assistant_payload["project_intake_options"]
+
+    assert body["project_intake_state"]["intake_mode"] == "model_assisted"
+    assert body["project_intake_state"]["question_overrides"]["app_type"]["title"] == "Tipo de landing"
+    assert question["id"] == "app_type"
+    assert question["title"] == "Tipo de landing"
+    assert question["prompt"] == "¿Qué tipo de landing querés crear para este proyecto?"
+    assert [option["label"] for option in options[:3]] == ["Landing informativa", "Landing con formulario", "Portfolio simple"]
+    assert options[-1]["value"] == "__custom__"

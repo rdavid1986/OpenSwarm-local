@@ -116,3 +116,63 @@ async def test_resolve_dynamic_intake_policy_uses_adapter():
     assert result["source"] == "model"
     assert result["profile"] == "landing"
     assert result["skipped_questions"] == ["database", "auth", "payments"]
+
+
+def test_normalize_dynamic_intake_policy_accepts_safe_question_overrides():
+    result = normalize_dynamic_intake_policy(
+        {
+            "profile": "landing",
+            "confidence": 0.92,
+            "skipped_questions": ["database", "auth", "payments"],
+            "required_questions": ["app_type", "backend", "visual_style"],
+            "reason": "landing with form",
+            "question_overrides": {
+                "visual_style": {
+                    "title": "Estilo para peluquería",
+                    "prompt": "¿Qué estilo visual debería tener la landing de la peluquería?",
+                    "options": ["Elegante", "Moderno", "Cálido", "Minimalista"],
+                },
+                "unknown_id": {
+                    "title": "No usar",
+                    "prompt": "No usar",
+                    "options": ["A", "B"],
+                },
+                "auth": {
+                    "title": "No usar",
+                    "prompt": "No usar",
+                    "options": ["A", "B"],
+                },
+            },
+        },
+        questions=QUESTIONS,
+        fallback_profile=FALLBACK_STATIC,
+    )
+
+    assert result["ok"] is True
+    assert result["question_overrides"]["visual_style"]["title"] == "Estilo para peluquería"
+    assert "unknown_id" not in result["question_overrides"]
+    assert "auth" not in result["question_overrides"]
+
+
+def test_normalize_dynamic_intake_policy_rejects_invalid_question_override_shape():
+    result = normalize_dynamic_intake_policy(
+        {
+            "profile": "landing",
+            "confidence": 0.92,
+            "skipped_questions": [],
+            "required_questions": ["app_type", "visual_style"],
+            "reason": "landing",
+            "question_overrides": {
+                "visual_style": {
+                    "title": "Estilo",
+                    "prompt": "¿Qué estilo?",
+                    "options": ["Única"],
+                },
+            },
+        },
+        questions=QUESTIONS,
+        fallback_profile=FALLBACK_STATIC,
+    )
+
+    assert result["ok"] is True
+    assert result["question_overrides"] == {}

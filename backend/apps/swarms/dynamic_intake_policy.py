@@ -78,6 +78,8 @@ def build_dynamic_intake_policy_prompt(
             "Use skipped_questions only for questions that should not be asked.",
             "Use required_questions for questions that should still be asked.",
             "If unsure, keep the question required.",
+            "question_overrides may customize title, prompt and options only for existing question ids.",
+            "question_overrides options must be short labels, 2 to 6 items per question.",
         ],
         "expected_json_shape": {
             "profile": "static_site | landing | dashboard | full_app | unknown",
@@ -85,9 +87,54 @@ def build_dynamic_intake_policy_prompt(
             "skipped_questions": ["question_id"],
             "required_questions": ["question_id"],
             "reason": "short reason",
+            "question_overrides": {
+                "question_id": {
+                    "title": "short UI title",
+                    "prompt": "specific question prompt",
+                    "options": ["2 to 6 short option labels"]
+                }
+            },
         },
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _normalize_question_overrides(value: Any, *, valid_question_ids: set[str], skipped_questions: set[str]) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+
+    overrides: dict[str, dict[str, Any]] = {}
+    for question_id, raw_override in value.items():
+        clean_id = _as_text(question_id)
+        if clean_id not in valid_question_ids or clean_id in skipped_questions:
+            continue
+        if not isinstance(raw_override, dict):
+            continue
+
+        title = _as_text(raw_override.get("title"))[:80]
+        prompt = _as_text(raw_override.get("prompt"))[:240]
+        raw_options = raw_override.get("options")
+        options = [
+            _as_text(option)[:80]
+            for option in raw_options
+            if _as_text(option)
+        ] if isinstance(raw_options, list) else []
+
+        deduped_options: list[str] = []
+        for option in options:
+            if option not in deduped_options:
+                deduped_options.append(option)
+
+        if not title or not prompt or len(deduped_options) < 2:
+            continue
+
+        overrides[clean_id] = {
+            "title": title,
+            "prompt": prompt,
+            "options": deduped_options[:6],
+        }
+
+    return overrides
 
 
 def normalize_dynamic_intake_policy(
@@ -116,6 +163,7 @@ def normalize_dynamic_intake_policy(
                 if question_id not in set(fallback_skipped)
             ],
             "reason": reason or _as_text(fallback_profile.get("reason")) or "Using deterministic fallback intake policy.",
+            "question_overrides": {},
         }
 
     if not parsed:
@@ -160,6 +208,12 @@ def normalize_dynamic_intake_policy(
             if question_id not in skipped_set
         ]
 
+    question_overrides = _normalize_question_overrides(
+        parsed.get("question_overrides"),
+        valid_question_ids=valid_question_ids,
+        skipped_questions=skipped_set,
+    )
+
     return {
         "ok": True,
         "source": "model",
@@ -168,6 +222,7 @@ def normalize_dynamic_intake_policy(
         "skipped_questions": skipped,
         "required_questions": required,
         "reason": _as_text(parsed.get("reason")) or "Model-assisted intake policy.",
+        "question_overrides": question_overrides,
     }
 
 
