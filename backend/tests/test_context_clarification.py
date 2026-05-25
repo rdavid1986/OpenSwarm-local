@@ -1,4 +1,7 @@
-from backend.apps.swarms.context_clarification import resolve_context_clarification
+import pytest
+
+from backend.apps.agents.runtime.provider import ProviderEvent
+from backend.apps.swarms.context_clarification import resolve_context_clarification, resolve_model_context_clarification
 
 
 def test_context_clarification_accepts_specific_app_request():
@@ -133,3 +136,50 @@ def test_context_clarification_infers_web_app_creation_type():
 
     assert result["ok"] is True
     assert result["creation_type"] == "web_app"
+
+
+class _FakeClarificationAdapter:
+    async def run_turn(self, context):
+        yield ProviderEvent(
+            type="message_final",
+            payload={
+                "message": {
+                    "content": '{"needs_clarification":true,"creation_type":"mobile","confidence":0.91,"reason":"La palabra app es ambigua.","clarification_question":"¿Qué tipo de app querés crear?","clarification_options":[{"label":"Android","value":"mobile","kind":"recommended"},{"label":"Web app","value":"web_app","kind":"possible"}],"risk":"medium"}'
+                }
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_model_context_clarification_uses_adapter():
+    result = await resolve_model_context_clarification(
+        user_message="Quiero crear una app",
+        swarm_mode="app_builder",
+        adapter_factory=lambda: _FakeClarificationAdapter(),
+    )
+
+    assert result["source"] == "model"
+    assert result["needs_clarification"] is True
+    assert result["creation_type"] == "mobile"
+    assert result["clarification_question"] == "¿Qué tipo de app querés crear?"
+    assert result["clarification_state"]["status"] == "pending_clarification"
+
+
+@pytest.mark.asyncio
+async def test_model_context_clarification_falls_back_on_low_confidence():
+    class LowConfidenceAdapter:
+        async def run_turn(self, context):
+            yield ProviderEvent(
+                type="message_final",
+                payload={"message": {"content": '{"needs_clarification":false,"creation_type":"web","confidence":0.2,"reason":"weak"}'}},
+            )
+
+    result = await resolve_model_context_clarification(
+        user_message="Quiero crear una app",
+        swarm_mode="app_builder",
+        adapter_factory=lambda: LowConfidenceAdapter(),
+    )
+
+    assert result["source"] == "fallback"
+    assert result["needs_clarification"] is True
+    assert result["reason"] == "creation_type_unclear"
