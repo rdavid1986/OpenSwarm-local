@@ -190,6 +190,18 @@ class OutputIterationCreate(BaseModel):
     status: str = "candidate"
 
 
+class OutputIterationApplyRequest(BaseModel):
+    """Aplicación controlada de cambios sobre una candidate iteration.
+
+    REFINE-REAL usa este contrato para mutar solamente files_after y el
+    candidate workspace. No promueve el cambio al Output activo.
+    """
+    requested_change: str = ""
+    file_updates: dict[str, str] = Field(default_factory=dict)
+    evidence_refs: list[str] = Field(default_factory=list)
+    validation_refs: list[str] = Field(default_factory=list)
+
+
 class OutputExecute(BaseModel):
     output_id: str
     input_data: dict[str, Any] = Field(default_factory=dict)

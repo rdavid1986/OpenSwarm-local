@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -8,6 +9,8 @@ from backend.apps.agents.orchestration.store import SwarmStore
 from backend.apps.agents.runtime.provider import ProviderEvent
 from backend.apps.swarms import swarms as swarms_module
 from backend.apps.swarms.pending_action_intelligence import resolve_pending_action_intent
+from backend.apps.outputs.models import Output
+from backend.apps.outputs import outputs as outputs_module
 
 
 class _FakeChatAdapter:
@@ -427,3 +430,122 @@ def test_closed_refinement_statuses_are_not_treated_as_pending(monkeypatch, tmp_
         assert response.status_code == 200
         assert called["prepare"] is False
         assert called["resolver"] is False
+
+
+def test_confirm_pending_refinement_executes_candidate_iteration_without_mutating_output(monkeypatch, tmp_path):
+    client, orchestrator, store = _client(monkeypatch, tmp_path)
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    data_dir = tmp_path / "outputs"
+    workspace_dir = tmp_path / ".openswarm" / "workspaces"
+    iterations_dir = data_dir / "_iterations"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    iterations_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(outputs_module, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(outputs_module, "WORKSPACE_DIR", str(workspace_dir))
+    monkeypatch.setattr(outputs_module, "ITERATIONS_DIR", str(iterations_dir))
+
+    output = Output(
+        id="out-123",
+        name="Demo",
+        files={
+            "index.html": "<html><body>Before</body></html>",
+            "styles.css": "body { margin: 0; }",
+            "content.json": '{"title":"Before"}',
+        },
+        source_swarm_id="",
+        artifact_refs=["artifact-1"],
+        evidence_refs=["evidence-1"],
+        validation_status="passed",
+    )
+    outputs_module._save(output)
+
+    swarm = _create_chat_swarm(store, orchestrator, pending=False)
+    output.source_swarm_id = swarm.id
+    outputs_module._save(output)
+
+    candidate = outputs_module._create_candidate_iteration_from_output(
+        output=output,
+        requested_change="Make the hero blue.",
+        source_swarm_id=swarm.id,
+    )
+
+    swarm.workspace_path = candidate.base_workspace_path
+    swarm.artifacts.append({"id": "artifact-1", "path": "index.html"})
+    swarm.final_result = {
+        "status": "completed",
+        "route": "refinement_request",
+        "refinement_request": {
+            "output_id": output.id,
+            "source_swarm_id": swarm.id,
+            "requested_change": "Make the hero blue.",
+            "status": "received",
+            "next_action": "refinement_pipeline_pending",
+            "candidate_iteration_id": candidate.iteration_id,
+            "candidate_workspace_path": candidate.candidate_workspace_path,
+            "base_workspace_path": candidate.base_workspace_path,
+        },
+    }
+    store.save(swarm)
+
+    async def fake_resolver(**kwargs):
+        return {
+            "classification": "confirm_pending_action",
+            "pending_action": "confirm_refinement",
+            "output_id": output.id,
+            "requested_change": "Make the hero blue.",
+            "confidence": 0.95,
+            "safe_to_prepare": True,
+            "reason": "Clear semantic confirmation.",
+            "clarification_question": None,
+        }
+
+    def fake_prepare(**kwargs):
+        current = store.load(kwargs["swarm_id"])
+        metadata = {
+            "source_swarm_id": kwargs["swarm_id"],
+            "output_id": kwargs["output_id"],
+            "requested_change": kwargs["requested_change"],
+            "workspace_path": candidate.base_workspace_path,
+            "refinement_status": "prepared",
+        }
+        current.decisions.append({"kind": "output_refinement_prepared", "status": "accepted", "metadata": metadata})
+        return store.save(current), [], metadata
+
+    monkeypatch.setattr(swarms_module, "resolve_pending_action_intent", fake_resolver)
+    monkeypatch.setattr(orchestrator, "prepare_output_refinement", fake_prepare)
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "please proceed", "swarm_mode": "app_builder"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    final_result = body["final_result"]
+
+    assert final_result["refinement_request"]["status"] == "executed"
+    assert final_result["refinement_request"]["next_action"] == "review_candidate_diff"
+    assert final_result["refinement_execution_guard"]["allowed"] is True
+    assert final_result["refinement_execution_guard"]["metadata"]["execution_pipeline_state"] == "available"
+    assert final_result["refinement_execution_result"]["status"] == "executed"
+    assert final_result["refinement_execution_result"]["candidate_iteration_id"] == candidate.iteration_id
+    assert "content.json" in final_result["refinement_execution_result"]["files_changed"]
+
+    updated_candidate = outputs_module._load_iteration(candidate.iteration_id)
+    assert updated_candidate.status == "candidate"
+    assert updated_candidate.files_before == output.files
+    assert updated_candidate.files_after["content.json"] != output.files["content.json"]
+    assert updated_candidate.diff_summary["status"] == "candidate_applied"
+    assert updated_candidate.diff_summary["changed"] == ["content.json"]
+
+    unchanged_output = outputs_module._load(output.id)
+    assert unchanged_output.files == output.files
+
+    summary = final_result["summary"]
+    assert "candidate" in summary.lower()
+    assert "Output activo todavía no fue modificado" in summary
+    assert "Accept o Discard" in summary

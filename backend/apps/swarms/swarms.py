@@ -65,6 +65,7 @@ from backend.apps.swarms.response_intelligence import (
     build_ri_state_snapshot,
     snapshot_payload,
 )
+from backend.apps.outputs.outputs import apply_candidate_iteration_files
 
 
 @asynccontextmanager
@@ -1695,6 +1696,92 @@ def _is_project_intake_collecting(swarm) -> bool:
     return _get_project_intake_state(swarm).get("status") == "collecting"
 
 
+def _build_minimal_refinement_file_updates(refinement_request: dict[str, Any]) -> dict[str, str]:
+    """Construye una modificación mínima y segura para REFINE-REAL v0.
+
+    Esta subfase prueba ejecución real sobre candidate sin tocar Output activo.
+    No intenta editar HTML/CSS libremente todavía. La edición inteligente por
+    modelo queda para REFINE-REAL.1.
+    """
+    requested_change = str(refinement_request.get("requested_change") or "").strip()
+    payload = {
+        "title": "Candidate refinement",
+        "requested_change": requested_change,
+        "status": "candidate_applied",
+    }
+    return {"content.json": json.dumps(payload, ensure_ascii=False, indent=2) + "\n"}
+
+
+def _execute_minimal_candidate_refinement(
+    *,
+    refinement_request: dict[str, Any],
+    guard_result: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Aplica REFINE-REAL v0 sobre la candidate iteration.
+
+    Requiere candidate_iteration_id y approval implícito ya resuelto por el
+    flujo confirm_pending_action. Falla cerrado si el guard no llegó a estado
+    preparado con candidate.
+    """
+    metadata = (guard_result or {}).get("metadata") if isinstance(guard_result, dict) else {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    candidate_iteration_id = str(
+        refinement_request.get("candidate_iteration_id")
+        or metadata.get("candidate_iteration_id")
+        or ""
+    ).strip()
+    if not candidate_iteration_id:
+        return {
+            "status": "blocked",
+            "reason": "candidate_iteration_id_missing",
+        }
+
+    if not isinstance(guard_result, dict) or guard_result.get("allowed") is not True:
+        return {
+            "status": "blocked",
+            "reason": "guard_not_allowed",
+            "guard_status": (guard_result or {}).get("guard_status") if isinstance(guard_result, dict) else None,
+            "metadata": metadata,
+        }
+
+    has_candidate_iteration = bool(metadata.get("has_candidate_iteration"))
+    has_snapshot = bool(metadata.get("has_snapshot"))
+    approval_state = str(metadata.get("approval_state") or "")
+    prepare_state = str(metadata.get("prepare_state") or "")
+    if not (has_candidate_iteration and has_snapshot and approval_state == "provided" and prepare_state == "prepared"):
+        return {
+            "status": "blocked",
+            "reason": "guard_metadata_not_ready",
+            "metadata": metadata,
+        }
+
+    requested_change = str(refinement_request.get("requested_change") or "").strip()
+    try:
+        record = apply_candidate_iteration_files(
+            iteration_id=candidate_iteration_id,
+            requested_change=requested_change,
+            file_updates=_build_minimal_refinement_file_updates(refinement_request),
+            evidence_refs=[],
+            validation_refs=[],
+        )
+    except HTTPException as exc:
+        return {
+            "status": "failed",
+            "reason": "candidate_apply_failed",
+            "detail": exc.detail,
+            "status_code": exc.status_code,
+        }
+
+    return {
+        "status": "executed",
+        "candidate_iteration_id": record.iteration_id,
+        "files_changed": list((record.diff_summary or {}).get("changed") or []),
+        "diff_summary": record.diff_summary,
+    }
+
+
 def _pending_refinement_chat_content(
     *,
     classification: str,
@@ -1703,6 +1790,7 @@ def _pending_refinement_chat_content(
     prepare_metadata: dict[str, Any] | None = None,
     validation_errors: list[dict[str, Any]] | None = None,
     guard_result: dict[str, Any] | None = None,
+    execution_result: dict[str, Any] | None = None,
 ) -> str:
     output_id = str(refinement_request.get("output_id") or resolution.get("output_id") or "").strip()
     requested_change = str(refinement_request.get("requested_change") or resolution.get("requested_change") or "").strip()
@@ -1712,10 +1800,13 @@ def _pending_refinement_chat_content(
         if validation_errors:
             return "No pude preparar ese cambio porque la validación lo bloqueó. La app no fue modificada."
         refinement_status = (prepare_metadata or {}).get("refinement_status") or "prepared"
+        executed = isinstance(execution_result, dict) and execution_result.get("status") == "executed"
         lines = [
-            "Confirmado. El cambio quedó preparado para la siguiente fase.",
+            "Confirmado. El cambio quedó preparado.",
             "",
-            "Todavía no modifiqué la app.",
+            "Estado real: el cambio se aplicó sobre la candidate. El Output activo todavía no fue modificado."
+            if executed
+            else "Todavía no modifiqué la app.",
         ]
 
         if isinstance(guard_result, dict):
@@ -1748,8 +1839,16 @@ def _pending_refinement_chat_content(
                         suffix = f" ({phase})" if phase else ""
                         lines.append(f"- {code}: {label or 'Sin detalle.'}{suffix}")
 
-            lines.append("")
-            lines.append("Estado real: el refinement esta preparado, pero la ejecucion sigue bloqueada por guard.")
+            if executed:
+                changed = execution_result.get("files_changed") if isinstance(execution_result, dict) else []
+                lines.append("")
+                lines.append("Ejecucion candidate: completed.")
+                if changed:
+                    lines.append("Archivos candidate modificados: " + ", ".join(str(item) for item in changed))
+                lines.append("Siguiente decision humana: revisar Diff y elegir Accept o Discard.")
+            else:
+                lines.append("")
+                lines.append("Estado real: el refinement esta preparado, pero la ejecucion sigue bloqueada por guard.")
         else:
             lines.append("Siguiente accion interna: run_refinement_pipeline.")
 
@@ -1795,6 +1894,7 @@ def _pending_refinement_payload(
     prepare_metadata: dict[str, Any] | None = None,
     validation_errors: list[dict[str, Any]] | None = None,
     guard_result: dict[str, Any] | None = None,
+    execution_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "route": "refinement_request",
@@ -1809,6 +1909,8 @@ def _pending_refinement_payload(
         }
     if guard_result is not None:
         payload["refinement_execution_guard"] = guard_result
+    if execution_result is not None:
+        payload["refinement_execution_result"] = execution_result
     return payload
 
 
@@ -1866,6 +1968,8 @@ def _save_local_chat_message(swarm, coordinator_id: str, assistant_content: str,
         swarm.final_result["prepare_output_refinement"] = payload["prepare_output_refinement"]
     if "refinement_execution_guard" in payload:
         swarm.final_result["refinement_execution_guard"] = payload["refinement_execution_guard"]
+    if "refinement_execution_result" in payload:
+        swarm.final_result["refinement_execution_result"] = payload["refinement_execution_result"]
 
 
 
@@ -2102,6 +2206,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
             prepare_metadata: dict[str, Any] | None = None
             validation_errors: list[dict[str, Any]] = []
             guard_result: dict[str, Any] | None = None
+            execution_result: dict[str, Any] | None = None
 
             if classification == "confirm_pending_action":
                 if _can_prepare_pending_refinement(
@@ -2137,6 +2242,18 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
                             requested_change=str(refinement.get("requested_change") or ""),
                             approve=True,
                         )
+                        execution_result = _execute_minimal_candidate_refinement(
+                            refinement_request=refinement,
+                            guard_result=guard_result,
+                        )
+                        if execution_result.get("status") == "executed":
+                            refinement["status"] = "executed"
+                            refinement["next_action"] = "review_candidate_diff"
+                            refinement["files_changed"] = True
+                            refinement["candidate_iteration_id"] = execution_result.get("candidate_iteration_id")
+                            swarm.final_result = dict(getattr(swarm, "final_result", {}) or {})
+                            swarm.final_result["refinement_request"] = refinement
+                            swarm.final_result["refinement_execution_result"] = execution_result
                 else:
                     classification = "needs_clarification"
                     resolution = {
@@ -2175,6 +2292,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
                 prepare_metadata=prepare_metadata,
                 validation_errors=validation_errors,
                 guard_result=guard_result,
+                execution_result=execution_result,
             )
             payload = _pending_refinement_payload(
                 refinement_request=refinement,
@@ -2183,6 +2301,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
                 prepare_metadata=prepare_metadata,
                 validation_errors=validation_errors,
                 guard_result=guard_result,
+                execution_result=execution_result,
             )
             payload.update(snapshot_payload(build_ri_state_snapshot(
                 swarm,
@@ -2203,6 +2322,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
                     "classification": classification,
                     "prepared": bool(prepare_metadata and not validation_errors),
                     "guard_status": (guard_result or {}).get("guard_status"),
+                    "execution_status": (execution_result or {}).get("status"),
                 },
             )
             return {**_dump(swarm), "provider_events": []}

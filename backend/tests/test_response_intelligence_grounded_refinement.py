@@ -119,8 +119,8 @@ def test_swarms_refinement_confirmation_uses_grounded_ri_result_payload():
     assert payload["ri_state"]["pending_action"] == "run_refinement_pipeline"
     assert payload["ri_state"]["action_stage"] == "confirmed"
     assert payload["ri_state"]["target_output_id"] == "out-existing"
-    assert "Confirmación recibida para el Output out-existing." in content
-    assert "Reducir padding." in content
+    assert "Dejé ese cambio preparado" in content
+    assert "Todavía no modifiqué la app" in content
 
 
 def test_action_stage_prepared_comes_from_prepare_output_refinement_metadata():

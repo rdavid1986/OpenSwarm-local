@@ -15,7 +15,7 @@ from jsonschema import validate as schema_validate, ValidationError as SchemaVal
 from backend.config.Apps import SubApp
 from backend.apps.outputs.models import (
     Output, OutputCreate, OutputUpdate, OutputExecute, OutputExecuteResult,
-    OutputIterationRecord, OutputIterationCreate,
+    OutputIterationRecord, OutputIterationCreate, OutputIterationApplyRequest,
     VibeCodeRequest, AutoRunRequest, AutoRunConfig, AutoRunAgentRequest,
     WorkspaceSeedRequest,
 )
@@ -302,6 +302,117 @@ def _create_candidate_iteration_from_output(
     )
     _save_iteration(record)
     return record
+
+
+def _build_iteration_diff_summary(
+    *,
+    files_before: dict[str, str],
+    files_after: dict[str, str],
+    requested_change: str = "",
+) -> dict[str, object]:
+    paths = sorted(set(files_before) | set(files_after))
+    changed: list[str] = []
+    added: list[str] = []
+    removed: list[str] = []
+    unchanged: list[str] = []
+
+    for rel_path in paths:
+        before_exists = rel_path in files_before
+        after_exists = rel_path in files_after
+        if before_exists and not after_exists:
+            removed.append(rel_path)
+            changed.append(rel_path)
+        elif after_exists and not before_exists:
+            added.append(rel_path)
+            changed.append(rel_path)
+        elif files_before.get(rel_path) != files_after.get(rel_path):
+            changed.append(rel_path)
+        else:
+            unchanged.append(rel_path)
+
+    return {
+        "status": "candidate_applied" if changed else "candidate_unchanged",
+        "requested_change": requested_change,
+        "changed": changed,
+        "added": added,
+        "removed": removed,
+        "unchanged": unchanged,
+        "changed_count": len(changed),
+    }
+
+
+def _apply_candidate_iteration_files(
+    *,
+    iteration_id: str,
+    requested_change: str = "",
+    file_updates: dict[str, str] | None = None,
+    evidence_refs: list[str] | None = None,
+    validation_refs: list[str] | None = None,
+) -> OutputIterationRecord:
+    record = _load_iteration(iteration_id)
+    if record.status != "candidate":
+        raise HTTPException(status_code=400, detail="Only candidate iterations can be applied")
+
+    updates = dict(file_updates or {})
+    if not updates:
+        raise HTTPException(status_code=400, detail="file_updates is required")
+
+    for rel_path, content in updates.items():
+        if rel_path not in STATIC_OUTPUT_ALLOWED_FILES:
+            raise HTTPException(status_code=400, detail=f"File not allowed in candidate iteration: {rel_path}")
+        if not isinstance(content, str):
+            raise HTTPException(status_code=400, detail=f"Candidate file content must be text: {rel_path}")
+
+    if not record.candidate_workspace_path:
+        raise HTTPException(status_code=409, detail="Candidate iteration has no candidate_workspace_path")
+
+    candidate_workspace = Path(record.candidate_workspace_path).resolve()
+    workspace_root = Path(WORKSPACE_DIR).resolve()
+    try:
+        candidate_workspace.relative_to(workspace_root)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Candidate workspace path traversal not allowed")
+
+    files_after = dict(record.files_after or {})
+    files_after.update(updates)
+
+    _write_output_files_to_workspace(
+        workspace_id=candidate_workspace.name,
+        files=files_after,
+    )
+
+    now = datetime.now().isoformat()
+    record.files_after = files_after
+    if requested_change:
+        record.requested_change = requested_change
+    record.diff_summary = _build_iteration_diff_summary(
+        files_before=dict(record.files_before or {}),
+        files_after=files_after,
+        requested_change=record.requested_change,
+    )
+    record.evidence_refs = list(dict.fromkeys([*record.evidence_refs, *(evidence_refs or [])]))
+    record.validation_refs = list(dict.fromkeys([*record.validation_refs, *(validation_refs or [])]))
+    record.updated_at = now
+    _save_iteration(record)
+    return record
+
+
+def apply_candidate_iteration_files(
+    *,
+    iteration_id: str,
+    requested_change: str = "",
+    file_updates: dict[str, str] | None = None,
+    evidence_refs: list[str] | None = None,
+    validation_refs: list[str] | None = None,
+) -> OutputIterationRecord:
+    """Public helper for guarded candidate refinement execution."""
+    return _apply_candidate_iteration_files(
+        iteration_id=iteration_id,
+        requested_change=requested_change,
+        file_updates=file_updates,
+        evidence_refs=evidence_refs,
+        validation_refs=validation_refs,
+    )
 
 
 def _accept_output_iteration(iteration_id: str) -> tuple[Output, OutputIterationRecord, dict]:
@@ -739,6 +850,18 @@ async def create_candidate_output_iteration(output_id: str, body: OutputIteratio
         requested_change=body.requested_change,
         source_swarm_id=body.source_swarm_id,
         parent_iteration_id=body.parent_iteration_id,
+        evidence_refs=body.evidence_refs,
+        validation_refs=body.validation_refs,
+    )
+    return {"ok": True, "iteration": record.model_dump()}
+
+
+@outputs.router.post("/iterations/{iteration_id}/apply")
+async def apply_candidate_output_iteration(iteration_id: str, body: OutputIterationApplyRequest):
+    record = apply_candidate_iteration_files(
+        iteration_id=iteration_id,
+        requested_change=body.requested_change,
+        file_updates=body.file_updates,
         evidence_refs=body.evidence_refs,
         validation_refs=body.validation_refs,
     )

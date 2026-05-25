@@ -297,7 +297,11 @@ def evaluate_refinement_execution_guard(
     candidate_iteration = _latest_candidate_iteration(requested_output_id) if has_output and requested_output_id else {}
     has_candidate_iteration = bool(candidate_iteration)
     has_snapshot = _has_snapshot(prepare_metadata, output_data) or has_candidate_iteration
-    has_rollback = _has_rollback(prepare_metadata)
+    has_rollback = (
+        _has_rollback(prepare_metadata)
+        or bool(candidate_iteration.get("base_workspace_path"))
+        or bool(candidate_iteration.get("files_before"))
+    )
     approval_state = "provided" if approve else "missing"
     source_swarm_state, source_swarm_id = _source_swarm_state(
         swarm=swarm,
@@ -425,11 +429,14 @@ def evaluate_refinement_execution_guard(
             message="No existe rollback mínimo disponible para revertir la iteración.",
         )
 
-    _add_reason(
-        reasons,
-        code="execution_pipeline_unavailable",
-        message="El pipeline real de refinamiento todavía no está habilitado detrás del guard.",
-    )
+    execution_pipeline_available = has_candidate_iteration and has_snapshot and has_rollback
+
+    if not execution_pipeline_available:
+        _add_reason(
+            reasons,
+            code="execution_pipeline_unavailable",
+            message="El pipeline real de refinamiento todavía no está habilitado detrás del guard.",
+        )
 
     if evidence_state != "sufficient":
         _add_reason(
@@ -447,8 +454,8 @@ def evaluate_refinement_execution_guard(
             message="source_swarm_id no coincide entre request/preparación y Output.",
         )
 
-    allowed = False
-    guard_status = "blocked"
+    allowed = not any(reason.get("severity") == "high" for reason in reasons)
+    guard_status = "allowed" if allowed else "blocked"
     return {
         "allowed": allowed,
         "guard_status": guard_status,
@@ -481,6 +488,6 @@ def evaluate_refinement_execution_guard(
             "workspace_errors": workspace_errors,
             "artifact_count": artifact_count,
             "evidence_count": evidence_count,
-            "execution_pipeline_state": "unavailable",
+            "execution_pipeline_state": "available" if execution_pipeline_available else "unavailable",
         },
     }

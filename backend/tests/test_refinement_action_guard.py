@@ -375,11 +375,54 @@ def test_refinement_execution_guard_accepts_candidate_iteration_as_snapshot(tmp_
         approve=True,
     )
 
-    assert result["allowed"] is False
+    assert result["allowed"] is True
+    assert result["guard_status"] == "allowed"
     assert "candidate_iteration_missing" not in _codes(result)
     assert "snapshot_missing" not in _codes(result)
-    assert "rollback_missing" in _codes(result)
-    assert "execution_pipeline_unavailable" in _codes(result)
+    assert "rollback_missing" not in _codes(result)
+    assert "execution_pipeline_unavailable" not in _codes(result)
     assert result["metadata"]["has_candidate_iteration"] is True
     assert result["metadata"]["candidate_iteration_id"] == candidate.iteration_id
     assert result["metadata"]["has_snapshot"] is True
+    assert result["metadata"]["has_rollback"] is True
+    assert result["metadata"]["execution_pipeline_state"] == "available"
+
+
+def test_pending_refinement_chat_content_reports_candidate_execution():
+    from backend.apps.swarms.swarms import _pending_refinement_chat_content
+
+    content = _pending_refinement_chat_content(
+        classification="confirm_pending_action",
+        refinement_request={
+            "output_id": "out-guard",
+            "requested_change": "Mejorar hero.",
+        },
+        resolution={
+            "classification": "confirm_pending_action",
+            "output_id": "out-guard",
+            "requested_change": "Mejorar hero.",
+        },
+        prepare_metadata={
+            "output_id": "out-guard",
+            "requested_change": "Mejorar hero.",
+            "refinement_status": "prepared",
+        },
+        validation_errors=[],
+        guard_result={
+            "guard_status": "allowed",
+            "risk_level": "medium",
+            "blocked_reasons": [],
+            "required_next_steps": [],
+        },
+        execution_result={
+            "status": "executed",
+            "candidate_iteration_id": "iter-1",
+            "files_changed": ["content.json"],
+        },
+    )
+
+    assert "se aplicó sobre la candidate" in content
+    assert "Output activo todavía no fue modificado" in content
+    assert "Ejecucion candidate: completed." in content
+    assert "content.json" in content
+    assert "Accept o Discard" in content

@@ -411,3 +411,100 @@ def test_restore_output_iteration_blocks_candidate_iteration(tmp_path, monkeypat
 
     restore = client.post(f"/api/outputs/iterations/{iteration['iteration_id']}/restore")
     assert restore.status_code == 400
+
+
+def test_apply_candidate_iteration_updates_files_after_and_candidate_workspace_without_mutating_output(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+
+    output = Output(
+        name="Demo",
+        files={
+            "index.html": "<html><body>Before</body></html>",
+            "styles.css": "body { margin: 0; }",
+            "content.json": '{"title":"Before"}',
+        },
+    )
+    outputs_module._save(output)
+
+    response = client.post(
+        f"/api/outputs/{output.id}/iterations/candidate",
+        json={"output_id": output.id, "requested_change": "Prepare candidate"},
+    )
+    assert response.status_code == 200
+    iteration = response.json()["iteration"]
+
+    apply = client.post(
+        f"/api/outputs/iterations/{iteration['iteration_id']}/apply",
+        json={
+            "requested_change": "Change title",
+            "file_updates": {"content.json": '{"title":"After"}'},
+            "evidence_refs": ["ev-apply"],
+            "validation_refs": ["val-apply"],
+        },
+    )
+
+    assert apply.status_code == 200
+    payload = apply.json()
+    assert payload["ok"] is True
+
+    applied = payload["iteration"]
+    assert applied["status"] == "candidate"
+    assert applied["requested_change"] == "Change title"
+    assert applied["files_after"]["content.json"] == '{"title":"After"}'
+    assert applied["files_before"] == output.files
+    assert applied["diff_summary"]["status"] == "candidate_applied"
+    assert applied["diff_summary"]["changed"] == ["content.json"]
+    assert applied["diff_summary"]["changed_count"] == 1
+    assert applied["evidence_refs"] == ["ev-apply"]
+    assert applied["validation_refs"] == ["val-apply"]
+
+    unchanged = outputs_module._load(output.id)
+    assert unchanged.files == output.files
+
+    candidate_path = Path(applied["candidate_workspace_path"])
+    assert (candidate_path / "content.json").read_text(encoding="utf-8") == '{"title":"After"}'
+
+
+def test_apply_candidate_iteration_blocks_disallowed_file(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+
+    output = Output(name="Demo", files={"index.html": "A", "styles.css": "", "content.json": "{}"})
+    outputs_module._save(output)
+
+    response = client.post(
+        f"/api/outputs/{output.id}/iterations/candidate",
+        json={"output_id": output.id, "requested_change": "Prepare candidate"},
+    )
+    iteration = response.json()["iteration"]
+
+    apply = client.post(
+        f"/api/outputs/iterations/{iteration['iteration_id']}/apply",
+        json={"file_updates": {"backend.py": "print('no')"}},
+    )
+
+    assert apply.status_code == 400
+    assert outputs_module._load(output.id).files == output.files
+
+
+def test_apply_candidate_iteration_blocks_non_candidate(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+
+    output = Output(name="Demo", files={"index.html": "A", "styles.css": "", "content.json": "{}"})
+    outputs_module._save(output)
+
+    response = client.post(
+        f"/api/outputs/{output.id}/iterations/candidate",
+        json={"output_id": output.id, "requested_change": "Prepare candidate"},
+    )
+    iteration = response.json()["iteration"]
+
+    record = outputs_module._load_iteration(iteration["iteration_id"])
+    record.status = "accepted"
+    outputs_module._save_iteration(record)
+
+    apply = client.post(
+        f"/api/outputs/iterations/{record.iteration_id}/apply",
+        json={"file_updates": {"content.json": '{"title":"After"}'}},
+    )
+
+    assert apply.status_code == 400
