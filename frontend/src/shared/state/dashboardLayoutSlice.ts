@@ -29,7 +29,14 @@ export interface CardPosition {
 }
 
 export interface ViewCardPosition {
+  view_card_id?: string;
   output_id: string;
+  preview_kind?: 'stable' | 'candidate' | 'iteration';
+  iteration_id?: string | null;
+  candidate_workspace_path?: string | null;
+  parent_view_card_id?: string | null;
+  title?: string | null;
+  device_preset?: 'desktop-full-hd' | 'desktop' | 'laptop' | 'tablet' | 'mobile' | 'custom' | null;
   x: number;
   y: number;
   width: number;
@@ -619,7 +626,7 @@ const dashboardLayoutSlice = createSlice({
 
       const allItems = [
         ...agentCards.map((c) => ({ kind: 'agent' as const, id: c.session_id, x: c.x, y: c.y, storedW: c.width, storedH: c.height })),
-        ...viewCards.map((c) => ({ kind: 'view' as const, id: c.output_id, x: c.x, y: c.y, storedW: c.width, storedH: c.height })),
+        ...viewCards.map((c) => ({ kind: 'view' as const, id: c.view_card_id || c.output_id, x: c.x, y: c.y, storedW: c.width, storedH: c.height })),
         ...bCards.map((c) => ({ kind: 'browser' as const, id: c.browser_id, x: c.x, y: c.y, storedW: c.width, storedH: c.height })),
       ];
       allItems.sort((a, b) => a.y - b.y || a.x - b.x);
@@ -654,10 +661,38 @@ const dashboardLayoutSlice = createSlice({
 
     addViewCard(state, action: PayloadAction<{
       outputId: string; expandedSessionIds?: string[];
+      viewCardId?: string;
+      previewKind?: ViewCardPosition['preview_kind'];
+      iterationId?: string | null;
+      candidateWorkspacePath?: string | null;
+      parentViewCardId?: string | null;
+      title?: string | null;
       x?: number; y?: number; width?: number; height?: number;
     }>) {
-      const { outputId, expandedSessionIds, x, y, width, height } = action.payload;
-      if (state.viewCards[outputId]) return;
+      const {
+        outputId,
+        expandedSessionIds,
+        viewCardId,
+        previewKind,
+        iterationId,
+        candidateWorkspacePath,
+        parentViewCardId,
+        title,
+        x,
+        y,
+        width,
+        height,
+      } = action.payload;
+      const id = viewCardId || outputId;
+      if (state.viewCards[id]) {
+        const existing = state.viewCards[id];
+        if (x != null) existing.x = x;
+        if (y != null) existing.y = y;
+        if (width != null) existing.width = width;
+        if (height != null) existing.height = height;
+        existing.zOrder = state.nextZOrder++;
+        return;
+      }
       let posX: number, posY: number;
       if (x != null && y != null) {
         posX = x;
@@ -668,8 +703,14 @@ const dashboardLayoutSlice = createSlice({
         posX = pos.x;
         posY = pos.y;
       }
-      state.viewCards[outputId] = {
+      state.viewCards[id] = {
+        view_card_id: id,
         output_id: outputId,
+        preview_kind: previewKind || 'stable',
+        iteration_id: iterationId ?? null,
+        candidate_workspace_path: candidateWorkspacePath ?? null,
+        parent_view_card_id: parentViewCardId ?? null,
+        title: title ?? null,
         x: posX,
         y: posY,
         width: width || DEFAULT_VIEW_CARD_W,
@@ -680,22 +721,37 @@ const dashboardLayoutSlice = createSlice({
 
     setViewCardPosition(
       state,
-      action: PayloadAction<{ outputId: string; x: number; y: number }>
+      action: PayloadAction<{ outputId: string; viewCardId?: string; x: number; y: number }>
     ) {
-      const { outputId, x, y } = action.payload;
-      const card = state.viewCards[outputId];
+      const { outputId, viewCardId, x, y } = action.payload;
+      const card = state.viewCards[viewCardId || outputId];
       if (card) { card.x = x; card.y = y; }
     },
 
     setViewCardSize(
       state,
-      action: PayloadAction<{ outputId: string; width: number; height: number }>
+      action: PayloadAction<{ outputId: string; viewCardId?: string; width: number; height: number }>
     ) {
-      const { outputId, width, height } = action.payload;
-      const card = state.viewCards[outputId];
+      const { outputId, viewCardId, width, height } = action.payload;
+      const card = state.viewCards[viewCardId || outputId];
       if (card) {
         card.width = Math.max(320, width);
         card.height = Math.max(200, height);
+      }
+    },
+
+    setViewCardDevicePreset(
+      state,
+      action: PayloadAction<{
+        outputId: string;
+        viewCardId?: string;
+        devicePreset: ViewCardPosition['device_preset'];
+      }>
+    ) {
+      const { outputId, viewCardId, devicePreset } = action.payload;
+      const card = state.viewCards[viewCardId || outputId];
+      if (card) {
+        card.device_preset = devicePreset ?? null;
       }
     },
 

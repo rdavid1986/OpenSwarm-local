@@ -844,8 +844,8 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   // the brief window between fetchLayout returning and outputs finishing.
   useEffect(() => {
     if (!layoutInitialized || !outputsLoaded) return;
-    for (const outputId of Object.keys(viewCards)) {
-      if (!outputs[outputId]) dispatch(removeViewCard(outputId));
+    for (const [viewCardId, viewCard] of Object.entries(viewCards)) {
+      if (!outputs[viewCard.output_id]) dispatch(removeViewCard(viewCardId));
     }
   }, [layoutInitialized, outputsLoaded, viewCards, outputs, dispatch]);
 
@@ -1197,8 +1197,8 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     for (const card of Object.values(cards)) {
       allCardEntries.push({ id: card.session_id, type: 'agent', cx: card.x + card.width / 2, cy: card.y + card.height / 2 });
     }
-    for (const vc of Object.values(viewCards)) {
-      allCardEntries.push({ id: vc.output_id, type: 'view', cx: vc.x + vc.width / 2, cy: vc.y + vc.height / 2 });
+    for (const [viewCardId, vc] of Object.entries(viewCards)) {
+      allCardEntries.push({ id: vc.view_card_id || viewCardId, type: 'view', cx: vc.x + vc.width / 2, cy: vc.y + vc.height / 2 });
     }
     for (const bc of Object.values(browserCards)) {
       allCardEntries.push({ id: bc.browser_id, type: 'browser', cx: bc.x + bc.width / 2, cy: bc.y + bc.height / 2 });
@@ -2561,13 +2561,19 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
               );
             })}
             </AnimatePresence>
-            {Object.values(viewCards).map((vc) => {
+            {Object.entries(viewCards).map(([viewCardId, vc]) => {
               const output = outputs[vc.output_id];
               if (!output) return null;
+              const resolvedViewCardId = vc.view_card_id || viewCardId;
               return (
                 <DashboardViewCard
-                  key={`view-${vc.output_id}`}
+                  key={`view-${resolvedViewCardId}`}
+                  viewCardId={resolvedViewCardId}
                   output={output}
+                  previewKind={vc.preview_kind || 'stable'}
+                  iterationId={vc.iteration_id ?? null}
+                  candidateWorkspacePath={vc.candidate_workspace_path ?? null}
+                  title={vc.title ?? null}
                   cardX={vc.x}
                   cardY={vc.y}
                   cardWidth={vc.width}
@@ -2578,8 +2584,8 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                   panX={canvas.panX}
                   panY={canvas.panY}
                   cmdHeld={canvas.cmdHeld}
-                  isSelected={selection.isSelected(vc.output_id)}
-                  isHighlighted={highlightedCardId === vc.output_id}
+                  isSelected={selection.isSelected(resolvedViewCardId)}
+                  isHighlighted={highlightedCardId === resolvedViewCardId}
                   multiDragDelta={multiDragDelta}
                   onCardSelect={handleCardSelect}
                   onDragStart={handleCardDragStart}

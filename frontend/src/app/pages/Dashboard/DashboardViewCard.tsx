@@ -14,7 +14,7 @@ import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import CloseFullscreenIcon from '@mui/icons-material/CloseFullscreen';
 import DifferenceIcon from '@mui/icons-material/Difference';
 import { Output, OutputIterationRecord, acceptOutputIteration, autoRunOutput, autoRunAgentOutput, discardOutputIteration, executeOutput, OutputExecuteResult, fetchOutputIterations, getBackendCode, SERVE_BASE, workspaceIdFromPath } from '@/shared/state/outputsSlice';
-import { setViewCardPosition, setViewCardSize, removeViewCard } from '@/shared/state/dashboardLayoutSlice';
+import { addViewCard, GRID_GAP, setViewCardPosition, setViewCardSize, removeViewCard, setViewCardDevicePreset } from '@/shared/state/dashboardLayoutSlice';
 import { useAppDispatch } from '@/shared/hooks';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import ViewPreview, { ViewPreviewHandle } from '@/app/pages/Views/ViewPreview';
@@ -103,7 +103,13 @@ const HANDLE_DEFS: { dir: ResizeDir; sx: Record<string, any> }[] = [
 ];
 
 interface Props {
+  viewCardId: string;
   output: Output;
+  previewKind?: 'stable' | 'candidate' | 'iteration';
+  iterationId?: string | null;
+  candidateWorkspacePath?: string | null;
+  title?: string | null;
+  devicePreset?: DevicePresetKey | null;
   cardX: number;
   cardY: number;
   cardWidth: number;
@@ -126,7 +132,8 @@ interface Props {
 }
 
 const DashboardViewCard: React.FC<Props> = ({
-  output, cardX, cardY, cardWidth, cardHeight, zoom = 1, panX = 0, panY = 0, cmdHeld = false,
+  viewCardId, output, previewKind = 'stable', iterationId = null, candidateWorkspacePath = null, title = null, devicePreset = null,
+  cardX, cardY, cardWidth, cardHeight, zoom = 1, panX = 0, panY = 0, cmdHeld = false,
   isSelected = false, isHighlighted = false, multiDragDelta, onCardSelect, onDragStart, onDragMove, onDragEnd,
   cardZOrder = 0, onDoubleClick, onBringToFront, onRefineOutput,
 }) => {
@@ -138,13 +145,14 @@ const DashboardViewCard: React.FC<Props> = ({
   const [inputData, setInputData] = useState<Record<string, any>>(() => getDefault(output.input_schema));
   const [backendResult, setBackendResult] = useState<Record<string, any> | null>(null);
   const [autoRunning, setAutoRunning] = useState(false);
-  const [selectedPreset, setSelectedPreset] = useState<DevicePresetKey>('desktop');
+  const [selectedPreset, setSelectedPreset] = useState<DevicePresetKey>(devicePreset || 'desktop');
   const [isMaximized, setIsMaximized] = useState(false);
   const [bodySize, setBodySize] = useState({ width: 0, height: 0 });
   const previewBodyRef = useRef<HTMLDivElement>(null);
 
-  const [previewMode, setPreviewMode] = useState<'stable' | 'candidate' | 'compare'>('stable');
+  const [previewMode, setPreviewMode] = useState<'stable' | 'candidate'>(previewKind === 'stable' ? 'stable' : 'candidate');
   const [candidateIteration, setCandidateIteration] = useState<OutputIterationRecord | null>(null);
+  const [latestCandidateIteration, setLatestCandidateIteration] = useState<OutputIterationRecord | null>(null);
   const [previewRevision, setPreviewRevision] = useState(0);
 
   const [showDiffPanel, setShowDiffPanel] = useState(false);
@@ -157,26 +165,30 @@ const DashboardViewCard: React.FC<Props> = ({
 
   const refreshCandidateIterations = useCallback(async () => {
     const iterations = await dispatch(fetchOutputIterations(output.id)).unwrap();
-    const latestCandidate = [...iterations]
-      .reverse()
-      .find((iteration) => iteration.status === 'candidate' && iteration.candidate_workspace_path);
-    setCandidateIteration(latestCandidate ?? null);
+    const candidates = iterations.filter((iteration) => iteration.status === 'candidate' && iteration.candidate_workspace_path);
+    const selectedCandidate = iterationId
+      ? candidates.find((iteration) => iteration.iteration_id === iterationId)
+      : [...candidates].reverse()[0];
+    const latestCandidate = [...candidates].reverse()[0];
+    setCandidateIteration(selectedCandidate ?? null);
+    setLatestCandidateIteration(latestCandidate ?? null);
     setPreviewRevision((value) => value + 1);
-    if (latestCandidate) {
-      setPreviewMode((mode) => (mode === 'compare' ? 'compare' : 'candidate'));
+    if (selectedCandidate) {
+      setPreviewMode(previewKind === 'stable' ? 'stable' : 'candidate');
       setIterationActionError(null);
     } else {
       setPreviewMode('stable');
       setShowDiffPanel(false);
     }
-    return latestCandidate ?? null;
-  }, [dispatch, output.id]);
+    return selectedCandidate ?? null;
+  }, [dispatch, iterationId, output.id, previewKind]);
 
   useEffect(() => {
     let cancelled = false;
     refreshCandidateIterations().catch(() => {
       if (!cancelled) {
         setCandidateIteration(null);
+        setLatestCandidateIteration(null);
         setPreviewMode('stable');
         setShowDiffPanel(false);
       }
@@ -194,7 +206,9 @@ const DashboardViewCard: React.FC<Props> = ({
     return () => window.removeEventListener('openswarm:output-iterations-updated', handleOutputIterationsUpdated);
   }, [output.id, refreshCandidateIterations]);
 
-  const candidateWorkspaceId = workspaceIdFromPath(candidateIteration?.candidate_workspace_path);
+  const candidateWorkspaceId = workspaceIdFromPath(candidateIteration?.candidate_workspace_path || candidateWorkspacePath);
+  const compareCandidateIteration = latestCandidateIteration || candidateIteration;
+  const compareCandidateWorkspaceId = workspaceIdFromPath(compareCandidateIteration?.candidate_workspace_path);
   const stableServeUrl = `${SERVE_BASE}/${output.id}/serve/index.html`;
   const candidateVersionKey = [
     candidateIteration?.iteration_id || '',
@@ -204,13 +218,19 @@ const DashboardViewCard: React.FC<Props> = ({
   const candidateServeUrl = candidateWorkspaceId
     ? `${SERVE_BASE}/workspace/${candidateWorkspaceId}/serve/index.html?_candidate_rev=${encodeURIComponent(candidateVersionKey)}`
     : null;
+  const compareCandidateServeUrl = compareCandidateWorkspaceId
+    ? `${SERVE_BASE}/workspace/${compareCandidateWorkspaceId}/serve/index.html?_candidate_rev=${encodeURIComponent([
+      compareCandidateIteration?.iteration_id || '',
+      compareCandidateIteration?.updated_at || '',
+      String(previewRevision),
+    ].join(':'))}`
+    : null;
   const activeServeUrl = useMemo(() => {
-    if ((previewMode === 'candidate' || previewMode === 'compare') && candidateServeUrl) {
+    if (previewMode === 'candidate' && candidateServeUrl) {
       return candidateServeUrl;
     }
     return stableServeUrl;
   }, [candidateServeUrl, previewMode, stableServeUrl]);
-  const isCompareMode = previewMode === 'compare' && !!candidateServeUrl;
 
   const handleAcceptCandidate = useCallback(async () => {
     if (!candidateIteration || iterationActionLoading) return;
@@ -222,13 +242,14 @@ const DashboardViewCard: React.FC<Props> = ({
       setPreviewMode('stable');
       setShowDiffPanel(false);
       previewRef.current?.reload();
+      if (previewKind !== 'stable') dispatch(removeViewCard(viewCardId));
       window.dispatchEvent(new CustomEvent('openswarm:output-iterations-updated', { detail: { outputId: output.id } }));
     } catch (error: any) {
       setIterationActionError(error?.message || 'Accept candidate failed');
     } finally {
       setIterationActionLoading(null);
     }
-  }, [candidateIteration, dispatch, iterationActionLoading, output.id, refreshCandidateIterations]);
+  }, [candidateIteration, dispatch, iterationActionLoading, output.id, previewKind, refreshCandidateIterations, viewCardId]);
 
   const handleDiscardCandidate = useCallback(async () => {
     if (!candidateIteration || iterationActionLoading) return;
@@ -240,13 +261,14 @@ const DashboardViewCard: React.FC<Props> = ({
       setPreviewMode('stable');
       setShowDiffPanel(false);
       previewRef.current?.reload();
+      if (previewKind !== 'stable') dispatch(removeViewCard(viewCardId));
       window.dispatchEvent(new CustomEvent('openswarm:output-iterations-updated', { detail: { outputId: output.id } }));
     } catch (error: any) {
       setIterationActionError(error?.message || 'Discard candidate failed');
     } finally {
       setIterationActionLoading(null);
     }
-  }, [candidateIteration, dispatch, iterationActionLoading, output.id, refreshCandidateIterations]);
+  }, [candidateIteration, dispatch, iterationActionLoading, output.id, previewKind, refreshCandidateIterations, viewCardId]);
 
   const outputDiffRows = useMemo(() => buildOutputDiffRows(candidateIteration), [candidateIteration]);
   const changedDiffCount = useMemo(() => countChangedDiffRows(outputDiffRows), [outputDiffRows]);
@@ -291,8 +313,8 @@ const DashboardViewCard: React.FC<Props> = ({
     didDrag.current = false;
     setIsDragging(true);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    onDragStart?.(output.id, 'view');
-  }, [cardX, cardY, isMaximized, onDragStart, output.id]);
+    onDragStart?.(viewCardId, 'view');
+  }, [cardX, cardY, isMaximized, onDragStart, viewCardId]);
 
   const recomputeDragPos = useCallback(() => {
     const ds = dragState.current;
@@ -340,6 +362,7 @@ const DashboardViewCard: React.FC<Props> = ({
       }
       dispatch(setViewCardPosition({
         outputId: output.id,
+        viewCardId,
         x: finalX,
         y: finalY,
       }));
@@ -352,7 +375,7 @@ const DashboardViewCard: React.FC<Props> = ({
     setLocalDragPos(null);
     setIsDragging(false);
     (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-  }, [dispatch, output.id, onDragEnd]);
+  }, [dispatch, output.id, viewCardId, onDragEnd]);
 
   // ---- Resize ----
   const resizeRef = useRef<{
@@ -408,18 +431,18 @@ const DashboardViewCard: React.FC<Props> = ({
     if (!resizeRef.current) return;
     const result = computeResize(e);
     if (result) {
-      dispatch(setViewCardPosition({ outputId: output.id, x: result.x, y: result.y }));
-      dispatch(setViewCardSize({ outputId: output.id, width: result.w, height: result.h }));
+      dispatch(setViewCardPosition({ outputId: output.id, viewCardId, x: result.x, y: result.y }));
+      dispatch(setViewCardSize({ outputId: output.id, viewCardId, width: result.w, height: result.h }));
     }
     resizeRef.current = null;
     setLocalResize(null);
     setIsResizing(false);
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-  }, [computeResize, dispatch, output.id]);
+  }, [computeResize, dispatch, output.id, viewCardId]);
 
   const handleRemove = (e: React.MouseEvent) => {
     e.stopPropagation();
-    dispatch(removeViewCard(output.id));
+    dispatch(removeViewCard(viewCardId));
   };
 
   const handleRefresh = (e: React.MouseEvent) => {
@@ -433,8 +456,9 @@ const DashboardViewCard: React.FC<Props> = ({
     setSelectedPreset(nextPresetKey);
     if (!isMaximized) {
       const { width, height } = getPresetCardSize(DEVICE_PRESETS[nextPresetKey]);
-      dispatch(setViewCardSize({ outputId: output.id, width, height }));
+      dispatch(setViewCardSize({ outputId: output.id, viewCardId, width, height }));
     }
+    dispatch(setViewCardDevicePreset({ outputId: output.id, viewCardId, devicePreset: nextPresetKey }));
   };
 
 
@@ -446,6 +470,24 @@ const DashboardViewCard: React.FC<Props> = ({
   const handleRefineOutput = (e: React.MouseEvent) => {
     e.stopPropagation();
     onRefineOutput?.(output, selectedPreset);
+  };
+
+  const handleOpenCandidatePreview = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!compareCandidateIteration || !compareCandidateServeUrl) return;
+    dispatch(addViewCard({
+      outputId: output.id,
+      viewCardId: `${output.id}::candidate::${compareCandidateIteration.iteration_id}`,
+      previewKind: 'candidate',
+      iterationId: compareCandidateIteration.iteration_id,
+      candidateWorkspacePath: compareCandidateIteration.candidate_workspace_path || null,
+      parentViewCardId: viewCardId,
+      title: 'Candidate Preview',
+      x: cardX + cardWidth + GRID_GAP,
+      y: cardY,
+      width: cardWidth,
+      height: cardHeight,
+    }));
   };
 
   const handleAutoRun = async (e: React.MouseEvent) => {
@@ -522,16 +564,16 @@ const DashboardViewCard: React.FC<Props> = ({
   const card = (
     <Box
       data-select-type="view-card"
-      data-select-id={output.id}
+      data-select-id={viewCardId}
       data-select-meta={JSON.stringify({ name: output.name, description: output.description })}
-      onPointerDownCapture={() => onBringToFront?.(output.id, 'view')}
+      onPointerDownCapture={() => onBringToFront?.(viewCardId, 'view')}
       onClick={(e: React.MouseEvent) => {
         if (justDraggedRef.current) return;
-        onCardSelect?.(output.id, 'view', e.shiftKey);
+        onCardSelect?.(viewCardId, 'view', e.shiftKey);
       }}
       onDoubleClick={(e: React.MouseEvent) => {
         e.stopPropagation();
-        onDoubleClick?.(output.id, 'view');
+        onDoubleClick?.(viewCardId, 'view');
       }}
       sx={{
         position: isMaximized ? 'fixed' : 'absolute',
@@ -623,7 +665,7 @@ const DashboardViewCard: React.FC<Props> = ({
               whiteSpace: 'nowrap',
             }}
           >
-            {output.name}
+            {title || (previewKind === 'stable' ? output.name : 'Candidate Preview')}
           </Typography>
         </Box>
 
@@ -742,12 +784,12 @@ const DashboardViewCard: React.FC<Props> = ({
           </Tooltip>
         )}
 
-        {candidateIteration && candidateServeUrl && (
-          <Tooltip title="Compare stable and candidate previews side by side" placement="top">
+        {compareCandidateIteration && compareCandidateServeUrl && `${output.id}::candidate::${compareCandidateIteration.iteration_id}` !== viewCardId && (
+          <Tooltip title="Open candidate preview card beside this preview" placement="top">
             <Button
               size="small"
               data-preview-control="true"
-              onClick={() => setPreviewMode((mode) => (mode === 'compare' ? 'candidate' : 'compare'))}
+              onClick={handleOpenCandidatePreview}
               onPointerDown={(e) => e.stopPropagation()}
               startIcon={<DifferenceIcon sx={{ fontSize: 14 }} />}
               sx={{
@@ -755,9 +797,9 @@ const DashboardViewCard: React.FC<Props> = ({
                 px: 0.9,
                 py: 0.25,
                 borderRadius: `${c.radius.md}px`,
-                color: previewMode === 'compare' ? c.text.primary : c.text.muted,
-                border: `1px solid ${previewMode === 'compare' ? c.border.strong : c.border.medium}`,
-                bgcolor: previewMode === 'compare' ? c.bg.muted : c.bg.surface,
+                color: c.text.muted,
+                border: `1px solid ${c.border.medium}`,
+                bgcolor: c.bg.surface,
                 fontSize: '0.68rem',
                 textTransform: 'none',
                 cursor: 'pointer',
@@ -925,69 +967,7 @@ const DashboardViewCard: React.FC<Props> = ({
           c={c}
         />
 
-        {isCompareMode && candidateServeUrl ? (
-          <Box
-            data-preview-control="true"
-            onPointerDown={(e) => e.stopPropagation()}
-            sx={{
-              width: isMaximized ? '100%' : Math.max(scaledFrameW * 2 + 16, 720),
-              minWidth: isMaximized ? '100%' : Math.max(scaledFrameW * 2 + 16, 720),
-              height: isMaximized ? '100%' : scaledFrameH + 30,
-              minHeight: isMaximized ? '100%' : scaledFrameH + 30,
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: 1.25,
-            }}
-          >
-            {[
-              { label: 'Stable', url: stableServeUrl },
-              { label: 'Candidate', url: candidateServeUrl },
-            ].map((preview) => (
-              <Box
-                key={preview.label}
-                sx={{
-                  minWidth: 0,
-                  minHeight: 0,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  border: `1px solid ${c.border.subtle}`,
-                  borderRadius: `${c.radius.lg}px`,
-                  overflow: 'hidden',
-                  bgcolor: c.bg.surface,
-                }}
-              >
-                <Box
-                  sx={{
-                    px: 1,
-                    py: 0.55,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    borderBottom: `1px solid ${c.border.subtle}`,
-                    bgcolor: c.bg.secondary,
-                  }}
-                >
-                  <Typography sx={{ color: c.text.secondary, fontSize: '0.68rem', fontWeight: 600, fontFamily: c.font.mono }}>
-                    {preview.label}
-                  </Typography>
-                  <Typography sx={{ color: c.text.ghost, fontSize: '0.62rem', fontFamily: c.font.mono }}>
-                    {selectedDevice.width}×{selectedDevice.height}
-                  </Typography>
-                </Box>
-                <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                  <ViewPreview
-                    key={`${preview.label}-${preview.url}-${previewRevision}`}
-                    serveUrl={preview.url}
-                    frontendCode={output.files?.['index.html'] ?? ''}
-                    inputData={inputData}
-                    backendResult={backendResult}
-                  />
-                </Box>
-              </Box>
-            ))}
-          </Box>
-        ) : (
-          <Box
+        <Box
             sx={{
               width: isMaximized ? 'max-content' : scaledFrameW,
               height: isMaximized ? 'max-content' : scaledFrameH,
@@ -1030,7 +1010,7 @@ const DashboardViewCard: React.FC<Props> = ({
               </Box>
             </Box>
           </Box>
-        )}
+
       </Box>
 
       {/* Resize handles */}
