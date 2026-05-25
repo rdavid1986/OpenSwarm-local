@@ -9,6 +9,7 @@ executing returned updates.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable
 
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
@@ -85,6 +86,105 @@ def build_candidate_refinement_prompt(
         "current_files": _truncate_files(files_after),
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+COLOR_WORDS = {
+    "verde": "green",
+    "green": "green",
+    "azul": "blue",
+    "blue": "blue",
+    "rojo": "red",
+    "red": "red",
+    "amarillo": "yellow",
+    "yellow": "yellow",
+    "negro": "black",
+    "black": "black",
+    "blanco": "white",
+    "white": "white",
+    "violeta": "purple",
+    "morado": "purple",
+    "purple": "purple",
+    "naranja": "orange",
+    "orange": "orange",
+    "gris": "gray",
+    "gray": "gray",
+    "grey": "gray",
+}
+
+
+def _detect_title_color_change(requested_change: str) -> str | None:
+    text = _as_text(requested_change).lower()
+    if not text:
+        return None
+    title_terms = ("titulo", "título", "title", "hero")
+    color_terms = ("color", "verde", "green", "azul", "blue", "rojo", "red", "amarillo", "yellow")
+    if not any(term in text for term in title_terms):
+        return None
+    if not any(term in text for term in color_terms):
+        return None
+    for word, css_color in COLOR_WORDS.items():
+        if re.search(rf"\b{re.escape(word)}\b", text):
+            return css_color
+    return None
+
+
+def _replace_or_append_title_color(styles: str, css_color: str) -> str:
+    selectors = [
+        ".hero h1",
+        ".hero-title",
+        "h1",
+    ]
+
+    for selector in selectors:
+        pattern = re.compile(rf"({re.escape(selector)}\s*\{{)(.*?)(\}})", re.DOTALL)
+        match = pattern.search(styles)
+        if not match:
+            continue
+        body = match.group(2)
+        if re.search(r"color\s*:", body):
+            new_body = re.sub(r"color\s*:\s*[^;]+;", f"color: {css_color};", body, count=1)
+        else:
+            suffix = "" if body.endswith("\n") else "\n"
+            new_body = f"{body}{suffix}  color: {css_color};\n"
+        return styles[:match.start()] + match.group(1) + new_body + match.group(3) + styles[match.end():]
+
+    suffix = "" if styles.endswith("\n") or not styles else "\n"
+    return f"{styles}{suffix}.hero h1 {{\n  color: {css_color};\n}}\n"
+
+
+def plan_candidate_refinement_fast_path(
+    *,
+    requested_change: str,
+    files_after: dict[str, str],
+) -> dict[str, Any] | None:
+    """Plan deterministic updates for common safe refinement requests.
+
+    Returns None when the request is not recognized, so callers can fall back
+    to the model planner.
+    """
+
+    css_color = _detect_title_color_change(requested_change)
+    if css_color:
+        styles = files_after.get("styles.css")
+        if isinstance(styles, str):
+            updated_styles = _replace_or_append_title_color(styles, css_color)
+            if updated_styles != styles:
+                return {
+                    "ok": True,
+                    "status": "planned",
+                    "reason": f"Fast path updated title color to {css_color}.",
+                    "file_updates": {"styles.css": updated_styles},
+                    "planner": "fast_path",
+                }
+            return {
+                "ok": True,
+                "status": "no_change",
+                "reason": f"Title color already appears to be {css_color}.",
+                "file_updates": {},
+                "planner": "fast_path",
+            }
+
+    return None
 
 
 def normalize_candidate_refinement_plan(
@@ -187,6 +287,13 @@ async def plan_candidate_refinement_file_updates(
             "reason": "Candidate has no allowed text files to update.",
             "file_updates": {},
         }
+
+    fast_path_plan = plan_candidate_refinement_fast_path(
+        requested_change=change,
+        files_after=allowed_existing_files,
+    )
+    if fast_path_plan is not None:
+        return fast_path_plan
 
     adapter = adapter_factory() if adapter_factory else OllamaAdapter(allow_network=True, supports_json_mode=True)
     context = ProviderTurnContext(

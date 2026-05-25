@@ -5,6 +5,7 @@ from backend.apps.swarms.candidate_refinement_planner import (
     build_candidate_refinement_prompt,
     normalize_candidate_refinement_plan,
     plan_candidate_refinement_file_updates,
+    plan_candidate_refinement_fast_path,
 )
 
 
@@ -118,3 +119,57 @@ async def test_plan_candidate_refinement_file_updates_fails_closed_on_bad_json()
     assert result["ok"] is False
     assert result["status"] == "failed"
     assert result["file_updates"] == {}
+
+
+def test_fast_path_updates_title_color_in_styles_css():
+    result = plan_candidate_refinement_fast_path(
+        requested_change="cambia el color del titulo a verde",
+        files_after={
+            "styles.css": ".hero h1 {\n  font-size: 3rem;\n  color: #111827;\n}\n",
+        },
+    )
+
+    assert result is not None
+    assert result["ok"] is True
+    assert result["planner"] == "fast_path"
+    assert result["file_updates"] == {
+        "styles.css": ".hero h1 {\n  font-size: 3rem;\n  color: green;\n}\n"
+    }
+
+
+def test_fast_path_appends_title_color_when_selector_has_no_color():
+    result = plan_candidate_refinement_fast_path(
+        requested_change="cambia el color del título a azul",
+        files_after={
+            "styles.css": ".hero h1 {\n  font-size: 3rem;\n}\n",
+        },
+    )
+
+    assert result is not None
+    assert result["ok"] is True
+    assert "color: blue;" in result["file_updates"]["styles.css"]
+
+
+def test_fast_path_returns_none_for_unrecognized_request():
+    result = plan_candidate_refinement_fast_path(
+        requested_change="agrega una sección nueva de precios",
+        files_after={"styles.css": ".hero h1 { color: black; }\n"},
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_plan_candidate_refinement_file_updates_uses_fast_path_without_adapter():
+    def fail_adapter():
+        raise AssertionError("model adapter should not be called for fast path")
+
+    result = await plan_candidate_refinement_file_updates(
+        requested_change="cambia el color del titulo a verde",
+        files_after={"styles.css": ".hero h1 {\n  color: black;\n}\n"},
+        adapter_factory=fail_adapter,
+    )
+
+    assert result["ok"] is True
+    assert result["planner"] == "fast_path"
+    assert result["file_updates"]["styles.css"] == ".hero h1 {\n  color: green;\n}\n"
