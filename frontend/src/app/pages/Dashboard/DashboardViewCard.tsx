@@ -282,11 +282,13 @@ const DashboardViewCard: React.FC<Props> = ({
   const showCandidateIterationControls = previewKind !== 'stable' && Boolean(candidateIteration);
   const outputDiffRows = useMemo(() => buildOutputDiffRows(candidateIteration), [candidateIteration]);
   const changedDiffCount = useMemo(() => countChangedDiffRows(outputDiffRows), [outputDiffRows]);
+  const compareDiffRows = useMemo(() => buildOutputDiffRows(compareCandidateIteration), [compareCandidateIteration]);
+  const compareChangedDiffCount = useMemo(() => countChangedDiffRows(compareDiffRows), [compareDiffRows]);
   const shouldHighlightCompare = Boolean(
     previewKind === 'stable'
     && compareCandidateIteration
     && compareCandidateIteration.iteration_id !== seenCompareIterationId
-    && changedDiffCount > 0
+    && compareChangedDiffCount > 0
   );
 
   // ---- Drag via header ----
@@ -491,10 +493,11 @@ const DashboardViewCard: React.FC<Props> = ({
   const handleOpenCandidatePreview = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!compareCandidateIteration || !compareCandidateServeUrl) return;
+    const candidateViewCardId = `${output.id}::candidate::${compareCandidateIteration.iteration_id}`;
     setSeenCompareIterationId(compareCandidateIteration.iteration_id);
     dispatch(addViewCard({
       outputId: output.id,
-      viewCardId: `${output.id}::candidate::${compareCandidateIteration.iteration_id}`,
+      viewCardId: candidateViewCardId,
       previewKind: 'candidate',
       iterationId: compareCandidateIteration.iteration_id,
       candidateWorkspacePath: compareCandidateIteration.candidate_workspace_path || null,
@@ -505,6 +508,10 @@ const DashboardViewCard: React.FC<Props> = ({
       width: cardWidth,
       height: cardHeight,
     }));
+    window.setTimeout(() => {
+      onBringToFront?.(candidateViewCardId, 'view');
+      onCardSelect?.(candidateViewCardId, 'view', false);
+    }, 80);
   };
 
   const handleAutoRun = async (e: React.MouseEvent) => {
