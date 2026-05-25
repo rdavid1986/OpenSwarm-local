@@ -149,7 +149,7 @@ const DashboardViewCard: React.FC<Props> = ({
   const [bodySize, setBodySize] = useState({ width: 0, height: 0 });
   const previewBodyRef = useRef<HTMLDivElement>(null);
 
-  const [previewMode, setPreviewMode] = useState<'stable' | 'candidate'>('stable');
+  const [previewMode, setPreviewMode] = useState<'stable' | 'candidate' | 'compare'>('stable');
   const [candidateIteration, setCandidateIteration] = useState<OutputIterationRecord | null>(null);
 
   const [showDiffPanel, setShowDiffPanel] = useState(false);
@@ -199,12 +199,17 @@ const DashboardViewCard: React.FC<Props> = ({
   }, [output.id, refreshCandidateIterations]);
 
   const candidateWorkspaceId = workspaceIdFromPath(candidateIteration?.candidate_workspace_path);
+  const stableServeUrl = `${SERVE_BASE}/${output.id}/serve/index.html`;
+  const candidateServeUrl = candidateWorkspaceId
+    ? `${SERVE_BASE}/workspace/${candidateWorkspaceId}/serve/index.html`
+    : null;
   const activeServeUrl = useMemo(() => {
-    if (previewMode === 'candidate' && candidateWorkspaceId) {
-      return `${SERVE_BASE}/workspace/${candidateWorkspaceId}/serve/index.html`;
+    if ((previewMode === 'candidate' || previewMode === 'compare') && candidateServeUrl) {
+      return candidateServeUrl;
     }
-    return `${SERVE_BASE}/${output.id}/serve/index.html`;
-  }, [candidateWorkspaceId, output.id, previewMode]);
+    return stableServeUrl;
+  }, [candidateServeUrl, previewMode, stableServeUrl]);
+  const isCompareMode = previewMode === 'compare' && !!candidateServeUrl;
 
   const handleAcceptCandidate = useCallback(async () => {
     if (!candidateIteration || iterationActionLoading) return;
@@ -736,6 +741,34 @@ const DashboardViewCard: React.FC<Props> = ({
           </Tooltip>
         )}
 
+        {candidateIteration && candidateServeUrl && (
+          <Tooltip title="Compare stable and candidate previews side by side" placement="top">
+            <Button
+              size="small"
+              data-preview-control="true"
+              onClick={() => setPreviewMode((mode) => (mode === 'compare' ? 'candidate' : 'compare'))}
+              onPointerDown={(e) => e.stopPropagation()}
+              startIcon={<DifferenceIcon sx={{ fontSize: 14 }} />}
+              sx={{
+                minWidth: 0,
+                px: 0.9,
+                py: 0.25,
+                borderRadius: `${c.radius.md}px`,
+                color: previewMode === 'compare' ? c.text.primary : c.text.muted,
+                border: `1px solid ${previewMode === 'compare' ? c.border.strong : c.border.medium}`,
+                bgcolor: previewMode === 'compare' ? c.bg.muted : c.bg.surface,
+                fontSize: '0.68rem',
+                textTransform: 'none',
+                cursor: 'pointer',
+                '& .MuiButton-startIcon': { mr: 0.35 },
+                '&:hover': { bgcolor: c.bg.muted },
+              }}
+            >
+              Compare
+            </Button>
+          </Tooltip>
+        )}
+
         {candidateIteration && (
           <Tooltip title="View candidate file diff" placement="top">
             <Button
@@ -1016,48 +1049,110 @@ const DashboardViewCard: React.FC<Props> = ({
           </Box>
         )}
 
-        <Box
-          sx={{
-            width: isMaximized ? 'max-content' : scaledFrameW,
-            height: isMaximized ? 'max-content' : scaledFrameH,
-            minWidth: isMaximized ? '100%' : scaledFrameW,
-            minHeight: isMaximized ? '100%' : scaledFrameH,
-            display: 'flex',
-            alignItems: isMaximized && scaledFrameH < availableH ? 'center' : 'flex-start',
-            justifyContent: isMaximized && scaledFrameW < availableW ? 'center' : 'flex-start',
-          }}
-        >
+        {isCompareMode && candidateServeUrl ? (
+          <Box
+            data-preview-control="true"
+            onPointerDown={(e) => e.stopPropagation()}
+            sx={{
+              width: isMaximized ? '100%' : Math.max(scaledFrameW * 2 + 16, 720),
+              minWidth: isMaximized ? '100%' : Math.max(scaledFrameW * 2 + 16, 720),
+              height: isMaximized ? '100%' : scaledFrameH + 30,
+              minHeight: isMaximized ? '100%' : scaledFrameH + 30,
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 1.25,
+            }}
+          >
+            {[
+              { label: 'Stable', url: stableServeUrl },
+              { label: 'Candidate', url: candidateServeUrl },
+            ].map((preview) => (
+              <Box
+                key={preview.label}
+                sx={{
+                  minWidth: 0,
+                  minHeight: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  border: `1px solid ${c.border.subtle}`,
+                  borderRadius: `${c.radius.lg}px`,
+                  overflow: 'hidden',
+                  bgcolor: c.bg.surface,
+                }}
+              >
+                <Box
+                  sx={{
+                    px: 1,
+                    py: 0.55,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    borderBottom: `1px solid ${c.border.subtle}`,
+                    bgcolor: c.bg.secondary,
+                  }}
+                >
+                  <Typography sx={{ color: c.text.secondary, fontSize: '0.68rem', fontWeight: 600, fontFamily: c.font.mono }}>
+                    {preview.label}
+                  </Typography>
+                  <Typography sx={{ color: c.text.ghost, fontSize: '0.62rem', fontFamily: c.font.mono }}>
+                    {selectedDevice.width}×{selectedDevice.height}
+                  </Typography>
+                </Box>
+                <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                  <ViewPreview
+                    serveUrl={preview.url}
+                    frontendCode={output.files?.['index.html'] ?? ''}
+                    inputData={inputData}
+                    backendResult={backendResult}
+                  />
+                </Box>
+              </Box>
+            ))}
+          </Box>
+        ) : (
           <Box
             sx={{
-              width: scaledFrameW,
-              height: scaledFrameH,
-              flex: '0 0 auto',
-              position: 'relative',
+              width: isMaximized ? 'max-content' : scaledFrameW,
+              height: isMaximized ? 'max-content' : scaledFrameH,
+              minWidth: isMaximized ? '100%' : scaledFrameW,
+              minHeight: isMaximized ? '100%' : scaledFrameH,
+              display: 'flex',
+              alignItems: isMaximized && scaledFrameH < availableH ? 'center' : 'flex-start',
+              justifyContent: isMaximized && scaledFrameW < availableW ? 'center' : 'flex-start',
             }}
           >
             <Box
               sx={{
-                width: selectedDevice.width,
-                height: selectedDevice.height,
-                transform: `scale(${previewScale})`,
-                transformOrigin: 'top left',
-                bgcolor: c.bg.surface,
-                border: `1px solid ${c.border.medium}`,
-                borderRadius: `${c.radius.md}px`,
-                boxShadow: c.shadow.md,
-                overflow: 'hidden',
+                width: scaledFrameW,
+                height: scaledFrameH,
+                flex: '0 0 auto',
+                position: 'relative',
               }}
             >
-              <ViewPreview
-                ref={previewRef}
-                serveUrl={activeServeUrl}
-                frontendCode={output.files?.['index.html'] ?? ''}
-                inputData={inputData}
-                backendResult={backendResult}
-              />
+              <Box
+                sx={{
+                  width: selectedDevice.width,
+                  height: selectedDevice.height,
+                  transform: `scale(${previewScale})`,
+                  transformOrigin: 'top left',
+                  bgcolor: c.bg.surface,
+                  border: `1px solid ${c.border.medium}`,
+                  borderRadius: `${c.radius.md}px`,
+                  boxShadow: c.shadow.md,
+                  overflow: 'hidden',
+                }}
+              >
+                <ViewPreview
+                  ref={previewRef}
+                  serveUrl={activeServeUrl}
+                  frontendCode={output.files?.['index.html'] ?? ''}
+                  inputData={inputData}
+                  backendResult={backendResult}
+                />
+              </Box>
             </Box>
           </Box>
-        </Box>
+        )}
       </Box>
 
       {/* Resize handles */}
