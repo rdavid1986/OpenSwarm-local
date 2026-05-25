@@ -1717,13 +1717,26 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     report('dashboard', 'swarm_toggled');
     const existing = store.getState().dashboardLayout.swarmCards['swarm-main'];
 
+    if (existing?.swarm_id) {
+      dispatch(addSwarmCard({
+        expandedSessionIds,
+        swarmCardId: 'swarm-main',
+        swarmId: existing.swarm_id,
+        swarmMode: existing.swarm_mode,
+        swarmModel: existing.swarm_model ?? null,
+      }));
+      setToolbarComposer(null);
+      window.setTimeout(() => focusSwarmCard('swarm-main'), 120);
+      return;
+    }
+
     if (existing && !existing.hidden) {
       focusSwarmCard('swarm-main');
       return;
     }
 
     setToolbarComposer('swarm');
-  }, [focusSwarmCard]);
+  }, [dispatch, expandedSessionIds, focusSwarmCard]);
 
   const focusPlansCard = useCallback((plansCardId: string) => {
     const card = store.getState().dashboardLayout.plansCards[plansCardId];
