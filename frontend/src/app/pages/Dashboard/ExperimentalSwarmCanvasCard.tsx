@@ -1601,6 +1601,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                   metadata.targetOutputId ? `target: ${metadata.targetOutputId}` : '',
                   metadata.availableActions.length ? `actions: ${metadata.availableActions.join(', ')}` : '',
                 ].filter(Boolean).join(' · ');
+                const showMessageDebugMetadata = false;
 
                 return (
                   <Box
@@ -2027,7 +2028,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         {implementationErrors.slice(0, 2).map((error: any) => renderText(error?.error || error?.message || error?.detail || JSON.stringify(error), 'implementation_error')).join('\n')}
                       </Typography>
                     )}
-                    {!isUser && metadataText && (
+                    {showMessageDebugMetadata && !isUser && metadataText && (
                       <Typography sx={{ color: c.text.tertiary, fontSize: '0.68rem', mt: 0.75 }}>
                         {metadataText}
                       </Typography>
