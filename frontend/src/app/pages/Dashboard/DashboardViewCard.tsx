@@ -237,6 +237,7 @@ const DashboardViewCard: React.FC<Props> = ({
   const handleAcceptCandidate = useCallback(async () => {
     if (!candidateIteration || iterationActionLoading) return;
     const shouldCloseAfterIterationAction = previewKind !== 'stable' || viewCardId !== output.id;
+    const stableViewCardId = output.id;
     setIterationActionLoading('accept');
     setIterationActionError(null);
     try {
@@ -244,18 +245,24 @@ const DashboardViewCard: React.FC<Props> = ({
       window.dispatchEvent(new CustomEvent('openswarm:output-iterations-updated', { detail: { outputId: output.id } }));
       if (shouldCloseAfterIterationAction) {
         dispatch(removeViewCard(viewCardId));
+        window.setTimeout(() => {
+          onFocusViewCard?.(stableViewCardId);
+        }, 80);
         return;
       }
       await refreshCandidateIterations();
       setPreviewMode('stable');
       setShowDiffPanel(false);
       previewRef.current?.reload();
+      window.setTimeout(() => {
+        onFocusViewCard?.(stableViewCardId);
+      }, 80);
     } catch (error: any) {
       setIterationActionError(error?.message || 'Accept candidate failed');
     } finally {
       setIterationActionLoading(null);
     }
-  }, [candidateIteration, dispatch, iterationActionLoading, output.id, previewKind, refreshCandidateIterations, viewCardId]);
+  }, [candidateIteration, dispatch, iterationActionLoading, onFocusViewCard, output.id, previewKind, refreshCandidateIterations, viewCardId]);
 
   const handleDiscardCandidate = useCallback(async () => {
     if (!candidateIteration || iterationActionLoading) return;
