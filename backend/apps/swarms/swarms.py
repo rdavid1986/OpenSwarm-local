@@ -57,6 +57,7 @@ from backend.apps.agents.runtime.approvals import approval_runtime
 from backend.apps.agents.runtime.events import event_trace_runtime
 from backend.apps.agents.orchestration.models import AgentToAgentMessage
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
+from backend.apps.agents.providers.provider_health import check_local_model_provider_health
 from backend.apps.agents.runtime.provider import ProviderTurnContext
 from backend.apps.swarms.pending_action_intelligence import resolve_pending_action_intent
 from backend.apps.swarms.refinement_action_guard import evaluate_refinement_execution_guard
@@ -190,25 +191,41 @@ def _implementation_runner_disabled_reason(missing_flags: list[str]) -> str:
     )
 
 
+def _local_provider_health_payload(model: str | None = None) -> dict[str, Any]:
+    return check_local_model_provider_health(model=model or "qwen2.5-coder:14b", timeout_seconds=2.0)
+
+
 def _project_intake_start_implementation_action() -> dict[str, Any]:
-    enabled = experimental_dag_dependency_runner_enabled()
+    runner_enabled = experimental_dag_dependency_runner_enabled()
     flags = _implementation_runner_flag_state()
     missing_flags = [flag for flag, is_enabled in flags.items() if not is_enabled]
+    local_provider_health = _local_provider_health_payload()
+    provider_ready = bool(local_provider_health.get("ok"))
+    enabled = runner_enabled and provider_ready
+
+    reason = None
+    if not runner_enabled:
+        reason = _implementation_runner_disabled_reason(missing_flags)
+    elif not provider_ready:
+        reason = str(local_provider_health.get("reason") or "Local model provider is unavailable.")
+
     return {
         "type": "start_implementation",
         "label": "Start Swarm Implementation",
         "enabled": enabled,
-        "reason": None if enabled else _implementation_runner_disabled_reason(missing_flags),
+        "reason": reason,
         "capabilities": {
-            "experimental_dag_dependency_runner_enabled": enabled,
+            "experimental_dag_dependency_runner_enabled": runner_enabled,
             "flags": flags,
             "missing_flags": missing_flags,
+            "local_provider_health": local_provider_health,
         },
     }
 
 
 def _experimental_capabilities_payload() -> dict[str, Any]:
     action = _project_intake_start_implementation_action()
+    local_provider_health = action["capabilities"]["local_provider_health"]
     return {
         "backend_pid": os.getpid(),
         "experimental_mini_runtime_enabled": experimental_mini_runtime_enabled(),
@@ -216,9 +233,10 @@ def _experimental_capabilities_payload() -> dict[str, Any]:
         "experimental_dag_chain_runtime_enabled": experimental_dag_chain_runtime_enabled(),
         "experimental_dag_consolidate_runtime_enabled": experimental_dag_consolidate_runtime_enabled(),
         "experimental_dag_mini_runner_enabled": experimental_dag_mini_runner_enabled(),
-        "experimental_dag_dependency_runner_enabled": action["enabled"],
+        "experimental_dag_dependency_runner_enabled": action["capabilities"]["experimental_dag_dependency_runner_enabled"],
         "implementation_runner_flags": action["capabilities"]["flags"],
         "implementation_runner_missing_flags": action["capabilities"]["missing_flags"],
+        "local_provider_health": local_provider_health,
     }
 
 

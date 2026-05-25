@@ -70,6 +70,17 @@ def test_project_plan_ready_action_reflects_runner_disabled(monkeypatch, tmp_pat
     client, orchestrator = _client(monkeypatch, tmp_path)
     swarm = _create_chat_swarm(orchestrator)
     monkeypatch.setattr(swarms_module, "experimental_dag_dependency_runner_enabled", lambda: False)
+    monkeypatch.setattr(swarms_module, "_local_provider_health_payload", lambda model=None: {
+        "ok": True,
+        "provider": "ollama",
+        "base_url": "http://localhost:11434",
+        "model": "qwen2.5-coder:14b",
+        "status": "available",
+        "reason": "Ollama está disponible.",
+        "available_models": ["qwen2.5-coder:14b"],
+        "error_detail": "",
+        "required_action": "",
+    })
 
     response = client.post(
         f"/api/swarms/{swarm.id}/experimental/chat",
@@ -92,3 +103,51 @@ def test_project_plan_ready_action_reflects_runner_disabled(monkeypatch, tmp_pat
     assert action["type"] == "start_implementation"
     assert action["enabled"] is False
     assert action["reason"]
+    assert action["capabilities"]["local_provider_health"]["ok"] is True
+    assert body["experimental_capabilities"]["local_provider_health"]["ok"] is True
+
+
+def test_project_plan_ready_action_reflects_local_provider_unavailable(monkeypatch, tmp_path):
+    client, orchestrator = _client(monkeypatch, tmp_path)
+    swarm = _create_chat_swarm(orchestrator)
+    monkeypatch.setattr(swarms_module, "experimental_dag_dependency_runner_enabled", lambda: True)
+    monkeypatch.setattr(swarms_module, "_implementation_runner_flag_state", lambda: {
+        flag: True for flag in swarms_module.IMPLEMENTATION_RUNNER_FLAGS
+    })
+    monkeypatch.setattr(swarms_module, "_local_provider_health_payload", lambda model=None: {
+        "ok": False,
+        "provider": "ollama",
+        "base_url": "http://localhost:11434",
+        "model": "qwen2.5-coder:14b",
+        "status": "unavailable",
+        "reason": "Ollama no está corriendo o no responde en http://localhost:11434",
+        "available_models": [],
+        "error_detail": "connection refused",
+        "required_action": "Abrí Ollama o ejecutá `ollama serve`, verificá que el modelo esté instalado con `ollama list`.",
+    })
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "CRM para odontólogos", "swarm_mode": "app_builder"},
+    )
+    assert response.status_code == 200
+
+    questions = swarms_module._project_intake_questions()
+    for index, question in enumerate(questions):
+        response = client.post(
+            f"/api/swarms/{swarm.id}/experimental/chat",
+            json={"message": f"respuesta {index + 1} para {question['id']}", "swarm_mode": "app_builder"},
+        )
+        assert response.status_code == 200
+
+    body = response.json()
+    action = body["final_result"]["project_intake_action"]
+    health = action["capabilities"]["local_provider_health"]
+
+    assert body["project_intake_state"]["status"] == "ready_to_implement"
+    assert action["type"] == "start_implementation"
+    assert action["enabled"] is False
+    assert action["reason"] == "Ollama no está corriendo o no responde en http://localhost:11434"
+    assert health["ok"] is False
+    assert health["status"] == "unavailable"
+    assert body["experimental_capabilities"]["local_provider_health"]["status"] == "unavailable"
