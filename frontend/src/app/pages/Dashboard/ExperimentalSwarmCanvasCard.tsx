@@ -817,6 +817,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     : [];
   const finalRoute = typeof finalResult === 'object' && finalResult ? (finalResult as any).route : null;
   const finalAnswerGuardApplied = typeof finalResult === 'object' && finalResult ? (finalResult as any).answer_guard_applied : null;
+  const showFinalResultDebugMetadata = false;
   const finalResponseSource = finalRoute && finalRoute !== 'normal_chat' ? 'local' : finalRoute === 'normal_chat' ? 'model' : null;
   const outputBridgeDecision = Array.isArray((activeSwarm as any)?.decisions)
     ? [...((activeSwarm as any).decisions || [])].reverse().find((decision: any) => (
@@ -2419,7 +2420,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                   )}
                 </Box>
               )}
-              {finalResult && typeof finalResult === 'object' && (
+              {showFinalResultDebugMetadata && finalResult && typeof finalResult === 'object' && (
                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
                   {(finalResult as any).route && (
                     <Chip size="small" label={`route: ${(finalResult as any).route}`} />
