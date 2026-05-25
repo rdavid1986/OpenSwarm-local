@@ -328,7 +328,9 @@ def test_no_pending_action_ok_does_not_prepare(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     assert called["prepare"] is False
-    assert response.json()["final_result"]["route"] == "implementation_request"
+    final_result = response.json()["final_result"]
+    assert final_result["route"] == "context_clarification"
+    assert final_result["context_clarification"]["needs_clarification"] is True
 
 
 def test_preview_refine_registers_candidate_metadata_without_execution(monkeypatch, tmp_path):
