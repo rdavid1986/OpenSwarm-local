@@ -1576,6 +1576,11 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 const intakeSkippedQuestions = Array.isArray(projectIntake.state?.skipped_questions)
                   ? projectIntake.state.skipped_questions.map((item: any) => renderText(item, '').trim()).filter(Boolean)
                   : [];
+                const hasPreviousIntakeTrace = chatMessages.slice(0, idx).some((previousMessage: any) => {
+                  const previousIntake = getSwarmProjectIntake(previousMessage);
+                  return Array.isArray(previousIntake.state?.skipped_questions) && previousIntake.state.skipped_questions.length > 0;
+                });
+                const shouldShowIntakeTrace = !isUser && intakeSkippedQuestions.length > 0 && !hasPreviousIntakeTrace;
                 const intakePolicyReason = renderText(projectIntake.state?.question_policy?.reason || projectIntake.state?.intake_profile?.reason, '').trim();
                 const isLatestChatMessage = idx === chatMessages.length - 1;
                 const currentProjectIntakeAction = !isUser && isLatestChatMessage && (activeSwarm as any)?.project_intake_action?.type === 'start_implementation'
@@ -1631,7 +1636,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                     >
                       {isLatestChatMessage ? renderAnimatedText(body) : body}
                     </Typography>
-                    {!isUser && intakeSkippedQuestions.length > 0 && (
+                    {shouldShowIntakeTrace && (
                       <Box
                         sx={{
                           mt: 1,
