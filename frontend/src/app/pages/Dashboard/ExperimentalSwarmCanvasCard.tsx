@@ -471,12 +471,14 @@ function getSwarmProjectIntake(message: any): {
   question: any | null;
   options: any[];
   action: any | null;
+  state: any | null;
 } {
   const payload = message?.payload || {};
   return {
     question: payload.project_intake_question || null,
     options: Array.isArray(payload.project_intake_options) ? payload.project_intake_options : [],
     action: payload.project_intake_action || null,
+    state: payload.project_intake_state || null,
   };
 }
 
@@ -1571,6 +1573,10 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 const pendingRefinementAction = !isUser ? getPendingRefinementAction(message) : null;
                 const refinementExecutionTrace = !isUser ? getRefinementExecutionTrace(message) : null;
                 const projectIntake = getSwarmProjectIntake(message);
+                const intakeSkippedQuestions = Array.isArray(projectIntake.state?.skipped_questions)
+                  ? projectIntake.state.skipped_questions.map((item: any) => renderText(item, '').trim()).filter(Boolean)
+                  : [];
+                const intakePolicyReason = renderText(projectIntake.state?.question_policy?.reason || projectIntake.state?.intake_profile?.reason, '').trim();
                 const isLatestChatMessage = idx === chatMessages.length - 1;
                 const currentProjectIntakeAction = !isUser && isLatestChatMessage && (activeSwarm as any)?.project_intake_action?.type === 'start_implementation'
                   ? (activeSwarm as any).project_intake_action
@@ -1625,6 +1631,34 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                     >
                       {isLatestChatMessage ? renderAnimatedText(body) : body}
                     </Typography>
+                    {!isUser && intakeSkippedQuestions.length > 0 && (
+                      <Box
+                        sx={{
+                          mt: 1,
+                          px: 1,
+                          py: 0.75,
+                          borderRadius: 1,
+                          bgcolor: `${c.status.info}0A`,
+                          border: `1px solid ${c.status.info}33`,
+                          maxWidth: '100%',
+                        }}
+                      >
+                        <Typography sx={{ color: c.status.info, fontSize: '0.7rem', fontWeight: 650 }}>
+                          Intake adaptado
+                        </Typography>
+                        <Typography sx={{ color: c.text.secondary, fontSize: '0.68rem', lineHeight: 1.35, mt: 0.25 }}>
+                          OpenSwarm omitió preguntas no necesarias para este tipo de proyecto.
+                        </Typography>
+                        <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', lineHeight: 1.35, mt: 0.35 }}>
+                          Omitidas: {intakeSkippedQuestions.join(', ')}
+                        </Typography>
+                        {intakePolicyReason && (
+                          <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', lineHeight: 1.35, mt: 0.35 }}>
+                            Criterio: {intakePolicyReason}
+                          </Typography>
+                        )}
+                      </Box>
+                    )}
                     {!isUser && projectIntake.options.length > 0 && (
                       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 1 }}>
                         {projectIntake.options.map((option: any, optionIdx: number) => {
