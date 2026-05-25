@@ -344,6 +344,131 @@ def test_preview_refine_registers_candidate_metadata_without_execution(monkeypat
     assert "Cambio solicitado:" not in visible_user_message
 
 
+def test_preview_refine_internal_message_allowed_on_task_source_swarm_preserves_state(monkeypatch, tmp_path):
+    client, orchestrator, store = _client(monkeypatch, tmp_path)
+
+    data_dir = tmp_path / "outputs"
+    workspace_dir = tmp_path / ".openswarm" / "workspaces"
+    iterations_dir = data_dir / "_iterations"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    iterations_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(outputs_module, "DATA_DIR", str(data_dir))
+    monkeypatch.setattr(outputs_module, "WORKSPACE_DIR", str(workspace_dir))
+    monkeypatch.setattr(outputs_module, "ITERATIONS_DIR", str(iterations_dir))
+
+    swarm = orchestrator.create_swarm(user_prompt="Build a static app", dashboard_id="dash-1", intent="task")
+    swarm.final_result = {
+        "status": "completed",
+        "artifact_kind": "static_app",
+        "implementation_performed": True,
+        "claim_guard": {"status": "verified"},
+        "output_bridge": {"output_id": "out-123", "status": "accepted"},
+        "implementation_state": {"state": "completed_with_output"},
+        "custom_metadata": {"must_preserve": True},
+    }
+    swarm.output_bridge = {"output_id": "out-123", "status": "accepted"}
+    swarm.implementation_state = {"state": "completed_with_output"}
+    store.save(swarm)
+
+    output = Output(
+        id="out-123",
+        name="Demo",
+        files={
+            "index.html": "<html><body>Before</body></html>",
+            "styles.css": "body { margin: 0; }",
+            "content.json": '{"title":"Before"}',
+        },
+        source_swarm_id=swarm.id,
+        artifact_refs=["artifact-1"],
+        evidence_refs=["evidence-1"],
+        validation_status="passed",
+    )
+    outputs_module._save(output)
+    candidate = outputs_module._create_candidate_iteration_from_output(
+        output=output,
+        requested_change="Make the hero blue.",
+        source_swarm_id=swarm.id,
+    )
+
+    message = "\n".join([
+        "Quiero refinar la app generada desde esta Preview.",
+        "",
+        "Output ID: out-123",
+        "Output name: Demo",
+        f"Source swarm: {swarm.id}",
+        "Source task: task-1",
+        "Validation status: passed",
+        "Artifacts: artifact-1",
+        "Evidence: evidence-1",
+        "",
+        "Refinamiento preparado para esta app. Se creó una candidate para revisión en Preview.",
+        f"Candidate iteration ID: {candidate.iteration_id}",
+        f"Candidate workspace: {candidate.candidate_workspace_path}",
+        f"Base workspace: {candidate.base_workspace_path}",
+        "Candidate reused: no",
+        "",
+        "Cambio solicitado:",
+        "Make the hero blue.",
+    ])
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": message, "swarm_mode": "app_builder"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assistant_messages = [
+        message
+        for message in body["messages"]
+        if message["payload"].get("role") == "assistant"
+        and message["payload"].get("route") == "refinement_request"
+    ]
+    assert assistant_messages
+    refinement = body["final_result"]["refinement_request"]
+    assert refinement["status"] == "received"
+    assert refinement["output_id"] == "out-123"
+    assert refinement["requested_change"] == "Make the hero blue."
+    assert refinement["candidate_iteration_id"] == candidate.iteration_id
+    assert refinement["candidate_workspace_path"] == candidate.candidate_workspace_path
+    assert refinement["base_workspace_path"] == candidate.base_workspace_path
+    assert body["final_result"]["artifact_kind"] == "static_app"
+    assert body["final_result"]["implementation_performed"] is True
+    assert body["final_result"]["claim_guard"]["status"] == "verified"
+    assert body["final_result"]["output_bridge"]["output_id"] == "out-123"
+    assert body["final_result"]["implementation_state"]["state"] == "completed_with_output"
+    assert body["final_result"]["custom_metadata"]["must_preserve"] is True
+    assert body["output_bridge"]["output_id"] == "out-123"
+    assert body["implementation_state"]["state"] == "completed_with_output"
+
+
+def test_task_swarm_still_rejects_generic_chat_even_with_pending_refinement(monkeypatch, tmp_path):
+    client, orchestrator, store = _client(monkeypatch, tmp_path)
+    swarm = orchestrator.create_swarm(user_prompt="Build a static app", dashboard_id="dash-1", intent="task")
+    swarm.final_result = {
+        "status": "completed",
+        "route": "refinement_request",
+        "refinement_request": {
+            "output_id": "out-123",
+            "source_swarm_id": swarm.id,
+            "requested_change": "Make the hero blue.",
+            "status": "received",
+            "next_action": "refinement_pipeline_pending",
+        },
+    }
+    store.save(swarm)
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "hola, que tal?", "swarm_mode": "app_builder"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Swarm is not a chat-intent swarm"
+
+
 def test_update_changes_requested_change_only(monkeypatch, tmp_path):
     client, orchestrator, store = _client(monkeypatch, tmp_path)
     swarm = _create_chat_swarm(store, orchestrator)

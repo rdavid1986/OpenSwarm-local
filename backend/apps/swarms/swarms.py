@@ -896,6 +896,23 @@ def _structured_pending_refinement_resolution(
     return None
 
 
+def _is_structured_pending_refinement_action(user_message: str) -> bool:
+    normalized = (user_message or "").strip().lower()
+    if not normalized.startswith("__openswarm_pending_action__:"):
+        return False
+    action = normalized.split(":", 1)[1].splitlines()[0].strip()
+    return action in {
+        "confirm_refinement",
+        "confirm",
+        "cancel_refinement",
+        "cancel_pending_action",
+        "cancel",
+        "edit_refinement_request",
+        "update_refinement",
+        "update",
+    }
+
+
 def _refinement_request_response(user_message: str, swarm=None, swarm_mode: str | None = None) -> tuple[str, dict[str, Any]]:
     if _looks_like_output_refinement_request(user_message):
         refinement = _extract_output_refinement_request(user_message)
@@ -2182,15 +2199,28 @@ def _save_local_chat_message(swarm, coordinator_id: str, assistant_content: str,
             requires_response=False,
         )
     )
-    swarm.final_result = {
-        "status": "completed",
-        "summary": assistant_content,
-        "intent": "chat",
-        "route": route,
-        "source": "local",
-        "answer_guard_applied": False,
-        "answer_guard_reason": None,
-    }
+    previous_final_result = getattr(swarm, "final_result", None)
+    if route == "refinement_request" and isinstance(previous_final_result, dict):
+        swarm.final_result = dict(previous_final_result)
+        swarm.final_result.update({
+            "status": swarm.final_result.get("status") or "completed",
+            "summary": assistant_content,
+            "intent": swarm.final_result.get("intent") or "chat",
+            "route": route,
+            "source": "local",
+            "answer_guard_applied": False,
+            "answer_guard_reason": None,
+        })
+    else:
+        swarm.final_result = {
+            "status": "completed",
+            "summary": assistant_content,
+            "intent": "chat",
+            "route": route,
+            "source": "local",
+            "answer_guard_applied": False,
+            "answer_guard_reason": None,
+        }
     if "project_intake_state" in payload:
         swarm.final_result["project_intake_state"] = payload["project_intake_state"]
     if "project_intake_action" in payload:
@@ -2402,10 +2432,20 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
     user_message = (body.message or "").strip()
     if not user_message:
         raise HTTPException(status_code=400, detail="message is required")
-    if getattr(swarm, "intent", "task") != "chat":
+    swarm_mode = _normalize_swarm_mode(body.swarm_mode)
+    pending_refinement = _get_pending_refinement_request(swarm)
+    is_refinement_request = _looks_like_output_refinement_request(user_message)
+    is_pending_refinement_action = bool(
+        pending_refinement
+        and _is_structured_pending_refinement_action(user_message)
+    )
+    can_use_task_swarm_refinement_chat = (
+        swarm_mode == "app_builder"
+        and (is_refinement_request or is_pending_refinement_action)
+    )
+    if getattr(swarm, "intent", "task") != "chat" and not can_use_task_swarm_refinement_chat:
         raise HTTPException(status_code=400, detail="Swarm is not a chat-intent swarm")
 
-    swarm_mode = _normalize_swarm_mode(body.swarm_mode)
     coordinator_id = swarm.coordinator_contract_id or (swarm.contracts[0].id if swarm.contracts else "swarm")
     visible_user_message = _visible_refinement_chat_message(user_message)
     swarm.messages.append(
@@ -2418,7 +2458,6 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
         )
     )
 
-    pending_refinement = _get_pending_refinement_request(swarm)
     if swarm_mode == "app_builder" and pending_refinement:
         resolution = _structured_pending_refinement_resolution(user_message, pending_refinement)
         if resolution is None:

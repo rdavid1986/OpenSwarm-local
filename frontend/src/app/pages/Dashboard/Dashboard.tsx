@@ -1672,27 +1672,50 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     const sourceSwarmId = output.source_swarm_id;
     if (!sourceSwarmId) return;
 
-    let sourceSwarmCard = Object.values(store.getState().dashboardLayout.swarmCards)
-      .find((card) => card.swarm_id === sourceSwarmId && !card.hidden);
+    const draft = buildRefinementDraft(output, preset, sourceSwarmId);
+    const swarmCards = store.getState().dashboardLayout.swarmCards;
+    const sourceSwarmCard = Object.values(swarmCards)
+      .find((card) => card.swarm_id === sourceSwarmId);
 
-    if (!sourceSwarmCard) {
-      dispatch(addSwarmCard({ expandedSessionIds, swarmMode: 'app_builder', swarmModel: null }));
-      window.setTimeout(() => {
-        const nextCards = store.getState().dashboardLayout.swarmCards;
-        const fallbackCard = nextCards['swarm-main'] || Object.values(nextCards).find((card) => !card.hidden);
-        if (!fallbackCard) return;
-        dispatch(setSwarmCardSwarmId({ swarmCardId: fallbackCard.swarm_card_id, swarmId: sourceSwarmId }));
-        setSwarmDraftPrompts((prev) => ({ ...prev, [fallbackCard.swarm_card_id]: buildRefinementDraft(output, preset, sourceSwarmId) }));
-        focusSwarmCard(fallbackCard.swarm_card_id);
-      }, 80);
+    if (sourceSwarmCard) {
+      dispatch(addSwarmCard({
+        expandedSessionIds,
+        swarmCardId: sourceSwarmCard.swarm_card_id,
+        swarmId: sourceSwarmId,
+        swarmMode: sourceSwarmCard.swarm_mode,
+        swarmModel: sourceSwarmCard.swarm_model,
+      }));
+      persistLayoutNow({
+        swarmCardId: sourceSwarmCard.swarm_card_id,
+        swarmId: sourceSwarmId,
+        previewOutputId: output.id,
+      });
+      setSwarmDraftPrompts((prev) => ({ ...prev, [sourceSwarmCard.swarm_card_id]: draft }));
+      window.setTimeout(() => focusSwarmCard(sourceSwarmCard.swarm_card_id), 80);
       return;
     }
 
-    const draft = buildRefinementDraft(output, preset, sourceSwarmId);
-
-    setSwarmDraftPrompts((prev) => ({ ...prev, [sourceSwarmCard.swarm_card_id]: draft }));
-    focusSwarmCard(sourceSwarmCard.swarm_card_id);
-  }, [buildRefinementDraft, dispatch, expandedSessionIds, focusSwarmCard]);
+    dispatch(addSwarmCard({
+      expandedSessionIds,
+      swarmCardId: 'swarm-main',
+      swarmId: sourceSwarmId,
+      swarmMode: 'app_builder',
+      swarmModel: null,
+    }));
+    window.setTimeout(() => {
+      const nextCards = store.getState().dashboardLayout.swarmCards;
+      const fallbackCard = nextCards['swarm-main'] || Object.values(nextCards).find((card) => !card.hidden);
+      if (!fallbackCard) return;
+      dispatch(setSwarmCardSwarmId({ swarmCardId: fallbackCard.swarm_card_id, swarmId: sourceSwarmId }));
+      persistLayoutNow({
+        swarmCardId: fallbackCard.swarm_card_id,
+        swarmId: sourceSwarmId,
+        previewOutputId: output.id,
+      });
+      setSwarmDraftPrompts((prev) => ({ ...prev, [fallbackCard.swarm_card_id]: draft }));
+      focusSwarmCard(fallbackCard.swarm_card_id);
+    }, 80);
+  }, [buildRefinementDraft, dispatch, expandedSessionIds, focusSwarmCard, persistLayoutNow]);
 
   const handleToolbarSwarmSend = useCallback(async (
     prompt: string,

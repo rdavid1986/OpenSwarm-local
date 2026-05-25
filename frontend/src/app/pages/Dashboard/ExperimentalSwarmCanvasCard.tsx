@@ -179,16 +179,23 @@ function appendCandidateMetadataToRefinementDraft(
   candidate: OutputIterationRecord,
   reused: boolean,
 ): string {
-  void candidate;
   const statusLine = reused
     ? 'Refinamiento preparado para esta app. La candidate existente quedó disponible para revisión en Preview.'
     : 'Refinamiento preparado para esta app. Se creó una candidate para revisión en Preview.';
+  const candidateMetadataLines = [
+    statusLine,
+    `Candidate iteration ID: ${candidate.iteration_id || ''}`,
+    `Candidate workspace: ${candidate.candidate_workspace_path || ''}`,
+    `Base workspace: ${candidate.base_workspace_path || ''}`,
+    `Candidate reused: ${reused ? 'yes' : 'no'}`,
+  ];
   const cleanLines = message
     .split('\n')
     .filter((line) => {
       const lower = line.trim().toLowerCase();
       return !(
-        lower.startsWith('candidate iteration id:')
+        lower.startsWith('refinamiento preparado para esta app')
+        || lower.startsWith('candidate iteration id:')
         || lower.startsWith('candidate workspace:')
         || lower.startsWith('base workspace:')
         || lower.startsWith('candidate reused:')
@@ -197,14 +204,14 @@ function appendCandidateMetadataToRefinementDraft(
 
   const changeIndex = cleanLines.findIndex((line) => line.trim().toLowerCase().startsWith('cambio solicitado:'));
   if (changeIndex >= 0) {
-    cleanLines.splice(changeIndex, 0, statusLine, '');
+    cleanLines.splice(changeIndex, 0, ...candidateMetadataLines, '');
     return cleanLines.join('\n').trimEnd();
   }
 
   return [
     cleanLines.join('\n').trimEnd(),
     '',
-    statusLine,
+    ...candidateMetadataLines,
   ].join('\n');
 }
 
@@ -929,7 +936,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     const activeIntent = activeSwarm?.intent || null;
     const requestedMode = getSwarmModeOption(activeSwarmModeRef.current).id;
 
-    if (!swarmIdToRun || (cleanPrompt && activeIntent !== 'chat')) {
+    const isPreviewRefinementMessage = Boolean(parsePreviewRefinementDraft(messageToSend));
+
+    if (!swarmIdToRun || (cleanPrompt && activeIntent !== 'chat' && !isPreviewRefinementMessage)) {
       const action = await dispatch(createExperimentalSwarm({
         userPrompt: cleanPrompt || 'Experimental swarm',
         dashboardId,
@@ -1927,6 +1936,25 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
           </Box>
 
           <Box sx={{ flexShrink: 0, p: 1.5, borderTop: `1px solid ${c.border.subtle}`, bgcolor: c.bg.surface }}>
+            {pendingPreviewRefinementDraft && (
+              <Box
+                sx={{
+                  mb: 1,
+                  px: 1.1,
+                  py: 0.8,
+                  borderRadius: 1,
+                  border: `1px solid ${c.status.info}44`,
+                  bgcolor: `${c.status.info}0A`,
+                }}
+              >
+                <Typography sx={{ color: c.status.info, fontSize: '0.76rem', fontWeight: 650 }}>
+                  Refinando Preview
+                </Typography>
+                <Typography sx={{ color: c.text.secondary, fontSize: '0.72rem', lineHeight: 1.35, mt: 0.25 }}>
+                  Escribí el cambio que querés aplicar a {(pendingPreviewRefinementDraft.outputName || 'esta app').slice(0, 72)}{(pendingPreviewRefinementDraft.outputName || '').length > 72 ? '…' : ''}. El historial del Swarm se mantiene.
+                </Typography>
+              </Box>
+            )}
             <SwarmPromptInput
               value={prompt}
               onChange={setPrompt}
@@ -1941,6 +1969,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               modelLabel={activeSwarmModel}
               contextEstimate={contextEstimate}
               inputRef={promptInputRef}
+              placeholderOverride={pendingPreviewRefinementDraft ? 'Describí el cambio para esta Preview…' : undefined}
             />
           </Box>
         </Box>

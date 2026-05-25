@@ -65,6 +65,7 @@ interface Props {
   modelLabel?: string | null;
   contextEstimate?: { used: number; limit: number };
   inputRef?: React.Ref<HTMLInputElement | HTMLTextAreaElement>;
+  placeholderOverride?: string;
 }
 
 const SwarmPromptInput: React.FC<Props> = ({
@@ -84,12 +85,13 @@ const SwarmPromptInput: React.FC<Props> = ({
   modelLabel,
   contextEstimate,
   inputRef,
+  placeholderOverride,
 }) => {
   const c = useClaudeTokens();
   const modeOption = getSwarmModeOption(mode);
   const selectedModel = model || modelLabel || '';
   const submitDisabled = disabled || loading || (!value.trim() && !canContinue);
-  const placeholder = customIntakeMode ? 'Escribí tu respuesta personalizada…' : modeOption.placeholder;
+  const placeholder = placeholderOverride || (customIntakeMode ? 'Escribí tu respuesta personalizada…' : modeOption.placeholder);
 
   return (
     <Box
