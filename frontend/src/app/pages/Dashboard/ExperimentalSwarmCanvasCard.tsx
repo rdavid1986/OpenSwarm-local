@@ -423,6 +423,36 @@ function getPendingRefinementAction(message: any): {
   return { outputId, requestedChange, pendingAction: 'confirm_refinement', availableActions };
 }
 
+function getRefinementExecutionTrace(message: any): {
+  status: string;
+  nextAction: string;
+  candidateIterationId: string;
+  filesChanged: string[];
+  outputId: string;
+} | null {
+  const payload = message?.payload || {};
+  const refinement = payload.refinement_request || payload.message?.refinement_request || payload.response?.refinement_request || {};
+  const execution = payload.refinement_execution_result || payload.message?.refinement_execution_result || payload.response?.refinement_execution_result || {};
+  const status = renderText(execution.status || refinement.status, '').trim();
+  const nextAction = renderText(refinement.next_action, '').trim();
+  const candidateIterationId = renderText(execution.candidate_iteration_id || refinement.candidate_iteration_id, '').trim();
+  const outputId = renderText(refinement.output_id || execution.output_id, '').trim();
+  const filesChanged = Array.isArray(execution.files_changed)
+    ? execution.files_changed.map((item: any) => renderText(item, '').trim()).filter(Boolean)
+    : [];
+
+  if (!candidateIterationId && status !== 'executed' && nextAction !== 'review_candidate_diff') return null;
+
+  return {
+    status,
+    nextAction,
+    candidateIterationId,
+    filesChanged,
+    outputId,
+  };
+}
+
+
 function getSwarmProjectIntake(message: any): {
   question: any | null;
   options: any[];
@@ -1525,6 +1555,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 const body = getVisibleSwarmMessageText(getSwarmMessageText(message));
                 const metadata = getSwarmMessageMetadata(message);
                 const pendingRefinementAction = !isUser ? getPendingRefinementAction(message) : null;
+                const refinementExecutionTrace = !isUser ? getRefinementExecutionTrace(message) : null;
                 const projectIntake = getSwarmProjectIntake(message);
                 const isLatestChatMessage = idx === chatMessages.length - 1;
                 const currentProjectIntakeAction = !isUser && isLatestChatMessage && (activeSwarm as any)?.project_intake_action?.type === 'start_implementation'
@@ -1703,6 +1734,34 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         >
                           Cancelar
                         </Button>
+                      </Box>
+                    )}
+                    {!isUser && refinementExecutionTrace && (
+                      <Box
+                        sx={{
+                          mt: 1,
+                          px: 1,
+                          py: 0.8,
+                          borderRadius: 1,
+                          bgcolor: `${c.status.success}0A`,
+                          border: `1px solid ${c.status.success}44`,
+                          maxWidth: '100%',
+                        }}
+                      >
+                        <Typography sx={{ color: c.status.success, fontSize: '0.7rem', fontWeight: 650 }}>
+                          Candidate lista para revisar
+                        </Typography>
+                        <Typography sx={{ color: c.text.secondary, fontSize: '0.68rem', lineHeight: 1.35, mt: 0.25 }}>
+                          El cambio se aplicó sobre la candidate. El Output activo todavía no fue modificado.
+                        </Typography>
+                        {refinementExecutionTrace.filesChanged.length > 0 && (
+                          <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', lineHeight: 1.35, mt: 0.35 }}>
+                            Archivos cambiados: {refinementExecutionTrace.filesChanged.join(', ')}
+                          </Typography>
+                        )}
+                        <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', lineHeight: 1.35, mt: 0.35 }}>
+                          Siguiente paso: abrir Preview, revisar Compare/Diff y elegir Accept o Discard.
+                        </Typography>
                       </Box>
                     )}
                     {!isUser && intakeAnswer && (
