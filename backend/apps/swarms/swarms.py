@@ -1543,10 +1543,95 @@ def _project_intake_question_by_id(question_id: str | None) -> dict[str, Any] | 
     return None
 
 
-def _next_project_intake_question_id(answers: dict[str, Any]) -> str | None:
+def _infer_project_intake_profile(user_message: str) -> dict[str, Any]:
+    """Deterministic fallback-safe intake profile.
+
+    This is intentionally conservative. It does not call a model yet.
+    It only skips obviously irrelevant questions for simple visual/static work.
+    """
+
+    text = (user_message or "").lower()
+
+    static_markers = (
+        "landing",
+        "pagina informativa",
+        "página informativa",
+        "web informativa",
+        "sitio informativo",
+        "pagina estatica",
+        "página estática",
+        "estatica",
+        "estática",
+        "portfolio",
+        "presentacion",
+        "presentación",
+    )
+    form_markers = (
+        "formulario",
+        "contacto",
+        "lead",
+        "capturar leads",
+        "cotizacion",
+        "cotización",
+    )
+    app_markers = (
+        "dashboard",
+        "crud",
+        "admin",
+        "login",
+        "usuarios",
+        "base de datos",
+        "database",
+        "backend",
+        "api",
+        "saas",
+        "e-commerce",
+        "ecommerce",
+        "pagos",
+        "stripe",
+        "mercado pago",
+    )
+
+    if any(marker in text for marker in app_markers):
+        return {
+            "profile": "full_app",
+            "confidence": 0.75,
+            "skipped_questions": [],
+            "reason": "El pedido menciona funcionalidad de app, backend, datos, usuarios o pagos.",
+        }
+
+    if any(marker in text for marker in static_markers):
+        skipped = ["backend", "database", "auth", "payments"]
+        if any(marker in text for marker in form_markers):
+            skipped = ["database", "auth", "payments"]
+        return {
+            "profile": "static_site",
+            "confidence": 0.7,
+            "skipped_questions": skipped,
+            "reason": "El pedido parece una web visual/simple; backend, base de datos, login o pagos no son necesarios salvo que el usuario lo pida.",
+        }
+
+    return {
+        "profile": "unknown",
+        "confidence": 0.4,
+        "skipped_questions": [],
+        "reason": "No hay suficiente señal para omitir preguntas sin riesgo.",
+    }
+
+
+def _project_intake_skipped_questions(state: dict[str, Any]) -> set[str]:
+    skipped = state.get("skipped_questions") if isinstance(state, dict) else []
+    return {str(item) for item in skipped if str(item).strip()}
+
+
+def _next_project_intake_question_id(answers: dict[str, Any], state: dict[str, Any] | None = None) -> str | None:
+    skipped_questions = _project_intake_skipped_questions(state or {})
     for question in _project_intake_questions():
-        if question["id"] not in answers:
-            return str(question["id"])
+        question_id = str(question["id"])
+        if question_id in skipped_questions:
+            continue
+        if question_id not in answers:
+            return question_id
     return None
 
 
@@ -1566,16 +1651,25 @@ def _project_intake_question_payload(state: dict[str, Any]) -> dict[str, Any]:
 
 def _start_project_intake(swarm, user_message: str) -> tuple[str, dict[str, Any]]:
     now = _project_intake_now()
-    first_question_id = _project_intake_questions()[0]["id"]
+    intake_profile = _infer_project_intake_profile(user_message)
     state = {
         "status": "collecting",
-        "current_question_id": first_question_id,
+        "current_question_id": None,
         "answers": {},
         "generated_plan": None,
         "created_at": now,
         "updated_at": now,
         "original_request": user_message,
+        "intake_mode": "dynamic_fallback",
+        "intake_profile": intake_profile,
+        "skipped_questions": intake_profile.get("skipped_questions", []),
+        "question_policy": {
+            "source": "deterministic_profile",
+            "reason": intake_profile.get("reason"),
+        },
     }
+    first_question_id = _next_project_intake_question_id({}, state)
+    state["current_question_id"] = first_question_id
     swarm.project_intake_state = state
     return _build_project_intake_message(state), {
         "route": "implementation_request",
@@ -1591,7 +1685,7 @@ def _advance_project_intake(swarm, user_message: str) -> tuple[str, dict[str, An
     if current_question_id:
         answers[current_question_id] = user_message
 
-    next_question_id = _next_project_intake_question_id(answers)
+    next_question_id = _next_project_intake_question_id(answers, state)
     state["answers"] = answers
     state["updated_at"] = _project_intake_now()
 
@@ -1655,23 +1749,49 @@ def _build_project_intake_message(state: dict[str, Any]) -> str:
     ])
 
 
+def _project_intake_default_for_skipped(question_id: str, state: dict[str, Any]) -> str | None:
+    profile = (state.get("intake_profile") or {}).get("profile") if isinstance(state.get("intake_profile"), dict) else None
+    if profile == "static_site":
+        defaults = {
+            "backend": "Sin backend por ahora",
+            "database": "No necesita base por ahora",
+            "auth": "Sin login",
+            "payments": "No",
+        }
+        return defaults.get(question_id)
+    return None
+
+
+def _project_intake_answer_or_default(answers: dict[str, Any], state: dict[str, Any], question_id: str) -> Any:
+    if question_id in answers:
+        return answers.get(question_id)
+    if question_id in _project_intake_skipped_questions(state):
+        return _project_intake_default_for_skipped(question_id, state)
+    return None
+
+
 def _build_project_intake_plan(state: dict[str, Any]) -> dict[str, Any]:
     answers = dict(state.get("answers") or {})
+    skipped_questions = sorted(_project_intake_skipped_questions(state))
     return {
         "summary": "Plan preliminar local generado desde el intake conversacional. No se ejecutaron tools ni se crearon artifacts.",
-        "app_type": answers.get("app_type"),
-        "main_goal": answers.get("main_goal"),
-        "target_users": answers.get("target_users"),
-        "frontend": answers.get("frontend"),
-        "backend": answers.get("backend"),
-        "database": answers.get("database"),
-        "auth": answers.get("auth"),
-        "payments": answers.get("payments"),
-        "deploy": answers.get("deploy"),
-        "visual_style": answers.get("visual_style"),
-        "mvp_priority": answers.get("mvp_priority"),
-        "technical_constraints": answers.get("technical_constraints"),
-        "out_of_scope": answers.get("out_of_scope"),
+        "app_type": _project_intake_answer_or_default(answers, state, "app_type"),
+        "main_goal": _project_intake_answer_or_default(answers, state, "main_goal"),
+        "target_users": _project_intake_answer_or_default(answers, state, "target_users"),
+        "frontend": _project_intake_answer_or_default(answers, state, "frontend"),
+        "backend": _project_intake_answer_or_default(answers, state, "backend"),
+        "database": _project_intake_answer_or_default(answers, state, "database"),
+        "auth": _project_intake_answer_or_default(answers, state, "auth"),
+        "payments": _project_intake_answer_or_default(answers, state, "payments"),
+        "deploy": _project_intake_answer_or_default(answers, state, "deploy"),
+        "visual_style": _project_intake_answer_or_default(answers, state, "visual_style"),
+        "mvp_priority": _project_intake_answer_or_default(answers, state, "mvp_priority"),
+        "technical_constraints": _project_intake_answer_or_default(answers, state, "technical_constraints"),
+        "out_of_scope": _project_intake_answer_or_default(answers, state, "out_of_scope"),
+        "intake_mode": state.get("intake_mode"),
+        "intake_profile": state.get("intake_profile"),
+        "skipped_questions": skipped_questions,
+        "question_policy": state.get("question_policy"),
     }
 
 

@@ -45,7 +45,7 @@ def test_template_selection_static_plan_builds_static_app_dag(tmp_path):
     orchestrator.store.root = tmp_path
 
     swarm = orchestrator.create_swarm(
-        prompt="crear tutorial estático",
+        user_prompt="crear tutorial estático",
         dashboard_id="dashboard-test",
         intent="chat",
     )
@@ -65,8 +65,8 @@ def test_template_selection_static_plan_builds_static_app_dag(tmp_path):
         updated = orchestrator.ensure_readme_dag(swarm_id=swarm.id, generated_plan=generated_plan)
 
     titles = [task.title for task in updated.tasks]
-    assert "Create static app" in titles
-    assert "Review static app" in titles
+    assert "Create static app files" in titles
+    assert "Review static app files" in titles
     assert "Create README.md" not in titles
 
 
@@ -75,7 +75,7 @@ def test_template_selection_dynamic_plan_builds_readme_dag(tmp_path):
     orchestrator.store.root = tmp_path
 
     swarm = orchestrator.create_swarm(
-        prompt="crear app con backend",
+        user_prompt="crear app con backend",
         dashboard_id="dashboard-test",
         intent="chat",
     )
@@ -95,6 +95,6 @@ def test_template_selection_dynamic_plan_builds_readme_dag(tmp_path):
         updated = orchestrator.ensure_readme_dag(swarm_id=swarm.id, generated_plan=generated_plan)
 
     titles = [task.title for task in updated.tasks]
-    assert "Create README.md" in titles
-    assert "Review README.md" in titles
+    assert "Create implementation brief README.md" in titles
+    assert "Review implementation brief README.md" in titles
     assert "Create static app" not in titles
