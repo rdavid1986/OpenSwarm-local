@@ -154,6 +154,7 @@ const DashboardViewCard: React.FC<Props> = ({
   const [candidateIteration, setCandidateIteration] = useState<OutputIterationRecord | null>(null);
   const [latestCandidateIteration, setLatestCandidateIteration] = useState<OutputIterationRecord | null>(null);
   const [previewRevision, setPreviewRevision] = useState(0);
+  const [seenCompareIterationId, setSeenCompareIterationId] = useState<string | null>(previewKind === 'stable' ? null : iterationId);
 
   const [showDiffPanel, setShowDiffPanel] = useState(false);
   const [iterationActionLoading, setIterationActionLoading] = useState<'accept' | 'discard' | null>(null);
@@ -281,7 +282,12 @@ const DashboardViewCard: React.FC<Props> = ({
   const showCandidateIterationControls = previewKind !== 'stable' && Boolean(candidateIteration);
   const outputDiffRows = useMemo(() => buildOutputDiffRows(candidateIteration), [candidateIteration]);
   const changedDiffCount = useMemo(() => countChangedDiffRows(outputDiffRows), [outputDiffRows]);
-  const shouldHighlightCompare = previewKind === 'stable' && Boolean(compareCandidateIteration) && changedDiffCount > 0;
+  const shouldHighlightCompare = Boolean(
+    previewKind === 'stable'
+    && compareCandidateIteration
+    && compareCandidateIteration.iteration_id !== seenCompareIterationId
+    && changedDiffCount > 0
+  );
 
   // ---- Drag via header ----
   const DRAG_THRESHOLD = 3;
@@ -485,6 +491,7 @@ const DashboardViewCard: React.FC<Props> = ({
   const handleOpenCandidatePreview = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!compareCandidateIteration || !compareCandidateServeUrl) return;
+    setSeenCompareIterationId(compareCandidateIteration.iteration_id);
     dispatch(addViewCard({
       outputId: output.id,
       viewCardId: `${output.id}::candidate::${compareCandidateIteration.iteration_id}`,

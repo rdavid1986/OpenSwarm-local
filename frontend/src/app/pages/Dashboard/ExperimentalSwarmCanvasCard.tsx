@@ -603,6 +603,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const [lastSubmittedPrompt, setLastSubmittedPrompt] = useState('');
   const [isStartingImplementation, setIsStartingImplementation] = useState(false);
   const [lastOutputBridgeOutputId, setLastOutputBridgeOutputId] = useState<string | null>(null);
+  const [seenPreviewOutputId, setSeenPreviewOutputId] = useState<string | null>(previewOutputId || null);
   const [openPanelSections, setOpenPanelSections] = useState<Record<string, boolean>>({
     tasks: false,
     approvals: false,
@@ -737,6 +738,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const stableOutputBridgeOutputId = outputBridgeOutputId || lastOutputBridgeOutputId || previewOutputId || refinementOutputId || null;
   const shouldHighlightOpenPreview = Boolean(
     stableOutputBridgeOutputId
+    && stableOutputBridgeOutputId !== seenPreviewOutputId
     && finalResult
     && typeof finalResult === 'object'
     && (
@@ -953,6 +955,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
   const handleOpenOutputPreview = useCallback(async () => {
     if (stableOutputBridgeOutputId) {
+      setSeenPreviewOutputId(stableOutputBridgeOutputId);
       await dispatch(fetchOutputs());
       onAddPreviewCard?.(stableOutputBridgeOutputId);
       return;
