@@ -69,6 +69,7 @@ from backend.apps.swarms.response_intelligence import (
 )
 from backend.apps.outputs.outputs import apply_candidate_iteration_files, load_output_iteration
 from backend.apps.swarms.candidate_refinement_planner import plan_candidate_refinement_file_updates
+from backend.apps.swarms.dynamic_intake_policy import resolve_dynamic_intake_policy
 
 
 @asynccontextmanager
@@ -1663,9 +1664,22 @@ def _project_intake_question_payload(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _start_project_intake(swarm, user_message: str) -> tuple[str, dict[str, Any]]:
+async def _start_project_intake(swarm, user_message: str, model: str = "qwen2.5-coder:14b") -> tuple[str, dict[str, Any]]:
     now = _project_intake_now()
-    intake_profile = _infer_project_intake_profile(user_message)
+    fallback_profile = _infer_project_intake_profile(user_message)
+    policy = await resolve_dynamic_intake_policy(
+        user_message=user_message,
+        questions=_project_intake_questions(),
+        fallback_profile=fallback_profile,
+        model=model,
+    )
+    skipped_questions = policy.get("skipped_questions") if isinstance(policy.get("skipped_questions"), list) else fallback_profile.get("skipped_questions", [])
+    intake_profile = {
+        "profile": policy.get("profile") or fallback_profile.get("profile"),
+        "confidence": policy.get("confidence", fallback_profile.get("confidence")),
+        "skipped_questions": skipped_questions,
+        "reason": policy.get("reason") or fallback_profile.get("reason"),
+    }
     state = {
         "status": "collecting",
         "current_question_id": None,
@@ -1674,12 +1688,13 @@ def _start_project_intake(swarm, user_message: str) -> tuple[str, dict[str, Any]
         "created_at": now,
         "updated_at": now,
         "original_request": user_message,
-        "intake_mode": "dynamic_fallback",
+        "intake_mode": "model_assisted" if policy.get("source") == "model" else "dynamic_fallback",
         "intake_profile": intake_profile,
-        "skipped_questions": intake_profile.get("skipped_questions", []),
+        "skipped_questions": skipped_questions,
         "question_policy": {
-            "source": "deterministic_profile",
-            "reason": intake_profile.get("reason"),
+            "source": policy.get("source") or "fallback",
+            "reason": policy.get("reason") or fallback_profile.get("reason"),
+            "provider_health": policy.get("provider_health"),
         },
     }
     first_question_id = _next_project_intake_question_id({}, state)
@@ -2821,7 +2836,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
     elif swarm_mode == "app_builder" and _is_project_intake_collecting(swarm):
         assistant_content, project_intake_payload = _advance_project_intake(swarm, user_message)
     elif swarm_mode == "app_builder" and route == "implementation_request":
-        assistant_content, project_intake_payload = _start_project_intake(swarm, user_message)
+        assistant_content, project_intake_payload = await _start_project_intake(swarm, user_message, model=body.model)
 
     if project_intake_payload:
         project_intake_payload["swarm_mode"] = swarm_mode
