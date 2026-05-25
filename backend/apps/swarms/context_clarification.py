@@ -8,6 +8,7 @@ context to continue safely.
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid5, NAMESPACE_URL
 
 
 CLEAR_ENOUGH_MODES = {"ask", "chat"}
@@ -84,14 +85,35 @@ def build_clarification_options(*, mode: str, reason: str) -> list[dict[str, str
     return options
 
 
+def build_clarification_state(*, mode: str, reason: str, question: str, options: list[dict[str, str]]) -> dict[str, Any]:
+    clarification_id = uuid5(NAMESPACE_URL, f"openswarm:clarification:{mode}:{reason}:{question}").hex
+    return {
+        "status": "pending_clarification",
+        "clarification_id": clarification_id,
+        "mode": mode,
+        "reason": reason,
+        "question": question,
+        "options": options,
+    }
+
+
 def _clarification_payload(*, mode: str, reason: str, risk: str) -> dict[str, Any]:
+    question = build_clarification_question(mode=mode, reason=reason)
+    options = build_clarification_options(mode=mode, reason=reason)
+    clarification_state = build_clarification_state(
+        mode=mode,
+        reason=reason,
+        question=question,
+        options=options,
+    )
     return {
         "ok": False,
         "source": "deterministic",
         "needs_clarification": True,
         "reason": reason,
-        "clarification_question": build_clarification_question(mode=mode, reason=reason),
-        "clarification_options": build_clarification_options(mode=mode, reason=reason),
+        "clarification_question": question,
+        "clarification_options": options,
+        "clarification_state": clarification_state,
         "mode": mode,
         "risk": risk,
     }
@@ -139,6 +161,7 @@ def resolve_context_clarification(
         "reason": "context_sufficient",
         "clarification_question": None,
         "clarification_options": [],
+        "clarification_state": {},
         "mode": mode if mode else "ask",
         "risk": "low",
     }

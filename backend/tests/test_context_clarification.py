@@ -81,3 +81,24 @@ def test_context_clarification_marks_possible_options():
     result = resolve_context_clarification(user_message="hacelo", swarm_mode="debug")
 
     assert {"label": "Revisar archivo", "value": "revisar archivo", "kind": "possible"} in result["clarification_options"]
+
+
+def test_context_clarification_returns_pending_state():
+    result = resolve_context_clarification(user_message="hacelo", swarm_mode="plan")
+    state = result["clarification_state"]
+
+    assert state["status"] == "pending_clarification"
+    assert state["clarification_id"]
+    assert state["mode"] == "plan"
+    assert state["reason"] == "project_mode_request_too_vague"
+    assert state["question"] == result["clarification_question"]
+    assert state["options"] == result["clarification_options"]
+
+
+def test_context_clarification_success_returns_empty_state():
+    result = resolve_context_clarification(
+        user_message="Quiero una landing para una peluquería",
+        swarm_mode="app_builder",
+    )
+
+    assert result["clarification_state"] == {}
