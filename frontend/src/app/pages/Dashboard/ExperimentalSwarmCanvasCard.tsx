@@ -399,6 +399,30 @@ function getSwarmMessageMetadata(message: any): {
   return { route, source, guard, reason, pendingAction, targetOutputId, availableActions };
 }
 
+function getContextClarification(message: any): {
+  question: string;
+  options: any[];
+  reason: string;
+  creationType: string;
+} {
+  const payload = message?.payload || {};
+  const clarification = payload.context_clarification
+    || payload.message?.context_clarification
+    || payload.response?.context_clarification
+    || payload.final_result?.context_clarification
+    || {};
+  const options = Array.isArray(clarification.clarification_options)
+    ? clarification.clarification_options
+    : [];
+  return {
+    question: renderText(clarification.clarification_question, '').trim(),
+    options,
+    reason: renderText(clarification.reason, '').trim(),
+    creationType: renderText(clarification.creation_type, '').trim(),
+  };
+}
+
+
 function getPendingRefinementAction(message: any): {
   outputId: string;
   requestedChange: string;
@@ -1097,6 +1121,24 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     dispatch(fetchExperimentalSwarm(activeSwarmId));
   }, [activeSwarmId, activeSwarmModel, dispatch, swarmState.actionLoading]);
 
+  const handleContextClarificationOption = useCallback(async (option: any) => {
+    const label = renderText(option?.label ?? option?.value, '').trim();
+    const value = renderText(option?.value ?? option?.label, '').trim();
+    if (!label) return;
+    if (value === '__custom__') {
+      setPrompt('');
+      setCustomIntakeMode(true);
+      window.setTimeout(() => promptInputRef.current?.focus(), 0);
+      return;
+    }
+    if (!activeSwarmId || swarmState.actionLoading) return;
+
+    setLastSubmittedPrompt(label);
+    const requestedMode = getSwarmModeOption(activeSwarmModeRef.current).id;
+    await dispatch(chatExperimentalSwarm({ swarmId: activeSwarmId, message: label, swarmMode: requestedMode, model: activeSwarmModel }));
+    dispatch(fetchExperimentalSwarm(activeSwarmId));
+  }, [activeSwarmId, activeSwarmModel, dispatch, swarmState.actionLoading]);
+
   const handlePendingRefinementAction = useCallback(async (
     action: 'confirm' | 'edit' | 'cancel',
     pending: { requestedChange: string },
@@ -1571,6 +1613,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 const isUser = role === 'user' || role === 'human';
                 const body = getVisibleSwarmMessageText(getSwarmMessageText(message));
                 const metadata = getSwarmMessageMetadata(message);
+                const contextClarification = !isUser ? getContextClarification(message) : { question: '', options: [], reason: '', creationType: '' };
                 const pendingRefinementAction = !isUser ? getPendingRefinementAction(message) : null;
                 const refinementExecutionTrace = !isUser ? getRefinementExecutionTrace(message) : null;
                 const projectIntake = getSwarmProjectIntake(message);
@@ -1664,6 +1707,53 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                             Criterio: {intakePolicyReason}
                           </Typography>
                         )}
+                      </Box>
+                    )}
+                    {!isUser && contextClarification.options.length > 0 && (
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 1 }}>
+                        {contextClarification.options.map((option: any, optionIdx: number) => {
+                          const label = renderText(option?.label ?? option?.value, `Option ${optionIdx + 1}`);
+                          const value = renderText(option?.value ?? option?.label, '').trim();
+                          const kind = renderText(option?.kind, '').trim();
+                          const isCustom = value === '__custom__';
+                          return (
+                            <Button
+                              key={`${message.id || idx}-clarification-option-${optionIdx}`}
+                              size="small"
+                              variant="outlined"
+                              disabled={swarmState.actionLoading || !isLatestChatMessage}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleContextClarificationOption(option);
+                              }}
+                              sx={{
+                                minHeight: 26,
+                                px: 1,
+                                py: 0.25,
+                                fontSize: '0.72rem',
+                                textTransform: 'none',
+                                opacity: !isLatestChatMessage ? 0.45 : 1,
+                                borderRadius: 0.5,
+                                color: kind === 'recommended' ? '#1d4ed8' : c.text.secondary,
+                                bgcolor: 'transparent',
+                                borderColor: 'transparent',
+                                borderWidth: 0,
+                                fontWeight: kind === 'recommended' ? 650 : 400,
+                                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                                boxShadow: 'none',
+                                '&:hover': {
+                                  bgcolor: 'transparent',
+                                  borderColor: 'transparent',
+                                  color: '#1d4ed8',
+                                  textDecoration: 'underline',
+                                  textUnderlineOffset: '3px',
+                                },
+                              }}
+                            >
+                              {label}{kind === 'recommended' && !isCustom ? ' · recomendado' : ''}
+                            </Button>
+                          );
+                        })}
                       </Box>
                     )}
                     {!isUser && projectIntake.options.length > 0 && (
