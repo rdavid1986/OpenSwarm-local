@@ -281,6 +281,7 @@ const DashboardViewCard: React.FC<Props> = ({
   const showCandidateIterationControls = previewKind !== 'stable' && Boolean(candidateIteration);
   const outputDiffRows = useMemo(() => buildOutputDiffRows(candidateIteration), [candidateIteration]);
   const changedDiffCount = useMemo(() => countChangedDiffRows(outputDiffRows), [outputDiffRows]);
+  const shouldHighlightCompare = previewKind === 'stable' && Boolean(compareCandidateIteration) && changedDiffCount > 0;
 
   // ---- Drag via header ----
   const DRAG_THRESHOLD = 3;
@@ -807,8 +808,15 @@ const DashboardViewCard: React.FC<Props> = ({
                 py: 0.25,
                 borderRadius: `${c.radius.md}px`,
                 color: c.text.muted,
-                border: `1px solid ${c.border.medium}`,
+                border: `1px solid ${shouldHighlightCompare ? c.accent.primary : c.border.medium}`,
                 bgcolor: c.bg.surface,
+                boxShadow: shouldHighlightCompare ? `0 0 0 1px ${c.accent.primary}22, 0 0 10px ${c.accent.primary}12` : 'none',
+                animation: shouldHighlightCompare ? 'previewAttentionBreath 2.25s ease-in-out infinite' : 'none',
+                '@keyframes previewAttentionBreath': {
+                  '0%': { boxShadow: `0 0 0 1px ${c.accent.primary}10, 0 0 4px ${c.accent.primary}08` },
+                  '50%': { boxShadow: `0 0 0 1px ${c.accent.primary}77, 0 0 18px ${c.accent.primary}38` },
+                  '100%': { boxShadow: `0 0 0 1px ${c.accent.primary}10, 0 0 4px ${c.accent.primary}08` },
+                },
                 fontSize: '0.68rem',
                 textTransform: 'none',
                 cursor: 'pointer',

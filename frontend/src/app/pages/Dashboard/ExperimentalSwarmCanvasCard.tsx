@@ -732,6 +732,16 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     ? ((finalResult as any).refinement_request?.output_id || null)
     : null;
   const stableOutputBridgeOutputId = outputBridgeOutputId || lastOutputBridgeOutputId || refinementOutputId || null;
+  const shouldHighlightOpenPreview = Boolean(
+    stableOutputBridgeOutputId
+    && finalResult
+    && typeof finalResult === 'object'
+    && (
+      (finalResult as any).implementation_performed === true
+      || Boolean((finalResult as any).refinement_request?.candidate_iteration_id)
+      || (finalResult as any).refinement_request?.status === 'executed'
+    )
+  );
 
   useEffect(() => {
     if (outputBridgeOutputId) {
@@ -1334,8 +1344,14 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               borderRadius: `${c.radius.md}px`,
               bgcolor: c.bg.surface,
               color: c.text.primary,
-              borderColor: c.border.medium,
-              boxShadow: c.shadow.sm,
+              borderColor: shouldHighlightOpenPreview ? c.accent.primary : c.border.medium,
+              boxShadow: shouldHighlightOpenPreview ? `0 0 0 1px ${c.accent.primary}22, 0 0 10px ${c.accent.primary}12` : c.shadow.sm,
+              animation: shouldHighlightOpenPreview ? 'previewAttentionBreath 2.25s ease-in-out infinite' : 'none',
+              '@keyframes previewAttentionBreath': {
+                '0%': { boxShadow: `0 0 0 1px ${c.accent.primary}10, 0 0 4px ${c.accent.primary}08` },
+                '50%': { boxShadow: `0 0 0 1px ${c.accent.primary}77, 0 0 18px ${c.accent.primary}38` },
+                '100%': { boxShadow: `0 0 0 1px ${c.accent.primary}10, 0 0 4px ${c.accent.primary}08` },
+              },
               fontSize: '0.74rem',
               fontWeight: 500,
               textTransform: 'none',
