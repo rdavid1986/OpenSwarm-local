@@ -51,6 +51,7 @@ interface Props {
   collapsed?: boolean;
   swarmMode?: SwarmMode;
   swarmModel?: string | null;
+  previewOutputId?: string | null;
   zoom?: number;
   isSelected?: boolean;
   isHighlighted?: boolean;
@@ -64,6 +65,7 @@ interface Props {
   onSwarmBound?: (patch: {
     swarmCardId: string;
     swarmId?: string | null;
+    previewOutputId?: string | null;
     x?: number;
     y?: number;
     width?: number;
@@ -547,6 +549,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   collapsed = false,
   swarmMode = DEFAULT_SWARM_MODE,
   swarmModel = null,
+  previewOutputId = null,
   zoom = 1,
   isSelected = false,
   isHighlighted = false,
@@ -731,7 +734,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const refinementOutputId = finalResult && typeof finalResult === 'object'
     ? ((finalResult as any).refinement_request?.output_id || null)
     : null;
-  const stableOutputBridgeOutputId = outputBridgeOutputId || lastOutputBridgeOutputId || refinementOutputId || null;
+  const stableOutputBridgeOutputId = outputBridgeOutputId || lastOutputBridgeOutputId || previewOutputId || refinementOutputId || null;
   const shouldHighlightOpenPreview = Boolean(
     stableOutputBridgeOutputId
     && finalResult
@@ -747,8 +750,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     const persistentPreviewOutputId = outputBridgeOutputId || refinementOutputId;
     if (persistentPreviewOutputId) {
       setLastOutputBridgeOutputId(persistentPreviewOutputId);
+      onSwarmBound?.({ swarmCardId, previewOutputId: persistentPreviewOutputId });
     }
-  }, [outputBridgeOutputId, refinementOutputId]);
+  }, [outputBridgeOutputId, onSwarmBound, refinementOutputId, swarmCardId]);
 
   const canCreateOutputBridge = Boolean(
     activeSwarmId

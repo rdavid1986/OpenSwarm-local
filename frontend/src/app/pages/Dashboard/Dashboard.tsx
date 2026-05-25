@@ -1562,6 +1562,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   const persistLayoutNow = useCallback((swarmPatch?: {
     swarmCardId: string;
     swarmId?: string | null;
+    previewOutputId?: string | null;
     x?: number;
     y?: number;
     width?: number;
@@ -1577,6 +1578,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
         swarmCardsSnapshot[swarmPatch.swarmCardId] = {
           ...current,
           swarm_id: 'swarmId' in swarmPatch ? swarmPatch.swarmId ?? null : current.swarm_id,
+          preview_output_id: 'previewOutputId' in swarmPatch ? swarmPatch.previewOutputId ?? null : current.preview_output_id ?? null,
           x: swarmPatch.x ?? current.x,
           y: swarmPatch.y ?? current.y,
           width: swarmPatch.width ?? current.width,
@@ -2653,6 +2655,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                 collapsed={!!sc.collapsed}
                 swarmMode={sc.swarm_mode || 'ask'}
                 swarmModel={sc.swarm_model || null}
+                previewOutputId={sc.preview_output_id || null}
                 zoom={canvas.zoom}
                 isSelected={selection.isSelected(sc.swarm_card_id)}
                 isHighlighted={highlightedCardId === sc.swarm_card_id}

@@ -252,6 +252,12 @@ const experimentalSwarmsSlice = createSlice({
           final_evidence: payload.final_evidence ?? state.swarm.final_evidence,
           orchestration_canvas_state: payload.orchestration_canvas_state ?? state.swarm.orchestration_canvas_state,
         };
+        if (Array.isArray(payload.messages)) {
+          state.messages = payload.messages;
+        }
+        if (Array.isArray(payload.artifacts)) {
+          state.artifacts = payload.artifacts;
+        }
       })
       .addCase(updateOrchestrationNodePosition.fulfilled, (state, action) => {
         state.swarm = action.payload;

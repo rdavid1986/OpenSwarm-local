@@ -67,6 +67,7 @@ export type SwarmMode = 'ask' | 'plan' | 'app_builder' | 'skill_builder' | 'debu
 export interface SwarmCardPosition {
   swarm_card_id: string;
   swarm_id?: string | null;
+  preview_output_id?: string | null;
   swarm_mode?: SwarmMode;
   swarm_model?: string | null;
   x: number;
@@ -439,6 +440,7 @@ const dashboardLayoutSlice = createSlice({
       if (state.swarmCards[id]) {
         state.swarmCards[id].hidden = false;
         state.swarmCards[id].swarm_id = action.payload?.swarmId ?? state.swarmCards[id].swarm_id ?? null;
+        state.swarmCards[id].preview_output_id = state.swarmCards[id].preview_output_id ?? null;
         state.swarmCards[id].swarm_mode = action.payload?.swarmMode ?? state.swarmCards[id].swarm_mode ?? 'ask';
         state.swarmCards[id].swarm_model = action.payload?.swarmModel ?? state.swarmCards[id].swarm_model ?? null;
         if (typeof action.payload?.x === 'number') state.swarmCards[id].x = action.payload.x;
@@ -451,6 +453,7 @@ const dashboardLayoutSlice = createSlice({
       state.swarmCards[id] = {
         swarm_card_id: id,
         swarm_id: action.payload?.swarmId ?? null,
+        preview_output_id: null,
         swarm_mode: action.payload?.swarmMode ?? 'ask',
         swarm_model: action.payload?.swarmModel ?? null,
         x: typeof action.payload?.x === 'number' ? action.payload.x : pos.x,
