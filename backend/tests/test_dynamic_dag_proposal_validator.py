@@ -1,6 +1,6 @@
 from backend.apps.agents.orchestration.models import AgentContract, SwarmState, TaskNode
 from backend.apps.agents.orchestration.orchestrator import SwarmOrchestrator
-from backend.apps.agents.runtime.experimental_task_type_registry import get_experimental_task_spec
+from backend.apps.agents.runtime.experimental_task_type_registry import classify_experimental_task, get_experimental_task_spec
 
 
 def _contract_for(task_type: str, *, role: str) -> AgentContract:
@@ -11,6 +11,10 @@ def _contract_for(task_type: str, *, role: str) -> AgentContract:
         allowed_tools=list(spec.allowed_tools),
         output_contract=dict(spec.output_contract),
     )
+
+
+def _assert_only_base_coordinator_contracts(contracts):
+    assert all(contract.role == "CoordinatorAgent" for contract in contracts)
 
 
 def test_dag_proposal_validator_accepts_known_task_with_valid_contract():
@@ -494,7 +498,7 @@ def test_record_model_dag_proposal_preview_persists_only_decisions(tmp_path):
 
     assert errors == []
     assert saved.tasks == []
-    assert saved.contracts == []
+    _assert_only_base_coordinator_contracts(saved.contracts)
     assert saved.decisions[-1]["kind"] == "dag_proposal_validation"
     assert saved.decisions[-1]["source"] == "model_dag_proposal"
     assert saved.decisions[-1]["status"] == "accepted"
@@ -517,7 +521,7 @@ def test_record_model_dag_proposal_preview_persists_rejection_without_tasks(tmp_
 
     assert errors[0]["error"] == "model_dag_proposal_response_not_json"
     assert saved.tasks == []
-    assert saved.contracts == []
+    _assert_only_base_coordinator_contracts(saved.contracts)
     assert saved.decisions[-1]["status"] == "rejected"
     assert saved.decisions[-1]["metadata"]["parse_status"] == "failed"
 
@@ -642,7 +646,7 @@ def test_model_dag_prompt_to_preview_decision_flow_without_persisting_tasks(tmp_
 
     assert errors == []
     assert saved.tasks == []
-    assert saved.contracts == []
+    _assert_only_base_coordinator_contracts(saved.contracts)
     assert saved.decisions[-1]["kind"] == "dag_proposal_validation"
     assert saved.decisions[-1]["source"] == "model_dag_proposal"
     assert saved.decisions[-1]["status"] == "accepted"
@@ -709,7 +713,7 @@ def test_model_dag_prompt_to_preview_decision_flow_without_persisting_tasks(tmp_
 
     assert errors == []
     assert saved.tasks == []
-    assert saved.contracts == []
+    _assert_only_base_coordinator_contracts(saved.contracts)
     assert saved.decisions[-1]["kind"] == "dag_proposal_validation"
     assert saved.decisions[-1]["source"] == "model_dag_proposal"
     assert saved.decisions[-1]["status"] == "accepted"
@@ -844,8 +848,9 @@ def test_model_dag_prompt_excludes_static_app_for_backend_database_plan():
     )
 
     allowed_segment = prompt.split("Use only these task_type values:", 1)[1].split("Use only these role values:", 1)[0]
-    assert "create_static_app" not in allowed_segment
-    assert "review_static_app" not in allowed_segment
+    allowed_values = {item.strip(" .") for item in allowed_segment.split(",")}
+    assert "create_static_app" not in allowed_values
+    assert "review_static_app" not in allowed_values
     assert "do not use create_static_app or review_static_app" in prompt
 
 

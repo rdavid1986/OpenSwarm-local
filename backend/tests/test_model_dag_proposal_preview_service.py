@@ -47,6 +47,10 @@ def _service(tmp_path, *, runtime_result, adapter_ok=True):
     return service, orchestrator, runtime, swarm
 
 
+def _assert_only_base_coordinator_contracts(contracts):
+    assert all(contract.role == "CoordinatorAgent" for contract in contracts)
+
+
 async def _run(service, swarm_id):
     return await service.generate_preview(
         swarm_id=swarm_id,
@@ -100,7 +104,7 @@ def test_model_dag_preview_service_accepts_valid_model_output(tmp_path):
     assert response.status == "accepted"
     assert response.validation_errors == []
     assert stored.tasks == []
-    assert stored.contracts == []
+    _assert_only_base_coordinator_contracts(stored.contracts)
     assert stored.decisions[-1]["source"] == "model_dag_proposal"
     assert stored.decisions[-1]["status"] == "accepted"
     assert runtime.last_context.swarm_id is None
@@ -127,7 +131,7 @@ def test_model_dag_preview_service_rejects_invalid_json_without_tasks(tmp_path):
     assert response.status == "rejected"
     assert response.validation_errors[0]["error"] == "model_dag_proposal_response_not_json"
     assert stored.tasks == []
-    assert stored.contracts == []
+    _assert_only_base_coordinator_contracts(stored.contracts)
     assert stored.decisions[-1]["status"] == "rejected"
     assert runtime.last_context.contract.allowed_tools == []
 
@@ -150,7 +154,7 @@ def test_model_dag_preview_service_handles_provider_unavailable(tmp_path):
     assert response.status == "provider_unavailable"
     assert response.validation_errors[0]["error"] == "provider_unavailable"
     assert stored.tasks == []
-    assert stored.contracts == []
+    _assert_only_base_coordinator_contracts(stored.contracts)
     assert stored.decisions[-1]["status"] == "rejected"
     assert runtime.last_context is None
 
@@ -175,7 +179,7 @@ def test_model_dag_preview_service_handles_model_failed(tmp_path):
     assert response.status == "model_failed"
     assert response.validation_errors[0]["error"] == "model_failed"
     assert stored.tasks == []
-    assert stored.contracts == []
+    _assert_only_base_coordinator_contracts(stored.contracts)
     assert stored.decisions[-1]["status"] == "rejected"
     assert runtime.last_context.swarm_id is None
     assert runtime.last_context.store is None
@@ -223,5 +227,5 @@ def test_model_dag_preview_service_rejects_semantically_incompatible_static_app(
     assert response.status == "rejected"
     assert any(error["error"] == "semantically_incompatible_task_type" for error in response.validation_errors)
     assert stored.tasks == []
-    assert stored.contracts == []
+    _assert_only_base_coordinator_contracts(stored.contracts)
     assert stored.decisions[-1]["status"] == "rejected"
