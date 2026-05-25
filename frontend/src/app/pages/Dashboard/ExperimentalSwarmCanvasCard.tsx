@@ -664,10 +664,11 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
   const activeSwarmId = swarmId || null;
   const activeSwarm = activeSwarmId && swarmState.swarm?.id === activeSwarmId ? swarmState.swarm : null;
-  const events = activeSwarmId ? swarmState.events.slice(-8).reverse() : [];
-  const approvals = activeSwarmId ? swarmState.approvals.slice(0, 5) : [];
+  const hasLoadedActiveSwarm = Boolean(activeSwarm);
+  const events = hasLoadedActiveSwarm ? swarmState.events.slice(-8).reverse() : [];
+  const approvals = hasLoadedActiveSwarm ? swarmState.approvals.slice(0, 5) : [];
   const tasks = activeSwarm ? (activeSwarm.tasks || []) : [];
-  const artifacts = activeSwarm ? (swarmState.artifacts || []) : [];
+  const artifacts = hasLoadedActiveSwarm ? (swarmState.artifacts || []) : [];
   const finalEvidence = activeSwarm && Array.isArray((activeSwarm as any).final_evidence)
     ? (activeSwarm as any).final_evidence
     : [];
@@ -718,7 +719,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   };
   const implementationMeta = implementationStateMeta[implementationVisualState];
   const isImplementationActionRunning = isStartingImplementation || (swarmState.actionLoading && startImplementationInFlightRef.current);
-  const chatMessages = activeSwarmId
+  const chatMessages = hasLoadedActiveSwarm
     ? (swarmState.messages || []).filter((message: any) => getVisibleSwarmMessageText(getSwarmMessageText(message)))
     : [];
   const finalRoute = typeof finalResult === 'object' && finalResult ? (finalResult as any).route : null;
@@ -749,12 +750,17 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   );
 
   useEffect(() => {
-    const persistentPreviewOutputId = outputBridgeOutputId || refinementOutputId || previewOutputId || stableOutputBridgeOutputId;
+    setLastOutputBridgeOutputId(previewOutputId || null);
+    setSeenPreviewOutputId(previewOutputId || null);
+  }, [activeSwarmId, previewOutputId]);
+
+  useEffect(() => {
+    const persistentPreviewOutputId = outputBridgeOutputId || refinementOutputId || previewOutputId || null;
     if (persistentPreviewOutputId) {
       setLastOutputBridgeOutputId(persistentPreviewOutputId);
       onSwarmBound?.({ swarmCardId, previewOutputId: persistentPreviewOutputId });
     }
-  }, [outputBridgeOutputId, onSwarmBound, previewOutputId, refinementOutputId, stableOutputBridgeOutputId, swarmCardId]);
+  }, [outputBridgeOutputId, onSwarmBound, previewOutputId, refinementOutputId, swarmCardId]);
 
   const canCreateOutputBridge = Boolean(
     activeSwarmId
@@ -868,7 +874,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     if (cleanPrompt) setPrompt('');
 
     let swarmIdToRun = activeSwarmId;
-    const activeIntent = activeSwarm?.intent || swarmState.swarm?.intent || null;
+    const activeIntent = activeSwarm?.intent || null;
     const requestedMode = getSwarmModeOption(activeSwarmModeRef.current).id;
 
     if (!swarmIdToRun || (cleanPrompt && activeIntent !== 'chat')) {
@@ -921,7 +927,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       model: activeSwarmModel,
     }));
     dispatch(fetchExperimentalSwarm(swarmIdToRun));
-  }, [activeSwarm?.intent, activeSwarmId, activeSwarmModel, dashboardId, dispatch, lastSubmittedPrompt, onSwarmBound, pendingPreviewRefinementDraft, prompt, swarmCardId, swarmState.swarm?.intent]);
+  }, [activeSwarm?.intent, activeSwarmId, activeSwarmModel, dashboardId, dispatch, lastSubmittedPrompt, onSwarmBound, pendingPreviewRefinementDraft, prompt, swarmCardId]);
 
   useEffect(() => {
     const intakeStatus = (activeSwarm as any)?.project_intake_state?.status;

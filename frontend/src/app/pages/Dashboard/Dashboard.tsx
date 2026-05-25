@@ -59,6 +59,7 @@ import { fetchOutputs } from '@/shared/state/outputsSlice';
 import type { Output } from '@/shared/state/outputsSlice';
 import {
   chatExperimentalSwarm,
+  clearExperimentalSwarm,
   createExperimentalSwarm,
   fetchExperimentalSwarm,
   updateOrchestrationNodePosition,
@@ -133,6 +134,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   const viewportState = useAppSelector((state) => state.dashboardLayout.viewportState);
   const pendingFocusNoteId = useAppSelector((state) => state.dashboardLayout.pendingFocusNoteId);
   const layoutInitialized = useAppSelector((state) => state.dashboardLayout.initialized);
+  const layoutDashboardId = useAppSelector((state) => state.dashboardLayout.currentDashboardId);
   const persistedExpandedSessionIds = useAppSelector((state) => state.dashboardLayout.persistedExpandedSessionIds);
   const zoomSensitivity = useAppSelector((state) => state.settings.data.zoom_sensitivity);
   const newAgentShortcut = useAppSelector((state) => state.settings.data.new_agent_shortcut);
@@ -635,6 +637,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     restoredExpandedRef.current = false;
     restoredViewportRef.current = false;
     dispatch(resetLayout());
+    dispatch(clearExperimentalSwarm());
     dispatch(fetchSessions({ dashboardId }));
     dispatch(fetchHistory({ dashboardId }));
     dispatch(fetchLayout(dashboardId));
@@ -968,7 +971,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
 
   useEffect(() => {
     if (!isActive) return;  // Don't persist layout while dashboard is hidden — save buffers in pendingSaveRef and flushes on resume
-    if (!layoutInitialized || !dashboardId) return;
+    if (!layoutInitialized || !dashboardId || layoutDashboardId !== dashboardId) return;
     const payload = {
       dashboardId,
       cards,
@@ -993,7 +996,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
       saveTimerRef.current = null;
       captureNow();
     }, 500);
-  }, [isActive, cards, viewCards, browserCards, plansCards, swarmCards, notes, expandedSessionIds, canvas.panX, canvas.panY, canvas.zoom, layoutInitialized, dashboardId, dispatch, captureNow]);
+  }, [isActive, cards, viewCards, browserCards, plansCards, swarmCards, notes, expandedSessionIds, canvas.panX, canvas.panY, canvas.zoom, layoutInitialized, layoutDashboardId, dashboardId, dispatch, captureNow]);
 
   useEffect(() => {
     if (!isActive) {
@@ -1570,6 +1573,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   }) => {
     if (!layoutInitialized || !dashboardId) return;
     const state = store.getState().dashboardLayout;
+    if (state.currentDashboardId !== dashboardId) return;
     const swarmCardsSnapshot = { ...state.swarmCards };
 
     if (swarmPatch) {

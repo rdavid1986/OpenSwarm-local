@@ -118,6 +118,7 @@ export interface ViewportState {
 }
 
 export interface DashboardLayoutState {
+  currentDashboardId: string | null;
   cards: Record<string, CardPosition>;
   viewCards: Record<string, ViewCardPosition>;
   browserCards: Record<string, BrowserCardPosition>;
@@ -141,6 +142,7 @@ export interface DashboardLayoutState {
 }
 
 const initialState: DashboardLayoutState = {
+  currentDashboardId: null,
   cards: {},
   viewCards: {},
   browserCards: {},
@@ -206,6 +208,7 @@ export const fetchLayout = createAsyncThunk(
     }
 
     return {
+      dashboardId,
       cards: (layout.cards ?? {}) as Record<string, CardPosition>,
       viewCards: (layout.view_cards ?? {}) as Record<string, ViewCardPosition>,
       browserCards: browserCards as Record<string, BrowserCardPosition>,
@@ -214,7 +217,7 @@ export const fetchLayout = createAsyncThunk(
       notes: (layout.notes ?? {}) as Record<string, NotePosition>,
       expandedSessionIds: (layout.expanded_session_ids ?? []) as string[],
       viewportState,
-    } satisfies LayoutPayload;
+    } satisfies LayoutPayload & { dashboardId: string };
   },
 );
 
@@ -1131,6 +1134,7 @@ const dashboardLayoutSlice = createSlice({
     },
 
     resetLayout(state) {
+      state.currentDashboardId = null;
       state.cards = {};
       state.viewCards = {};
       state.browserCards = {};
@@ -1150,7 +1154,8 @@ const dashboardLayoutSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
-      .addCase(fetchLayout.pending, (state) => {
+      .addCase(fetchLayout.pending, (state, action) => {
+        state.currentDashboardId = action.meta.arg;
         state.loading = true;
         state.initialized = false;
         state.cards = {};
@@ -1163,6 +1168,7 @@ const dashboardLayoutSlice = createSlice({
         state.persistedExpandedSessionIds = [];
       })
       .addCase(fetchLayout.fulfilled, (state, action) => {
+        if (state.currentDashboardId !== action.payload.dashboardId) return;
         state.loading = false;
         state.initialized = true;
         state.cards = action.payload.cards;
@@ -1204,7 +1210,8 @@ const dashboardLayoutSlice = createSlice({
         }
         state.nextZOrder = maxZ + 1;
       })
-      .addCase(fetchLayout.rejected, (state) => {
+      .addCase(fetchLayout.rejected, (state, action) => {
+        if (state.currentDashboardId !== action.meta.arg) return;
         state.loading = false;
         state.initialized = true;
         state.viewportState = null;

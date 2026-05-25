@@ -191,6 +191,18 @@ const experimentalSwarmsSlice = createSlice({
     clearExperimentalSwarmError(state) {
       state.error = null;
     },
+    clearExperimentalSwarm(state) {
+      state.selectedSwarmId = null;
+      state.swarm = null;
+      state.events = [];
+      state.artifacts = [];
+      state.messages = [];
+      state.approvals = [];
+      state.pendingCount = 0;
+      state.loading = false;
+      state.actionLoading = false;
+      state.error = null;
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -218,6 +230,7 @@ const experimentalSwarmsSlice = createSlice({
         state.selectedSwarmId = action.meta.arg;
       })
       .addCase(fetchExperimentalSwarm.fulfilled, (state, action) => {
+        if (state.selectedSwarmId !== action.meta.arg) return;
         state.loading = false;
         state.swarm = action.payload.swarm;
         state.events = action.payload.events.events || [];
@@ -227,6 +240,8 @@ const experimentalSwarmsSlice = createSlice({
         state.pendingCount = action.payload.approvals.pending_count || 0;
       })
       .addCase(chatExperimentalSwarm.fulfilled, (state, action) => {
+        if (action.meta.arg.swarmId && state.selectedSwarmId && state.selectedSwarmId !== action.meta.arg.swarmId) return;
+        state.selectedSwarmId = action.meta.arg.swarmId;
         state.swarm = action.payload;
         state.events = action.payload.events || [];
         state.artifacts = action.payload.artifacts || [];
@@ -264,6 +279,7 @@ const experimentalSwarmsSlice = createSlice({
         state.error = null;
       })
       .addCase(fetchExperimentalSwarm.rejected, (state, action) => {
+        if (state.selectedSwarmId !== action.meta.arg) return;
         state.loading = false;
         state.error = action.error.message || 'Failed to fetch experimental swarm';
       })
@@ -299,6 +315,6 @@ const experimentalSwarmsSlice = createSlice({
   },
 });
 
-export const { selectExperimentalSwarm, clearExperimentalSwarmError } = experimentalSwarmsSlice.actions;
+export const { selectExperimentalSwarm, clearExperimentalSwarmError, clearExperimentalSwarm } = experimentalSwarmsSlice.actions;
 
 export default experimentalSwarmsSlice.reducer;
