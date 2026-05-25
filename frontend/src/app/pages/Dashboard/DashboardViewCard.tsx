@@ -278,6 +278,7 @@ const DashboardViewCard: React.FC<Props> = ({
     }
   }, [candidateIteration, dispatch, iterationActionLoading, output.id, previewKind, refreshCandidateIterations, viewCardId]);
 
+  const showCandidateIterationControls = previewKind !== 'stable' && Boolean(candidateIteration);
   const outputDiffRows = useMemo(() => buildOutputDiffRows(candidateIteration), [candidateIteration]);
   const changedDiffCount = useMemo(() => countChangedDiffRows(outputDiffRows), [outputDiffRows]);
 
@@ -734,7 +735,7 @@ const DashboardViewCard: React.FC<Props> = ({
           </Tooltip>
         )}
 
-        {candidateIteration && (
+        {showCandidateIterationControls && (
           <Tooltip title="Accept candidate changes" placement="top">
             <span>
               <Button
@@ -763,7 +764,7 @@ const DashboardViewCard: React.FC<Props> = ({
           </Tooltip>
         )}
 
-        {candidateIteration && (
+        {showCandidateIterationControls && (
           <Tooltip title="Discard candidate changes" placement="top">
             <span>
               <Button
