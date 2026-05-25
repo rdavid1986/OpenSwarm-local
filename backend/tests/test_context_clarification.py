@@ -57,3 +57,21 @@ def test_context_clarification_uses_mode_specific_vague_question():
     result = resolve_context_clarification(user_message="continuar", swarm_mode="app_builder")
 
     assert result["clarification_question"] == "¿Qué tipo de app o web querés construir?"
+
+
+def test_context_clarification_returns_options_with_custom_choice():
+    result = resolve_context_clarification(user_message="hacelo", swarm_mode="app_builder")
+
+    assert result["needs_clarification"] is True
+    assert result["clarification_options"][-1] == {"label": "Otra opción", "value": "__custom__"}
+    assert {"label": "Landing simple", "value": "landing simple"} in result["clarification_options"]
+
+
+def test_context_clarification_success_returns_empty_options():
+    result = resolve_context_clarification(
+        user_message="Quiero una landing para una peluquería",
+        swarm_mode="app_builder",
+    )
+
+    assert result["needs_clarification"] is False
+    assert result["clarification_options"] == []

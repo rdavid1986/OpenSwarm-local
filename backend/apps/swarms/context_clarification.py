@@ -50,6 +50,53 @@ def build_clarification_question(*, mode: str, reason: str) -> str:
     return "¿Qué información falta para continuar?"
 
 
+def build_clarification_options(*, mode: str, reason: str) -> list[dict[str, str]]:
+    normalized_mode = _lower(mode or "ask")
+    base_options = {
+        "plan": [
+            {"label": "Plan técnico", "value": "plan técnico"},
+            {"label": "Roadmap por fases", "value": "roadmap por fases"},
+            {"label": "Arquitectura", "value": "arquitectura"},
+        ],
+        "app_builder": [
+            {"label": "Landing simple", "value": "landing simple"},
+            {"label": "Web/app completa", "value": "web app completa"},
+            {"label": "Dashboard", "value": "dashboard"},
+        ],
+        "debug": [
+            {"label": "Pegar error", "value": "pegar error"},
+            {"label": "Revisar archivo", "value": "revisar archivo"},
+            {"label": "Revisar Output", "value": "revisar output"},
+        ],
+        "skill_builder": [
+            {"label": "Nueva skill", "value": "nueva skill"},
+            {"label": "Mejorar skill existente", "value": "mejorar skill existente"},
+            {"label": "Debug de skill", "value": "debug de skill"},
+        ],
+    }.get(normalized_mode, [
+        {"label": "Explicar", "value": "explicar"},
+        {"label": "Planear", "value": "planear"},
+        {"label": "Crear", "value": "crear"},
+    ])
+
+    options = list(base_options)
+    options.append({"label": "Otra opción", "value": "__custom__"})
+    return options
+
+
+def _clarification_payload(*, mode: str, reason: str, risk: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "source": "deterministic",
+        "needs_clarification": True,
+        "reason": reason,
+        "clarification_question": build_clarification_question(mode=mode, reason=reason),
+        "clarification_options": build_clarification_options(mode=mode, reason=reason),
+        "mode": mode,
+        "risk": risk,
+    }
+
+
 def resolve_context_clarification(
     *,
     user_message: str,
@@ -73,41 +120,17 @@ def resolve_context_clarification(
     has_files = bool(context.get("files") or context.get("workspace_path"))
 
     if not message:
-        return {
-            "ok": False,
-            "source": "deterministic",
-            "needs_clarification": True,
-            "reason": "empty_user_message",
-            "clarification_question": build_clarification_question(mode=mode, reason="empty_user_message"),
-            "mode": mode,
-            "risk": "low",
-        }
+        return _clarification_payload(mode=mode, reason="empty_user_message", risk="low")
 
     vague_terms = {"hacer algo", "arreglalo", "mejoralo", "continuar", "seguir", "hazlo", "hacelo"}
     project_terms = {"app", "web", "landing", "dashboard", "programa", "sistema", "skill", "debug", "error"}
     debug_terms = {"debug", "error", "falla", "bug", "no funciona", "rompe", "crashea", "traceback"}
 
     if _has_any(message, debug_terms) and not (has_error or has_output or has_files):
-        return {
-            "ok": False,
-            "source": "deterministic",
-            "needs_clarification": True,
-            "reason": "debug_request_without_target_context",
-            "clarification_question": build_clarification_question(mode=mode, reason="debug_request_without_target_context"),
-            "mode": mode,
-            "risk": "medium",
-        }
+        return _clarification_payload(mode=mode, reason="debug_request_without_target_context", risk="medium")
 
     if mode in PROJECT_MODES and _has_any(message, vague_terms) and not _has_any(message, project_terms):
-        return {
-            "ok": False,
-            "source": "deterministic",
-            "needs_clarification": True,
-            "reason": "project_mode_request_too_vague",
-            "clarification_question": build_clarification_question(mode=mode, reason="project_mode_request_too_vague"),
-            "mode": mode,
-            "risk": "low",
-        }
+        return _clarification_payload(mode=mode, reason="project_mode_request_too_vague", risk="low")
 
     return {
         "ok": True,
@@ -115,6 +138,7 @@ def resolve_context_clarification(
         "needs_clarification": False,
         "reason": "context_sufficient",
         "clarification_question": None,
+        "clarification_options": [],
         "mode": mode if mode else "ask",
         "risk": "low",
     }
