@@ -102,3 +102,34 @@ def test_context_clarification_success_returns_empty_state():
     )
 
     assert result["clarification_state"] == {}
+
+
+def test_context_clarification_infers_game_creation_type():
+    result = resolve_context_clarification(user_message="Quiero crear un videojuego 3D", swarm_mode="plan")
+
+    assert result["ok"] is True
+    assert result["creation_type"] == "game"
+
+
+def test_context_clarification_infers_desktop_creation_type():
+    result = resolve_context_clarification(user_message="Quiero crear un programa de Windows", swarm_mode="plan")
+
+    assert result["ok"] is True
+    assert result["creation_type"] == "desktop"
+
+
+def test_context_clarification_asks_for_generic_app_creation_type():
+    result = resolve_context_clarification(user_message="Quiero crear una app", swarm_mode="app_builder")
+
+    assert result["ok"] is False
+    assert result["reason"] == "creation_type_unclear"
+    assert result["creation_type"] == "unknown"
+    assert {"label": "Videojuego", "value": "game", "kind": "possible"} in result["clarification_options"]
+    assert result["clarification_state"]["status"] == "pending_clarification"
+
+
+def test_context_clarification_infers_web_app_creation_type():
+    result = resolve_context_clarification(user_message="Quiero crear un dashboard con login", swarm_mode="app_builder")
+
+    assert result["ok"] is True
+    assert result["creation_type"] == "web_app"

@@ -13,6 +13,17 @@ from uuid import uuid5, NAMESPACE_URL
 
 CLEAR_ENOUGH_MODES = {"ask", "chat"}
 PROJECT_MODES = {"plan", "app_builder", "debug", "skill_builder"}
+CREATION_TYPES = {
+    "web",
+    "web_app",
+    "desktop",
+    "mobile",
+    "game",
+    "cli",
+    "automation",
+    "skill",
+    "unknown",
+}
 
 
 def _as_text(value: Any) -> str:
@@ -25,6 +36,50 @@ def _lower(value: Any) -> str:
 
 def _has_any(text: str, terms: set[str]) -> bool:
     return any(term in text for term in terms)
+
+
+def infer_creation_type(user_message: str) -> str:
+    text = _lower(user_message)
+
+    if _has_any(text, {"videojuego", "juego", "unity", "godot", "unreal", "game"}):
+        return "game"
+
+    if _has_any(text, {"android", "ios", "mobile", "móvil", "movil", "app móvil", "app movil"}):
+        return "mobile"
+
+    if _has_any(text, {"windows", "mac", "macos", "linux", "desktop", "escritorio", "programa de windows", "programa para windows"}):
+        return "desktop"
+
+    if _has_any(text, {"cli", "consola", "terminal", "comando", "script"}):
+        return "cli"
+
+    if _has_any(text, {"automatización", "automatizacion", "automatizar", "bot", "workflow"}):
+        return "automation"
+
+    if _has_any(text, {"skill", "herramienta de openswarm"}):
+        return "skill"
+
+    if _has_any(text, {"web app", "webapp", "saas", "dashboard", "crud", "login", "usuarios", "backend", "base de datos"}):
+        return "web_app"
+
+    if _has_any(text, {"web", "landing", "sitio", "pagina", "página"}):
+        return "web"
+
+    return "unknown"
+
+
+def build_creation_type_options() -> list[dict[str, str]]:
+    return [
+        {"label": "Web simple", "value": "web", "kind": "possible"},
+        {"label": "Web app", "value": "web_app", "kind": "recommended"},
+        {"label": "App de escritorio", "value": "desktop", "kind": "possible"},
+        {"label": "App móvil", "value": "mobile", "kind": "possible"},
+        {"label": "Videojuego", "value": "game", "kind": "possible"},
+        {"label": "CLI / consola", "value": "cli", "kind": "possible"},
+        {"label": "Automatización", "value": "automation", "kind": "possible"},
+        {"label": "Skill de OpenSwarm", "value": "skill", "kind": "possible"},
+        {"label": "Otra opción", "value": "__custom__", "kind": "custom"},
+    ]
 
 
 def build_clarification_question(*, mode: str, reason: str) -> str:
@@ -40,6 +95,9 @@ def build_clarification_question(*, mode: str, reason: str) -> str:
     if reason == "debug_request_without_target_context":
         return "¿Qué error, archivo, app o salida querés revisar?"
 
+    if reason == "creation_type_unclear":
+        return "¿Qué tipo de proyecto querés crear?"
+
     if reason == "project_mode_request_too_vague":
         return {
             "plan": "¿Qué querés planear y con qué objetivo?",
@@ -52,6 +110,9 @@ def build_clarification_question(*, mode: str, reason: str) -> str:
 
 
 def build_clarification_options(*, mode: str, reason: str) -> list[dict[str, str]]:
+    if reason == "creation_type_unclear":
+        return build_creation_type_options()
+
     normalized_mode = _lower(mode or "ask")
     base_options = {
         "plan": [
@@ -141,18 +202,32 @@ def resolve_context_clarification(
     has_error = bool(context.get("error") or context.get("stack_trace") or context.get("logs"))
     has_files = bool(context.get("files") or context.get("workspace_path"))
 
+    creation_type = infer_creation_type(user_message)
+
     if not message:
-        return _clarification_payload(mode=mode, reason="empty_user_message", risk="low")
+        result = _clarification_payload(mode=mode, reason="empty_user_message", risk="low")
+        result["creation_type"] = creation_type
+        return result
+
+    generic_creation_terms = {"crear una app", "crear app", "hacer una app", "hacer app", "crear un programa", "hacer un programa", "crear algo"}
+    if mode in PROJECT_MODES and _has_any(message, generic_creation_terms) and creation_type == "unknown":
+        result = _clarification_payload(mode=mode, reason="creation_type_unclear", risk="medium")
+        result["creation_type"] = creation_type
+        return result
 
     vague_terms = {"hacer algo", "arreglalo", "mejoralo", "continuar", "seguir", "hazlo", "hacelo"}
     project_terms = {"app", "web", "landing", "dashboard", "programa", "sistema", "skill", "debug", "error"}
     debug_terms = {"debug", "error", "falla", "bug", "no funciona", "rompe", "crashea", "traceback"}
 
     if _has_any(message, debug_terms) and not (has_error or has_output or has_files):
-        return _clarification_payload(mode=mode, reason="debug_request_without_target_context", risk="medium")
+        result = _clarification_payload(mode=mode, reason="debug_request_without_target_context", risk="medium")
+        result["creation_type"] = creation_type
+        return result
 
     if mode in PROJECT_MODES and _has_any(message, vague_terms) and not _has_any(message, project_terms):
-        return _clarification_payload(mode=mode, reason="project_mode_request_too_vague", risk="low")
+        result = _clarification_payload(mode=mode, reason="project_mode_request_too_vague", risk="low")
+        result["creation_type"] = creation_type
+        return result
 
     return {
         "ok": True,
@@ -162,6 +237,7 @@ def resolve_context_clarification(
         "clarification_question": None,
         "clarification_options": [],
         "clarification_state": {},
+        "creation_type": creation_type,
         "mode": mode if mode else "ask",
         "risk": "low",
     }
