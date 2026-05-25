@@ -3140,12 +3140,39 @@ async def experimental_start_implementation(swarm_id: str, body: ExperimentalDAG
         _enrich_orchestration_canvas_with_evidence(swarm)
         swarm = swarm_orchestrator.store.save(swarm)
 
+        output_bridge_metadata: dict[str, Any] | None = None
+        output_bridge_errors: list[dict[str, Any]] = []
+        final_result = swarm.final_result if isinstance(swarm.final_result, dict) else {}
+        claim_guard = final_result.get("claim_guard") if isinstance(final_result.get("claim_guard"), dict) else {}
+        can_create_output_bridge = (
+            result.ok
+            and final_result.get("status") == "completed"
+            and final_result.get("artifact_kind") == "static_app"
+            and final_result.get("implementation_performed") is True
+            and str(claim_guard.get("status") or "") == "verified"
+        )
+        if can_create_output_bridge:
+            bridge_name = str(final_result.get("title") or final_result.get("summary") or "OpenSwarm App")
+            bridge_description = "Static safe Output generated from completed Swarm implementation."
+            swarm, output_bridge_errors, output_bridge_metadata = swarm_orchestrator.create_output_bridge_from_static_app(
+                swarm_id=swarm_id,
+                approve=True,
+                name=bridge_name,
+                description=bridge_description,
+            )
+
         return {
             "ok": result.ok,
             "status": result.status,
             "enabled": True,
             "swarm_id": swarm_id,
             "implementation": result.model_dump(mode="json"),
+            "output_bridge": {
+                "created": bool(output_bridge_metadata and output_bridge_metadata.get("output_id")),
+                "output_id": output_bridge_metadata.get("output_id") if output_bridge_metadata else None,
+                "validation_errors": output_bridge_errors,
+                "metadata": output_bridge_metadata,
+            },
             **_dump(swarm),
         }
     except FileNotFoundError as exc:

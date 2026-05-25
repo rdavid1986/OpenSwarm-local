@@ -1022,7 +1022,15 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     setIsStartingImplementation(true);
     startImplementationPolling(activeSwarmId);
     try {
-      await dispatch(startExperimentalImplementation({ swarmId: activeSwarmId })).unwrap();
+      const implementationResult = await dispatch(startExperimentalImplementation({ swarmId: activeSwarmId })).unwrap();
+      const outputId = implementationResult?.output_bridge?.output_id || null;
+      if (outputId) {
+        setLastOutputBridgeOutputId(outputId);
+        setSeenPreviewOutputId(null);
+        onSwarmBound?.({ swarmCardId, previewOutputId: outputId });
+        await dispatch(fetchOutputs());
+        onAddPreviewCard?.(outputId);
+      }
       await dispatch(fetchExperimentalSwarm(activeSwarmId));
     } catch {
       // Error state is stored by the slice matcher and rendered in this card.
@@ -1031,7 +1039,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       startImplementationInFlightRef.current = false;
       setIsStartingImplementation(false);
     }
-  }, [activeSwarmId, dispatch, startImplementationPolling, stopImplementationPolling, swarmState.actionLoading]);
+  }, [activeSwarmId, dispatch, onAddPreviewCard, onSwarmBound, startImplementationPolling, stopImplementationPolling, swarmCardId, swarmState.actionLoading]);
 
   const handleApprovalAction = useCallback(async (
     approvalId: string,
