@@ -1823,14 +1823,13 @@ def _build_project_intake_message(state: dict[str, Any]) -> str:
 
 
 def _project_intake_default_for_skipped(question_id: str, state: dict[str, Any]) -> str | None:
-    profile = (state.get("intake_profile") or {}).get("profile") if isinstance(state.get("intake_profile"), dict) else None
-    if profile == "static_site":
-        defaults = {
-            "backend": "Sin backend por ahora",
-            "database": "No necesita base por ahora",
-            "auth": "Sin login",
-            "payments": "No",
-        }
+    defaults = {
+        "backend": "Sin backend por ahora",
+        "database": "No necesita base por ahora",
+        "auth": "Sin login",
+        "payments": "No",
+    }
+    if question_id in _project_intake_skipped_questions(state):
         return defaults.get(question_id)
     return None
 

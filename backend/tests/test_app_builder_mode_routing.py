@@ -396,3 +396,62 @@ def test_app_builder_merges_plan_enrichment_without_replacing_core_fields(monkey
     assert plan["plan_enrichment_source"] == "model"
     assert plan["plan_enrichment"]["mvp_scope"] == ["Crear landing estática", "Agregar formulario visual"]
     assert plan["plan_enrichment"]["risks"] == ["El formulario no enviará datos sin backend"]
+
+
+def test_app_builder_landing_skipped_questions_get_defaults(monkeypatch, tmp_path):
+    client, orchestrator = _client(monkeypatch, tmp_path)
+    swarm = _create_chat_swarm(orchestrator)
+
+    async def fake_resolve_dynamic_intake_policy(**kwargs):
+        return {
+            "ok": True,
+            "source": "model",
+            "profile": "landing",
+            "confidence": 0.91,
+            "skipped_questions": ["backend", "database", "auth", "payments"],
+            "required_questions": ["app_type", "main_goal", "target_users", "frontend", "deploy", "visual_style", "mvp_priority", "technical_constraints", "out_of_scope"],
+            "reason": "Landing informativa sin backend.",
+            "question_overrides": {},
+        }
+
+    async def fake_enrich_dynamic_intake_plan(**kwargs):
+        return {
+            "ok": False,
+            "source": "fallback",
+            "confidence": 0.0,
+            "reason": "No enrichment in test.",
+            "plan_enrichment": {},
+        }
+
+    monkeypatch.setattr(swarms_module, "resolve_dynamic_intake_policy", fake_resolve_dynamic_intake_policy)
+    monkeypatch.setattr(swarms_module, "enrich_dynamic_intake_plan", fake_enrich_dynamic_intake_plan)
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "Quiero una landing informativa para una peluquería", "swarm_mode": "app_builder"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+
+    while body["project_intake_state"]["status"] != "ready_to_implement":
+        current_id = body["project_intake_state"]["current_question_id"]
+        response = client.post(
+            f"/api/swarms/{swarm.id}/experimental/chat",
+            json={"message": f"respuesta para {current_id}", "swarm_mode": "app_builder"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+
+    plan = body["project_intake_state"]["generated_plan"]
+    summary = body["final_result"]["summary"]
+
+    assert plan["backend"] == "Sin backend por ahora"
+    assert plan["database"] == "No necesita base por ahora"
+    assert plan["auth"] == "Sin login"
+    assert plan["payments"] == "No"
+    assert "None" not in summary
+    assert "Stack sugerido:" in summary
+    assert "Sin backend por ahora" in summary
+    assert "No necesita base por ahora" in summary
+    assert "Autenticación: Sin login" in summary
+    assert "Pagos: No" in summary
