@@ -299,7 +299,7 @@ function renderAnimatedText(value: string, baseDelayMs = 0): React.ReactNode {
       return <br key={`line-${idx}`} />;
     }
 
-    const delay = baseDelayMs + visibleIndex * 14;
+    const delay = baseDelayMs + visibleIndex * 10.5;
     visibleIndex += 1;
 
     return (
@@ -322,6 +322,13 @@ function renderAnimatedText(value: string, baseDelayMs = 0): React.ReactNode {
       </Box>
     );
   });
+}
+
+function getVisibleSwarmMessageText(text: string): string {
+  const normalized = renderText(text, '').trim();
+  if (normalized === '__openswarm_pending_action__:confirm_refinement') return 'Confirmar cambio';
+  if (normalized === '__openswarm_pending_action__:cancel_refinement') return 'Cancelar';
+  return text;
 }
 
 function getSwarmMessageText(message: any): string {
@@ -708,7 +715,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const implementationMeta = implementationStateMeta[implementationVisualState];
   const isImplementationActionRunning = isStartingImplementation || (swarmState.actionLoading && startImplementationInFlightRef.current);
   const chatMessages = activeSwarmId
-    ? (swarmState.messages || []).filter((message: any) => getSwarmMessageText(message))
+    ? (swarmState.messages || []).filter((message: any) => getVisibleSwarmMessageText(getSwarmMessageText(message)))
     : [];
   const finalRoute = typeof finalResult === 'object' && finalResult ? (finalResult as any).route : null;
   const finalAnswerGuardApplied = typeof finalResult === 'object' && finalResult ? (finalResult as any).answer_guard_applied : null;
@@ -743,7 +750,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   );
   const lastSubmittedAlreadyPersisted = !!activeSwarmId && !!lastSubmittedPrompt && chatMessages.some((message: any) => {
     const role = getSwarmMessageRole(message);
-    return (role === 'user' || role === 'human') && getSwarmMessageText(message) === lastSubmittedPrompt;
+    return (role === 'user' || role === 'human') && getVisibleSwarmMessageText(getSwarmMessageText(message)) === lastSubmittedPrompt;
   });
 
   const contextEstimate = useMemo(() => {
@@ -1416,7 +1423,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               {chatMessages.map((message: any, idx: number) => {
                 const role = getSwarmMessageRole(message);
                 const isUser = role === 'user' || role === 'human';
-                const body = getSwarmMessageText(message);
+                const body = getVisibleSwarmMessageText(getSwarmMessageText(message));
                 const metadata = getSwarmMessageMetadata(message);
                 const pendingRefinementAction = !isUser ? getPendingRefinementAction(message) : null;
                 const projectIntake = getSwarmProjectIntake(message);
@@ -1424,7 +1431,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 const nextMessage = chatMessages[idx + 1];
                 const nextRole = getSwarmMessageRole(nextMessage);
                 const intakeAnswer = !isUser && projectIntake.options.length > 0 && (nextRole === 'user' || nextRole === 'human')
-                  ? getSwarmMessageText(nextMessage)
+                  ? getVisibleSwarmMessageText(getSwarmMessageText(nextMessage))
                   : '';
                 const metadataText = [
                   metadata.route,
