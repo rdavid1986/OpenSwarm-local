@@ -1762,6 +1762,32 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', lineHeight: 1.35, mt: 0.35 }}>
                           Siguiente paso: abrir Preview, revisar Compare/Diff y elegir Accept o Discard.
                         </Typography>
+                        {(stableOutputBridgeOutputId || canCreateOutputBridge) && (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenOutputPreview();
+                            }}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            sx={{
+                              mt: 0.65,
+                              minHeight: 26,
+                              px: 0.9,
+                              py: 0.2,
+                              borderRadius: 0.75,
+                              color: '#1d4ed8',
+                              borderColor: '#1d4ed855',
+                              bgcolor: '#1d4ed808',
+                              fontSize: '0.68rem',
+                              textTransform: 'none',
+                              '&:hover': { bgcolor: '#1d4ed814', borderColor: '#1d4ed8' },
+                            }}
+                          >
+                            Abrir Preview
+                          </Button>
+                        )}
                       </Box>
                     )}
                     {!isUser && intakeAnswer && (
