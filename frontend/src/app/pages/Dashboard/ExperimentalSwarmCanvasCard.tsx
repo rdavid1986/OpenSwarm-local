@@ -1819,6 +1819,11 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                             ? 'El cambio está preparado, pero no se ejecutó porque el guard o la metadata requerida lo bloqueó.'
                             : 'No se pudo aplicar el cambio sobre la candidate. El Output activo no fue modificado.';
                       const traceReason = refinementExecutionTrace.providerReason || refinementExecutionTrace.reason || refinementExecutionTrace.detail;
+                      const traceReasonText = String(traceReason || '').toLowerCase();
+                      const isExecutedWarning = isExecuted && (
+                        traceReasonText.includes('evidence_insufficient') ||
+                        traceReasonText.includes('evidence insufficient')
+                      );
                       return (
                         <Box
                           sx={{
@@ -1839,7 +1844,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                           </Typography>
                           {traceReason && (
                             <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', lineHeight: 1.35, mt: 0.35 }}>
-                              Motivo real: {traceReason}
+                              {isExecutedWarning ? 'Advertencia' : 'Motivo real'}: {traceReason}
                             </Typography>
                           )}
                           {refinementExecutionTrace.requiredAction && (
