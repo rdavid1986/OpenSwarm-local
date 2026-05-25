@@ -2075,8 +2075,19 @@ def _pending_refinement_chat_content(
                     lines.append("Archivos candidate modificados: " + ", ".join(str(item) for item in changed))
                 lines.append("Siguiente decision humana: revisar Diff y elegir Accept o Discard.")
             else:
+                execution_status = execution_result.get("status") if isinstance(execution_result, dict) else None
+                execution_reason = execution_result.get("reason") if isinstance(execution_result, dict) else None
                 lines.append("")
-                lines.append("Estado real: el refinement esta preparado, pero la ejecucion sigue bloqueada por guard.")
+                if execution_status:
+                    lines.append(f"Ejecucion candidate: {execution_status}.")
+                if execution_reason:
+                    lines.append(f"Motivo real: {execution_reason}.")
+                if isinstance(execution_result, dict) and execution_result.get("detail"):
+                    lines.append(f"Detalle: {execution_result.get('detail')}.")
+                if guard_status == "blocked":
+                    lines.append("Estado real: el refinement esta preparado, pero la ejecucion sigue bloqueada por guard.")
+                else:
+                    lines.append("Estado real: el guard permite ejecutar, pero el pipeline de candidate no completo la modificacion.")
         else:
             lines.append("Siguiente accion interna: run_refinement_pipeline.")
 
