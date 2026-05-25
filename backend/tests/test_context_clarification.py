@@ -63,8 +63,8 @@ def test_context_clarification_returns_options_with_custom_choice():
     result = resolve_context_clarification(user_message="hacelo", swarm_mode="app_builder")
 
     assert result["needs_clarification"] is True
-    assert result["clarification_options"][-1] == {"label": "Otra opción", "value": "__custom__"}
-    assert {"label": "Landing simple", "value": "landing simple"} in result["clarification_options"]
+    assert result["clarification_options"][-1] == {"label": "Otra opción", "value": "__custom__", "kind": "custom"}
+    assert {"label": "Landing simple", "value": "landing simple", "kind": "recommended"} in result["clarification_options"]
 
 
 def test_context_clarification_success_returns_empty_options():
@@ -75,3 +75,9 @@ def test_context_clarification_success_returns_empty_options():
 
     assert result["needs_clarification"] is False
     assert result["clarification_options"] == []
+
+
+def test_context_clarification_marks_possible_options():
+    result = resolve_context_clarification(user_message="hacelo", swarm_mode="debug")
+
+    assert {"label": "Revisar archivo", "value": "revisar archivo", "kind": "possible"} in result["clarification_options"]

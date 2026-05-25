@@ -54,33 +54,33 @@ def build_clarification_options(*, mode: str, reason: str) -> list[dict[str, str
     normalized_mode = _lower(mode or "ask")
     base_options = {
         "plan": [
-            {"label": "Plan técnico", "value": "plan técnico"},
-            {"label": "Roadmap por fases", "value": "roadmap por fases"},
-            {"label": "Arquitectura", "value": "arquitectura"},
+            {"label": "Plan técnico", "value": "plan técnico", "kind": "recommended"},
+            {"label": "Roadmap por fases", "value": "roadmap por fases", "kind": "possible"},
+            {"label": "Arquitectura", "value": "arquitectura", "kind": "possible"},
         ],
         "app_builder": [
-            {"label": "Landing simple", "value": "landing simple"},
-            {"label": "Web/app completa", "value": "web app completa"},
-            {"label": "Dashboard", "value": "dashboard"},
+            {"label": "Landing simple", "value": "landing simple", "kind": "recommended"},
+            {"label": "Web/app completa", "value": "web app completa", "kind": "possible"},
+            {"label": "Dashboard", "value": "dashboard", "kind": "possible"},
         ],
         "debug": [
-            {"label": "Pegar error", "value": "pegar error"},
-            {"label": "Revisar archivo", "value": "revisar archivo"},
-            {"label": "Revisar Output", "value": "revisar output"},
+            {"label": "Pegar error", "value": "pegar error", "kind": "recommended"},
+            {"label": "Revisar archivo", "value": "revisar archivo", "kind": "possible"},
+            {"label": "Revisar Output", "value": "revisar output", "kind": "possible"},
         ],
         "skill_builder": [
-            {"label": "Nueva skill", "value": "nueva skill"},
-            {"label": "Mejorar skill existente", "value": "mejorar skill existente"},
-            {"label": "Debug de skill", "value": "debug de skill"},
+            {"label": "Nueva skill", "value": "nueva skill", "kind": "recommended"},
+            {"label": "Mejorar skill existente", "value": "mejorar skill existente", "kind": "possible"},
+            {"label": "Debug de skill", "value": "debug de skill", "kind": "possible"},
         ],
     }.get(normalized_mode, [
-        {"label": "Explicar", "value": "explicar"},
-        {"label": "Planear", "value": "planear"},
-        {"label": "Crear", "value": "crear"},
+        {"label": "Explicar", "value": "explicar", "kind": "recommended"},
+        {"label": "Planear", "value": "planear", "kind": "possible"},
+        {"label": "Crear", "value": "crear", "kind": "possible"},
     ])
 
     options = list(base_options)
-    options.append({"label": "Otra opción", "value": "__custom__"})
+    options.append({"label": "Otra opción", "value": "__custom__", "kind": "custom"})
     return options
 
 
