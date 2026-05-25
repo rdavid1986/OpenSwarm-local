@@ -241,7 +241,7 @@ def resolve_context_clarification(
         result["creation_type"] = creation_type
         return result
 
-    vague_terms = {"hacer algo", "arreglalo", "mejoralo", "continuar", "seguir", "hazlo", "hacelo"}
+    vague_terms = {"hacer algo", "arreglalo", "mejoralo", "continuar", "seguir", "hazlo", "hacelo", "ok", "dale", "confirmo", "sí", "si"}
     project_terms = {"app", "web", "landing", "dashboard", "programa", "sistema", "skill", "debug", "error"}
     debug_terms = {"debug", "error", "falla", "bug", "no funciona", "rompe", "crashea", "traceback"}
 

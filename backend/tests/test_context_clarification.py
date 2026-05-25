@@ -208,3 +208,11 @@ async def test_model_context_clarification_does_not_overask_clear_specific_reque
     assert result["reason"] == "context_sufficient"
     assert result["source"] == "fallback"
     assert result["model_reason"] == "Model tried to ask clarification even though deterministic context is sufficient."
+
+
+def test_context_clarification_treats_ok_as_vague_without_pending_context():
+    result = resolve_context_clarification(user_message="ok", swarm_mode="app_builder")
+
+    assert result["ok"] is False
+    assert result["needs_clarification"] is True
+    assert result["reason"] == "project_mode_request_too_vague"
