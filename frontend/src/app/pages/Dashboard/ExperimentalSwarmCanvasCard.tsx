@@ -1458,6 +1458,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 const pendingRefinementAction = !isUser ? getPendingRefinementAction(message) : null;
                 const projectIntake = getSwarmProjectIntake(message);
                 const isLatestChatMessage = idx === chatMessages.length - 1;
+                const currentProjectIntakeAction = !isUser && isLatestChatMessage && (activeSwarm as any)?.project_intake_action?.type === 'start_implementation'
+                  ? (activeSwarm as any).project_intake_action
+                  : projectIntake.action;
                 const nextMessage = chatMessages[idx + 1];
                 const nextRole = getSwarmMessageRole(nextMessage);
                 const intakeAnswer = !isUser && projectIntake.options.length > 0 && (nextRole === 'user' || nextRole === 'human')
@@ -1641,15 +1644,15 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         </Typography>
                       </Box>
                     )}
-                    {!isUser && projectIntake.action?.type === 'start_implementation' && (
+                    {!isUser && currentProjectIntakeAction?.type === 'start_implementation' && (
                       <Box sx={{ mt: 0.55, display: 'flex', flexDirection: 'column', gap: 0.35, alignItems: 'flex-start' }}>
                         <Button
                           size="small"
                           variant="contained"
-                          disabled={swarmState.actionLoading || isImplementationActionRunning || !activeSwarmId || projectIntake.action.enabled === false}
+                          disabled={swarmState.actionLoading || isImplementationActionRunning || !activeSwarmId || currentProjectIntakeAction.enabled === false}
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleStartImplementation(projectIntake.action);
+                            handleStartImplementation(currentProjectIntakeAction);
                           }}
                           sx={{
                             minHeight: 28,
@@ -1682,7 +1685,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                             },
                           }}
                         >
-                          {isImplementationActionRunning ? 'Ejecutando implementación…' : renderText(projectIntake.action.label, 'Start Swarm Implementation')}
+                          {isImplementationActionRunning ? 'Ejecutando implementación…' : renderText(currentProjectIntakeAction.label, 'Start Swarm Implementation')}
                         </Button>
                         {(isImplementationActionRunning || implementationStatus || claimGuardStatus || swarmState.error) && (
                           <Chip
@@ -1704,9 +1707,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                             }}
                           />
                         )}
-                        {!projectIntake.action.enabled && (
+                        {!currentProjectIntakeAction.enabled && (
                           <Typography sx={{ color: c.text.tertiary, fontSize: '0.68rem' }}>
-                            {renderText(projectIntake.action.reason, 'La implementacion se habilita cuando el runner experimental esta activo.')}
+                            {renderText(currentProjectIntakeAction.reason, 'La implementacion se habilita cuando el runner experimental esta activo.')}
                           </Typography>
                         )}
                       </Box>

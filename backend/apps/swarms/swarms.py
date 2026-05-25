@@ -8,6 +8,7 @@ without launching AgentManager sessions yet.
 from __future__ import annotations
 
 import json
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
@@ -158,7 +159,66 @@ class ExperimentalOutputRefinementPrepareRequest(BaseModel):
 
 
 def _dump(swarm):
-    return swarm.model_dump(mode="json")
+    data = swarm.model_dump(mode="json")
+    data["experimental_capabilities"] = _experimental_capabilities_payload()
+    if _get_project_intake_state(swarm).get("status") == "ready_to_implement":
+        data["project_intake_action"] = _project_intake_start_implementation_action()
+    return data
+
+
+IMPLEMENTATION_RUNNER_FLAGS = (
+    "OPENSWARM_EXPERIMENTAL_MINI_RUNTIME",
+    "OPENSWARM_EXPERIMENTAL_DAG_TASK_RUNTIME",
+    "OPENSWARM_EXPERIMENTAL_DAG_CHAIN_RUNTIME",
+    "OPENSWARM_EXPERIMENTAL_DAG_CONSOLIDATE_RUNTIME",
+    "OPENSWARM_EXPERIMENTAL_DAG_MINI_RUNNER",
+    "OPENSWARM_EXPERIMENTAL_DAG_DEPENDENCY_RUNNER",
+)
+
+
+def _implementation_runner_flag_state() -> dict[str, bool]:
+    return {flag: os.environ.get(flag) == "1" for flag in IMPLEMENTATION_RUNNER_FLAGS}
+
+
+def _implementation_runner_disabled_reason(missing_flags: list[str]) -> str:
+    if not missing_flags:
+        return "Implementation runner is not enabled in this backend process."
+    return (
+        "Implementation runner is not enabled. Start backend with "
+        + " ".join(f"{flag}=1" for flag in IMPLEMENTATION_RUNNER_FLAGS)
+        + f". Missing/disabled: {', '.join(missing_flags)}."
+    )
+
+
+def _project_intake_start_implementation_action() -> dict[str, Any]:
+    enabled = experimental_dag_dependency_runner_enabled()
+    flags = _implementation_runner_flag_state()
+    missing_flags = [flag for flag, is_enabled in flags.items() if not is_enabled]
+    return {
+        "type": "start_implementation",
+        "label": "Start Swarm Implementation",
+        "enabled": enabled,
+        "reason": None if enabled else _implementation_runner_disabled_reason(missing_flags),
+        "capabilities": {
+            "experimental_dag_dependency_runner_enabled": enabled,
+            "flags": flags,
+            "missing_flags": missing_flags,
+        },
+    }
+
+
+def _experimental_capabilities_payload() -> dict[str, Any]:
+    action = _project_intake_start_implementation_action()
+    return {
+        "experimental_mini_runtime_enabled": experimental_mini_runtime_enabled(),
+        "experimental_dag_task_runtime_enabled": experimental_dag_task_runtime_enabled(),
+        "experimental_dag_chain_runtime_enabled": experimental_dag_chain_runtime_enabled(),
+        "experimental_dag_consolidate_runtime_enabled": experimental_dag_consolidate_runtime_enabled(),
+        "experimental_dag_mini_runner_enabled": experimental_dag_mini_runner_enabled(),
+        "experimental_dag_dependency_runner_enabled": action["enabled"],
+        "implementation_runner_flags": action["capabilities"]["flags"],
+        "implementation_runner_missing_flags": action["capabilities"]["missing_flags"],
+    }
 
 
 def _load_or_404(swarm_id: str):
@@ -1436,12 +1496,7 @@ def _advance_project_intake(swarm, user_message: str) -> tuple[str, dict[str, An
         "route": "project_plan_ready",
         "project_intake_state": state,
         "orchestration_canvas_state": getattr(swarm, "orchestration_canvas_state", {}),
-        "project_intake_action": {
-            "type": "start_implementation",
-            "label": "Start Swarm Implementation",
-            "enabled": experimental_dag_dependency_runner_enabled(),
-            "reason": None if experimental_dag_dependency_runner_enabled() else "Implementation runner is not enabled. Start backend with OPENSWARM_EXPERIMENTAL_DAG_MINI_RUNNER=1 and OPENSWARM_EXPERIMENTAL_DAG_DEPENDENCY_RUNNER=1.",
-        },
+        "project_intake_action": _project_intake_start_implementation_action(),
     }
 
 
