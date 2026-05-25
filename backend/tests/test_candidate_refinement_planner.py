@@ -173,3 +173,56 @@ async def test_plan_candidate_refinement_file_updates_uses_fast_path_without_ada
     assert result["ok"] is True
     assert result["planner"] == "fast_path"
     assert result["file_updates"]["styles.css"] == ".hero h1 {\n  color: green;\n}\n"
+
+
+def test_fast_path_updates_title_text_in_content_json_and_index_html():
+    result = plan_candidate_refinement_fast_path(
+        requested_change='cambia el título principal a "Agencia Nova Digital"',
+        files_after={
+            "content.json": '{\n  "title": "Agencia Nova"\n}\n',
+            "index.html": "<h1>Agencia Nova</h1>\n",
+            "styles.css": ".hero h1 { color: black; }\n",
+        },
+    )
+
+    assert result is not None
+    assert result["ok"] is True
+    assert result["planner"] == "fast_path"
+    assert '"title": "Agencia Nova Digital"' in result["file_updates"]["content.json"]
+    assert result["file_updates"]["index.html"] == "<h1>Agencia Nova Digital</h1>\n"
+
+
+def test_fast_path_updates_button_text_in_content_json_and_index_html():
+    result = plan_candidate_refinement_fast_path(
+        requested_change='cambia el texto del botón a "Solicitar propuesta"',
+        files_after={
+            "content.json": '{\n  "buttonText": "Contactar"\n}\n',
+            "index.html": "<button>Contactar</button>\n",
+            "styles.css": ".hero h1 { color: black; }\n",
+        },
+    )
+
+    assert result is not None
+    assert result["ok"] is True
+    assert result["planner"] == "fast_path"
+    assert '"buttonText": "Solicitar propuesta"' in result["file_updates"]["content.json"]
+    assert result["file_updates"]["index.html"] == "<button>Solicitar propuesta</button>\n"
+
+
+@pytest.mark.asyncio
+async def test_plan_candidate_refinement_file_updates_uses_text_fast_path_without_adapter():
+    def fail_adapter():
+        raise AssertionError("model adapter should not be called for text fast path")
+
+    result = await plan_candidate_refinement_file_updates(
+        requested_change='cambia el título principal a "Agencia Nova Digital"',
+        files_after={
+            "content.json": '{\n  "title": "Agencia Nova"\n}\n',
+            "index.html": "<h1>Agencia Nova</h1>\n",
+        },
+        adapter_factory=fail_adapter,
+    )
+
+    assert result["ok"] is True
+    assert result["planner"] == "fast_path"
+    assert "Agencia Nova Digital" in result["file_updates"]["content.json"]

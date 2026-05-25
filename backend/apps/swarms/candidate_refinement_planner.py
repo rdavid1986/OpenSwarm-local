@@ -128,6 +128,116 @@ def _detect_title_color_change(requested_change: str) -> str | None:
     return None
 
 
+def _extract_quoted_target(requested_change: str) -> str | None:
+    match = re.search(r"[“\\\"']([^”\\\"']{1,160})[”\\\"']", requested_change or "")
+    if not match:
+        return None
+    value = _as_text(match.group(1))
+    return value or None
+
+
+def _looks_like_title_text_change(requested_change: str) -> bool:
+    text = _as_text(requested_change).lower()
+    if not text:
+        return False
+    title_terms = ("titulo", "título", "title", "hero")
+    text_change_terms = ("cambia", "cambiar", "pon", "poner", "reemplaza", "actualiza", "modifica")
+    color_terms = ("color", "verde", "green", "azul", "blue", "rojo", "red", "amarillo", "yellow")
+    return (
+        any(term in text for term in title_terms)
+        and any(term in text for term in text_change_terms)
+        and not any(term in text for term in color_terms)
+    )
+
+
+def _looks_like_button_text_change(requested_change: str) -> bool:
+    text = _as_text(requested_change).lower()
+    if not text:
+        return False
+    button_terms = ("boton", "botón", "button", "cta")
+    text_change_terms = ("texto", "cambia", "cambiar", "pon", "poner", "reemplaza", "actualiza", "modifica")
+    return any(term in text for term in button_terms) and any(term in text for term in text_change_terms)
+
+
+def _replace_json_string_value(json_text: str, candidate_keys: tuple[str, ...], new_value: str) -> tuple[str, bool]:
+    try:
+        parsed = json.loads(json_text)
+    except Exception:
+        return json_text, False
+    if not isinstance(parsed, dict):
+        return json_text, False
+
+    for key in candidate_keys:
+        if isinstance(parsed.get(key), str):
+            old_value = parsed[key]
+            if old_value == new_value:
+                return json_text, False
+            parsed[key] = new_value
+            updated = json.dumps(parsed, ensure_ascii=False, indent=2)
+            if json_text.endswith("\n"):
+                updated += "\n"
+            return updated, True
+    return json_text, False
+
+
+def _replace_first_existing_text(html: str, old_values: list[str], new_value: str) -> tuple[str, bool]:
+    for old_value in old_values:
+        if old_value and old_value in html and old_value != new_value:
+            return html.replace(old_value, new_value, 1), True
+    return html, False
+
+
+def _plan_content_json_text_update(
+    *,
+    requested_change: str,
+    files_after: dict[str, str],
+) -> dict[str, Any] | None:
+    target_text = _extract_quoted_target(requested_change)
+    if not target_text:
+        return None
+
+    is_title_change = _looks_like_title_text_change(requested_change)
+    is_button_change = _looks_like_button_text_change(requested_change)
+    if not is_title_change and not is_button_change:
+        return None
+
+    content_json = files_after.get("content.json")
+    if not isinstance(content_json, str):
+        return None
+
+    if is_title_change:
+        keys = ("title", "headline", "heroTitle", "hero_title")
+        reason = "Fast path updated title text."
+    else:
+        keys = ("button", "buttonText", "button_text", "cta", "ctaText", "cta_text")
+        reason = "Fast path updated button text."
+
+    updated_content, changed_content = _replace_json_string_value(content_json, keys, target_text)
+    if not changed_content:
+        return None
+
+    updates: dict[str, str] = {"content.json": updated_content}
+
+    index_html = files_after.get("index.html")
+    if isinstance(index_html, str):
+        try:
+            before_data = json.loads(content_json)
+        except Exception:
+            before_data = {}
+        old_values = [str(before_data.get(key) or "") for key in keys if before_data.get(key)]
+        updated_html, changed_html = _replace_first_existing_text(index_html, old_values, target_text)
+        if changed_html:
+            updates["index.html"] = updated_html
+
+    return {
+        "ok": True,
+        "status": "planned",
+        "reason": reason,
+        "file_updates": updates,
+        "planner": "fast_path",
+    }
+
+
 def _replace_or_append_title_color(styles: str, css_color: str) -> str:
     selectors = [
         ".hero h1",
@@ -162,6 +272,13 @@ def plan_candidate_refinement_fast_path(
     Returns None when the request is not recognized, so callers can fall back
     to the model planner.
     """
+
+    content_text_plan = _plan_content_json_text_update(
+        requested_change=requested_change,
+        files_after=files_after,
+    )
+    if content_text_plan is not None:
+        return content_text_plan
 
     css_color = _detect_title_color_change(requested_change)
     if css_color:
