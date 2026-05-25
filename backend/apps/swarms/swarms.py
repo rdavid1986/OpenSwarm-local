@@ -210,6 +210,7 @@ def _project_intake_start_implementation_action() -> dict[str, Any]:
 def _experimental_capabilities_payload() -> dict[str, Any]:
     action = _project_intake_start_implementation_action()
     return {
+        "backend_pid": os.getpid(),
         "experimental_mini_runtime_enabled": experimental_mini_runtime_enabled(),
         "experimental_dag_task_runtime_enabled": experimental_dag_task_runtime_enabled(),
         "experimental_dag_chain_runtime_enabled": experimental_dag_chain_runtime_enabled(),
@@ -221,6 +222,84 @@ def _experimental_capabilities_payload() -> dict[str, Any]:
     }
 
 
+def _implementation_state_payload(
+    *,
+    state: str,
+    runner_status: str | None = None,
+    dag_template: str | None = None,
+    reason: str | None = None,
+    errors: list[dict[str, Any]] | None = None,
+    output_bridge: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "state": state,
+        "runner_status": runner_status,
+        "dag_template": dag_template,
+        "reason": reason,
+        "errors": errors or [],
+        "output_bridge": output_bridge or {},
+        "updated_at": _project_intake_now(),
+    }
+
+
+def _implementation_bridge_payload(
+    *,
+    output_bridge_metadata: dict[str, Any] | None = None,
+    output_bridge_errors: list[dict[str, Any]] | None = None,
+    skipped_reason: str | None = None,
+) -> dict[str, Any]:
+    output_bridge_errors = output_bridge_errors or []
+    output_id = output_bridge_metadata.get("output_id") if output_bridge_metadata else None
+    if output_id:
+        status = "accepted"
+    elif output_bridge_errors:
+        status = "rejected"
+    elif skipped_reason:
+        status = "skipped"
+    else:
+        status = "none"
+    return {
+        "status": status,
+        "created": bool(output_id),
+        "output_id": output_id,
+        "validation_errors": output_bridge_errors,
+        "metadata": output_bridge_metadata,
+        "reason": skipped_reason,
+    }
+
+
+def _implementation_completion_state(
+    *,
+    result_ok: bool,
+    runner_status: str,
+    final_result: dict[str, Any],
+    output_bridge: dict[str, Any],
+    errors: list[dict[str, Any]],
+    dag_template: str,
+) -> tuple[str, str | None]:
+    if not result_ok or runner_status == "failed":
+        return "failed", "Implementation runner failed before producing a visual Output."
+    if output_bridge.get("output_id"):
+        return "completed_with_output", None
+    if output_bridge.get("status") == "rejected":
+        return "bridge_failed", "Output Bridge validation failed."
+    if dag_template != "static_app":
+        return "completed_without_output", "Selected implementation_brief; no visual static Output is produced for this plan."
+    claim_guard = final_result.get("claim_guard") if isinstance(final_result.get("claim_guard"), dict) else {}
+    missing = []
+    if final_result.get("status") != "completed":
+        missing.append(f"final_result.status={final_result.get('status')!r}")
+    if final_result.get("artifact_kind") != "static_app":
+        missing.append(f"artifact_kind={final_result.get('artifact_kind')!r}")
+    if final_result.get("implementation_performed") is not True:
+        missing.append("implementation_performed is not true")
+    if str(claim_guard.get("status") or "") != "verified":
+        missing.append(f"claim_guard.status={claim_guard.get('status')!r}")
+    if missing:
+        return "completed_without_output", "Static app did not meet Output Bridge prerequisites: " + "; ".join(missing)
+    return "completed_without_output", "Static app completed without an Output Bridge."
+
+
 def _load_or_404(swarm_id: str):
     try:
         return swarm_orchestrator.store.load(swarm_id)
@@ -228,6 +307,11 @@ def _load_or_404(swarm_id: str):
         raise HTTPException(status_code=404, detail="Swarm not found")
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid swarm_id")
+
+
+@swarms.router.get("/experimental/capabilities")
+async def experimental_capabilities():
+    return _experimental_capabilities_payload()
 
 
 def _openswarm_short_identity() -> str:
@@ -3019,6 +3103,28 @@ async def experimental_output_bridge_create(swarm_id: str, body: ExperimentalOut
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    output_bridge_payload = _implementation_bridge_payload(
+        output_bridge_metadata=metadata,
+        output_bridge_errors=validation_errors,
+    )
+    swarm.output_bridge = output_bridge_payload
+    if validation_errors:
+        swarm.implementation_state = _implementation_state_payload(
+            state="bridge_failed",
+            runner_status=(swarm.implementation or {}).get("status") if isinstance(swarm.implementation, dict) else None,
+            reason="Output Bridge validation failed.",
+            errors=validation_errors,
+            output_bridge=output_bridge_payload,
+        )
+    elif metadata.get("output_id"):
+        swarm.implementation_state = _implementation_state_payload(
+            state="completed_with_output",
+            runner_status=(swarm.implementation or {}).get("status") if isinstance(swarm.implementation, dict) else "completed",
+            reason=None,
+            output_bridge=output_bridge_payload,
+        )
+    swarm = swarm_orchestrator.store.save(swarm)
+
     return {
         "ok": not validation_errors,
         "status": "accepted" if not validation_errors else "rejected",
@@ -3087,9 +3193,28 @@ async def experimental_implementation_bridge_prepare(swarm_id: str, body: Experi
 
 @swarms.router.post("/{swarm_id}/experimental/start-implementation")
 async def experimental_start_implementation(swarm_id: str, body: ExperimentalDAGDependencyRunRequest):
-    if not experimental_dag_dependency_runner_enabled():
-        raise HTTPException(status_code=404, detail="Experimental DAG dependency runner is disabled")
     swarm = _load_or_404(swarm_id)
+    if not experimental_dag_dependency_runner_enabled():
+        flags = _implementation_runner_flag_state()
+        missing_flags = [flag for flag, is_enabled in flags.items() if not is_enabled]
+        reason = _implementation_runner_disabled_reason(missing_flags)
+        swarm.implementation_state = _implementation_state_payload(
+            state="missing_flags",
+            runner_status="disabled",
+            reason=reason,
+            errors=[{"error": "experimental_dag_dependency_runner_disabled", "missing_flags": missing_flags}],
+        )
+        swarm.implementation = {
+            "ok": False,
+            "status": "disabled",
+            "enabled": False,
+            "swarm_id": swarm_id,
+            "errors": swarm.implementation_state["errors"],
+        }
+        swarm.output_bridge = _implementation_bridge_payload(skipped_reason=reason)
+        swarm_orchestrator.store.save(swarm)
+        raise HTTPException(status_code=503, detail=reason)
+
     intake_state = _get_project_intake_state(swarm)
     if intake_state.get("status") != "ready_to_implement":
         raise HTTPException(status_code=400, detail="Project intake is not ready to implement")
@@ -3101,6 +3226,43 @@ async def experimental_start_implementation(swarm_id: str, body: ExperimentalDAG
         normalized_plan = swarm_orchestrator._normalize_generated_plan(generated_plan)
         dag_template = swarm_orchestrator._select_dag_template(normalized_plan)
         swarm = swarm_orchestrator.store.load(swarm_id)
+        existing_task_types = {getattr(task, "task_type", None) for task in getattr(swarm, "tasks", []) or []}
+        if dag_template == "static_app" and swarm.tasks and "create_static_app" not in existing_task_types:
+            swarm.decisions.append({
+                "kind": "dag_template_rebuilt",
+                "source": "start_implementation",
+                "template": dag_template,
+                "reason": "Static preview policy selected static_app; replacing previous non-static implementation DAG before execution.",
+                "created_at": _project_intake_now(),
+            })
+            swarm.contracts = []
+            swarm.tasks = []
+            swarm.messages = [
+                message for message in (swarm.messages or [])
+                if not (
+                    isinstance(getattr(message, "payload", None), dict)
+                    and message.payload.get("message") in {"implementation_dag_created", "static_app_dag_created"}
+                )
+            ]
+            swarm.artifacts = []
+            swarm.tool_history = []
+            swarm.final_evidence = []
+            swarm.final_result = {}
+
+        swarm.implementation_state = _implementation_state_payload(
+            state="running",
+            runner_status="running",
+            dag_template=dag_template,
+            reason="Implementation DAG execution started.",
+        )
+        swarm.implementation = {
+            "ok": None,
+            "status": "running",
+            "enabled": True,
+            "swarm_id": swarm_id,
+            "errors": [],
+        }
+        swarm.output_bridge = _implementation_bridge_payload(skipped_reason="Implementation is still running.")
         swarm.decisions.append({
             "kind": "dag_template_selected",
             "source": "start_implementation",
@@ -3161,20 +3323,45 @@ async def experimental_start_implementation(swarm_id: str, body: ExperimentalDAG
                 description=bridge_description,
             )
 
-        return {
+        output_bridge_payload = _implementation_bridge_payload(
+            output_bridge_metadata=output_bridge_metadata,
+            output_bridge_errors=output_bridge_errors,
+            skipped_reason=None if can_create_output_bridge else "Output Bridge prerequisites were not met.",
+        )
+        state_name, state_reason = _implementation_completion_state(
+            result_ok=result.ok,
+            runner_status=result.status,
+            final_result=final_result,
+            output_bridge=output_bridge_payload,
+            errors=result.errors,
+            dag_template=dag_template,
+        )
+        swarm = swarm_orchestrator.store.load(swarm_id)
+        swarm.implementation = result.model_dump(mode="json")
+        swarm.output_bridge = output_bridge_payload
+        swarm.implementation_state = _implementation_state_payload(
+            state=state_name,
+            runner_status=result.status,
+            dag_template=dag_template,
+            reason=state_reason,
+            errors=result.errors,
+            output_bridge=output_bridge_payload,
+        )
+        swarm = swarm_orchestrator.store.save(swarm)
+
+        response = _dump(swarm)
+        response.update({
             "ok": result.ok,
             "status": result.status,
+            "runner_status": result.status,
+            "swarm_status": swarm.status,
             "enabled": True,
             "swarm_id": swarm_id,
-            "implementation": result.model_dump(mode="json"),
-            "output_bridge": {
-                "created": bool(output_bridge_metadata and output_bridge_metadata.get("output_id")),
-                "output_id": output_bridge_metadata.get("output_id") if output_bridge_metadata else None,
-                "validation_errors": output_bridge_errors,
-                "metadata": output_bridge_metadata,
-            },
-            **_dump(swarm),
-        }
+            "implementation": swarm.implementation,
+            "output_bridge": swarm.output_bridge,
+            "implementation_state": swarm.implementation_state,
+        })
+        return response
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:

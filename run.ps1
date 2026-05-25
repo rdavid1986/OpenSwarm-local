@@ -11,6 +11,20 @@
 $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $PSCommandPath
 
+$ExperimentalRunnerFlags = @(
+    'OPENSWARM_EXPERIMENTAL_MINI_RUNTIME',
+    'OPENSWARM_EXPERIMENTAL_DAG_TASK_RUNTIME',
+    'OPENSWARM_EXPERIMENTAL_DAG_CHAIN_RUNTIME',
+    'OPENSWARM_EXPERIMENTAL_DAG_CONSOLIDATE_RUNTIME',
+    'OPENSWARM_EXPERIMENTAL_DAG_MINI_RUNNER',
+    'OPENSWARM_EXPERIMENTAL_DAG_DEPENDENCY_RUNNER'
+)
+foreach ($flag in $ExperimentalRunnerFlags) {
+    if (-not [Environment]::GetEnvironmentVariable($flag, 'Process')) {
+        [Environment]::SetEnvironmentVariable($flag, '1', 'Process')
+    }
+}
+
 # --- Locate Python ---
 $python = $null
 foreach ($name in @('python', 'python3', 'py')) {

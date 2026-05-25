@@ -139,5 +139,8 @@ class SwarmState(BaseModel):
     evidence: list[EvidenceRecord] = Field(default_factory=list)
     final_evidence: list[dict[str, Any] | EvidenceRecord] = Field(default_factory=list)
     final_result: dict[str, Any] = Field(default_factory=dict)
+    implementation: dict[str, Any] = Field(default_factory=dict)
+    output_bridge: dict[str, Any] = Field(default_factory=dict)
+    implementation_state: dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=_now_iso)
     updated_at: str = Field(default_factory=_now_iso)

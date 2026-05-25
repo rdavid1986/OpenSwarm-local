@@ -106,6 +106,14 @@ let splashDataUrlCache = null;
 
 const isPackaged = app.isPackaged;
 const isDev = process.env.ELECTRON_DEV === '1';
+const EXPERIMENTAL_RUNNER_FLAGS = [
+  'OPENSWARM_EXPERIMENTAL_MINI_RUNTIME',
+  'OPENSWARM_EXPERIMENTAL_DAG_TASK_RUNTIME',
+  'OPENSWARM_EXPERIMENTAL_DAG_CHAIN_RUNTIME',
+  'OPENSWARM_EXPERIMENTAL_DAG_CONSOLIDATE_RUNTIME',
+  'OPENSWARM_EXPERIMENTAL_DAG_MINI_RUNNER',
+  'OPENSWARM_EXPERIMENTAL_DAG_DEPENDENCY_RUNNER',
+];
 const iconPath = process.platform === 'win32'
   ? path.join(__dirname, 'build', 'icon.ico')
   : path.join(__dirname, 'build', 'icon.png');
@@ -475,6 +483,9 @@ async function startBackend() {
     // .md / .json files without an explicit encoding= argument.
     PYTHONUTF8: '1',
   };
+  for (const flag of EXPERIMENTAL_RUNNER_FLAGS) {
+    if (!env[flag]) env[flag] = '1';
+  }
 
   // Tell the backend where to find a real Node binary for 9Router and
   // bundled MCP servers. Preferring this over ELECTRON_RUN_AS_NODE avoids

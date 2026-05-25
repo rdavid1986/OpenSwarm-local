@@ -315,6 +315,11 @@ class SwarmOrchestrator:
         frontend = normalized_plan.get("frontend", "").lower()
         backend = normalized_plan.get("backend", "").lower()
         database = normalized_plan.get("database", "").lower()
+        main_goal = normalized_plan.get("main_goal", "").lower()
+        summary = normalized_plan.get("summary", "").lower()
+        mvp_priority = normalized_plan.get("mvp_priority", "").lower()
+        out_of_scope = normalized_plan.get("out_of_scope", "").lower()
+        combined = " ".join([summary, app_type, main_goal, frontend, backend, database, mvp_priority, out_of_scope])
 
         static_signals = [
             "static",
@@ -352,11 +357,50 @@ class SwarmOrchestrator:
             "no requiere base de datos",
         ]
 
-        if (
-            any(signal in app_type or signal in frontend for signal in static_signals)
-            and any(signal in backend for signal in no_backend_signals)
-            and any(signal in database for signal in no_database_signals)
-        ):
+        visual_app_signals = [
+            "landing",
+            "web",
+            "website",
+            "sitio",
+            "pagina",
+            "página",
+            "preview",
+            "visual",
+            "showcase",
+            "portfolio",
+            "formulario",
+            "catalog",
+            "catálogo",
+            "dashboard",
+        ]
+        real_backend_signals = [
+            "fullstack",
+            "full-stack",
+            "api real",
+            "backend real",
+            "server",
+            "servidor",
+            "postgres",
+            "mysql",
+            "mongodb",
+            "redis",
+            "stripe",
+            "websocket",
+            "oauth",
+            "login real",
+            "auth real",
+            "deployment",
+            "deploy",
+            "production",
+            "producción",
+        ]
+        has_static_scope = any(signal in app_type or signal in frontend for signal in static_signals)
+        has_no_backend = any(signal in backend for signal in no_backend_signals)
+        has_no_database = any(signal in database for signal in no_database_signals)
+        has_visual_scope = any(signal in combined for signal in visual_app_signals)
+        has_real_backend_scope = any(signal in combined for signal in real_backend_signals)
+
+        if (has_static_scope and has_no_backend and has_no_database) or (has_visual_scope and not has_real_backend_scope):
             return "static_app"
 
         return "implementation_brief"

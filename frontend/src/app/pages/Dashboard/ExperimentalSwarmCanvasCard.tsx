@@ -38,7 +38,17 @@ import { DEFAULT_SWARM_MODE, getSwarmModeOption } from './SwarmModePicker';
 import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
 
 type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
-type ImplementationVisualState = 'idle' | 'running' | 'completed' | 'failed' | 'verified' | 'unverified';
+type ImplementationVisualState =
+  | 'idle'
+  | 'running'
+  | 'completed'
+  | 'completed_with_output'
+  | 'completed_without_output'
+  | 'bridge_failed'
+  | 'missing_flags'
+  | 'failed'
+  | 'verified'
+  | 'unverified';
 
 interface Props {
   swarmCardId: string;
@@ -505,7 +515,7 @@ function getClaimGuardStatus(finalResult: any): string {
 }
 
 function getImplementationStatus(swarm: any): string {
-  return normalizeStatusValue(swarm?.implementation?.status || swarm?.status);
+  return normalizeStatusValue(swarm?.implementation_state?.runner_status || swarm?.implementation?.status || swarm?.status);
 }
 
 function isTerminalImplementationState(status: string): boolean {
@@ -515,11 +525,18 @@ function isTerminalImplementationState(status: string): boolean {
 function getImplementationVisualState(params: {
   hasSwarm: boolean;
   isRunning: boolean;
+  implementationState: string;
   implementationStatus: string;
   claimGuardStatus: string;
   hasError: boolean;
 }): ImplementationVisualState {
   if (params.isRunning) return 'running';
+  if (params.implementationState === 'running') return 'running';
+  if (params.implementationState === 'completed_with_output') return 'completed_with_output';
+  if (params.implementationState === 'completed_without_output') return 'completed_without_output';
+  if (params.implementationState === 'bridge_failed') return 'bridge_failed';
+  if (params.implementationState === 'missing_flags') return 'missing_flags';
+  if (params.implementationState === 'failed') return 'failed';
   if (params.hasError || params.implementationStatus === 'failed') return 'failed';
   if (params.implementationStatus === 'completed') {
     return params.claimGuardStatus === 'verified' ? 'verified' : 'unverified';
@@ -674,11 +691,13 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     : [];
   const finalResult = activeSwarm ? activeSwarm.final_result : null;
   const implementationStatus = getImplementationStatus(activeSwarm);
+  const persistedImplementationState = normalizeStatusValue((activeSwarm as any)?.implementation_state?.state);
   const claimGuardStatus = getClaimGuardStatus(finalResult);
   const evidenceLinked = Boolean((activeSwarm as any)?.orchestration_canvas_state?.evidence_linked);
   const implementationVisualState = getImplementationVisualState({
     hasSwarm: Boolean(activeSwarmId),
     isRunning: isStartingImplementation,
+    implementationState: persistedImplementationState,
     implementationStatus,
     claimGuardStatus,
     hasError: Boolean(swarmState.error),
@@ -699,10 +718,30 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       color: c.status.success,
       message: 'Implementación completada.',
     },
+    completed_with_output: {
+      label: 'Output listo',
+      color: c.status.success,
+      message: 'Implementación completada con Output visualizable.',
+    },
+    completed_without_output: {
+      label: 'Sin preview',
+      color: c.status.warning,
+      message: renderText((activeSwarm as any)?.implementation_state?.reason, 'Implementación completada sin Output visualizable.'),
+    },
+    bridge_failed: {
+      label: 'Bridge falló',
+      color: c.status.error,
+      message: renderText((activeSwarm as any)?.implementation_state?.reason, 'Output Bridge validation failed.'),
+    },
+    missing_flags: {
+      label: 'Flags faltantes',
+      color: c.status.warning,
+      message: renderText((activeSwarm as any)?.implementation_state?.reason, 'El backend actual no tiene los runners experimentales activos.'),
+    },
     failed: {
       label: 'Falló',
       color: c.status.error,
-      message: 'La implementación falló. Revisá el error visible y la actividad reciente.',
+      message: renderText((activeSwarm as any)?.implementation_state?.reason, 'La implementación falló. Revisá el error visible y la actividad reciente.'),
     },
     verified: {
       label: 'Verificado',
@@ -717,6 +756,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
         : 'Implementación completada con evidencia no verificada o no vinculada.',
     },
   };
+
   const implementationMeta = implementationStateMeta[implementationVisualState];
   const isImplementationActionRunning = isStartingImplementation || (swarmState.actionLoading && startImplementationInFlightRef.current);
   const chatMessages = hasLoadedActiveSwarm
@@ -733,17 +773,19 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     ))
     : null;
   const outputBridgeOutputId = outputBridgeDecision?.metadata?.output_id || null;
+  const activeSwarmOutputBridgeOutputId = (activeSwarm as any)?.output_bridge?.output_id || null;
   const refinementOutputId = finalResult && typeof finalResult === 'object'
     ? ((finalResult as any).refinement_request?.output_id || null)
     : null;
-  const stableOutputBridgeOutputId = outputBridgeOutputId || lastOutputBridgeOutputId || previewOutputId || refinementOutputId || null;
+  const stableOutputBridgeOutputId = activeSwarmOutputBridgeOutputId || outputBridgeOutputId || lastOutputBridgeOutputId || previewOutputId || refinementOutputId || null;
   const shouldHighlightOpenPreview = Boolean(
     stableOutputBridgeOutputId
     && stableOutputBridgeOutputId !== seenPreviewOutputId
     && finalResult
     && typeof finalResult === 'object'
     && (
-      (finalResult as any).implementation_performed === true
+      persistedImplementationState === 'completed_with_output'
+      || (finalResult as any).implementation_performed === true
       || Boolean((finalResult as any).refinement_request?.candidate_iteration_id)
       || (finalResult as any).refinement_request?.status === 'executed'
     )
@@ -755,12 +797,12 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   }, [activeSwarmId, previewOutputId]);
 
   useEffect(() => {
-    const persistentPreviewOutputId = outputBridgeOutputId || refinementOutputId || previewOutputId || null;
+    const persistentPreviewOutputId = activeSwarmOutputBridgeOutputId || outputBridgeOutputId || refinementOutputId || previewOutputId || null;
     if (persistentPreviewOutputId) {
       setLastOutputBridgeOutputId(persistentPreviewOutputId);
       onSwarmBound?.({ swarmCardId, previewOutputId: persistentPreviewOutputId });
     }
-  }, [outputBridgeOutputId, onSwarmBound, previewOutputId, refinementOutputId, swarmCardId]);
+  }, [activeSwarmOutputBridgeOutputId, outputBridgeOutputId, onSwarmBound, previewOutputId, refinementOutputId, swarmCardId]);
 
   const canCreateOutputBridge = Boolean(
     activeSwarmId
@@ -771,6 +813,16 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     && (finalResult as any).implementation_performed === true
     && (finalResult as any).claim_guard?.status === 'verified'
   );
+  const shouldHideStartImplementationAction = Boolean(
+    stableOutputBridgeOutputId
+    || persistedImplementationState === 'completed_with_output'
+    || persistedImplementationState === 'running'
+  );
+  const implementationErrors = Array.isArray((activeSwarm as any)?.implementation_state?.errors)
+    ? (activeSwarm as any).implementation_state.errors
+    : Array.isArray((activeSwarm as any)?.implementation?.errors)
+      ? (activeSwarm as any).implementation.errors
+      : [];
   const lastSubmittedAlreadyPersisted = !!activeSwarmId && !!lastSubmittedPrompt && chatMessages.some((message: any) => {
     const role = getSwarmMessageRole(message);
     return (role === 'user' || role === 'human') && getVisibleSwarmMessageText(getSwarmMessageText(message)) === lastSubmittedPrompt;
@@ -1023,10 +1075,10 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     startImplementationPolling(activeSwarmId);
     try {
       const implementationResult = await dispatch(startExperimentalImplementation({ swarmId: activeSwarmId })).unwrap();
-      const outputId = implementationResult?.output_bridge?.output_id || null;
+      const outputId = implementationResult?.output_bridge?.output_id || implementationResult?.output_bridge?.metadata?.output_id || null;
       if (outputId) {
         setLastOutputBridgeOutputId(outputId);
-        setSeenPreviewOutputId(null);
+        setSeenPreviewOutputId(outputId);
         onSwarmBound?.({ swarmCardId, previewOutputId: outputId });
         await dispatch(fetchOutputs());
         onAddPreviewCard?.(outputId);
@@ -1652,7 +1704,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         </Typography>
                       </Box>
                     )}
-                    {!isUser && currentProjectIntakeAction?.type === 'start_implementation' && (
+                    {!isUser && currentProjectIntakeAction?.type === 'start_implementation' && !shouldHideStartImplementationAction && (
                       <Box sx={{ mt: 0.55, display: 'flex', flexDirection: 'column', gap: 0.35, alignItems: 'flex-start' }}>
                         <Button
                           size="small"
@@ -1693,7 +1745,11 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                             },
                           }}
                         >
-                          {isImplementationActionRunning ? 'Ejecutando implementación…' : renderText(currentProjectIntakeAction.label, 'Start Swarm Implementation')}
+                          {isImplementationActionRunning
+                            ? 'Ejecutando implementación…'
+                            : persistedImplementationState === 'failed' || persistedImplementationState === 'completed_without_output' || persistedImplementationState === 'bridge_failed'
+                              ? 'Retry Swarm Implementation'
+                              : renderText(currentProjectIntakeAction.label, 'Start Swarm Implementation')}
                         </Button>
                         {(isImplementationActionRunning || implementationStatus || claimGuardStatus || swarmState.error) && (
                           <Chip
@@ -1721,6 +1777,33 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                           </Typography>
                         )}
                       </Box>
+                    )}
+                    {!isUser && currentProjectIntakeAction?.type === 'start_implementation' && shouldHideStartImplementationAction && (
+                      <Box sx={{ mt: 0.55, display: 'flex', flexDirection: 'column', gap: 0.35, alignItems: 'flex-start' }}>
+                        <Chip
+                          size="small"
+                          label={implementationMeta.message}
+                          sx={{
+                            height: 'auto',
+                            maxWidth: '100%',
+                            color: implementationMeta.color,
+                            bgcolor: `${implementationMeta.color}14`,
+                            border: `1px solid ${implementationMeta.color}44`,
+                            '& .MuiChip-label': {
+                              display: 'block',
+                              whiteSpace: 'normal',
+                              py: 0.35,
+                              fontSize: '0.68rem',
+                              lineHeight: 1.35,
+                            },
+                          }}
+                        />
+                      </Box>
+                    )}
+                    {!isUser && currentProjectIntakeAction?.type === 'start_implementation' && implementationErrors.length > 0 && (
+                      <Typography sx={{ color: c.status.error, fontSize: '0.68rem', mt: 0.5, whiteSpace: 'pre-wrap' }}>
+                        {implementationErrors.slice(0, 2).map((error: any) => renderText(error?.error || error?.message || error?.detail || JSON.stringify(error), 'implementation_error')).join('\n')}
+                      </Typography>
                     )}
                     {!isUser && metadataText && (
                       <Typography sx={{ color: c.text.tertiary, fontSize: '0.68rem', mt: 0.75 }}>

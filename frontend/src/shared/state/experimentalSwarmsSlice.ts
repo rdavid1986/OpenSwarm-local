@@ -36,6 +36,29 @@ async function readJson(res: Response): Promise<any> {
   return data;
 }
 
+function mergeSwarmPreservingImplementation(previous: any | null, incoming: any | null): any | null {
+  if (!previous) return incoming;
+  if (!incoming) return previous;
+  if (previous.id && incoming.id && previous.id !== incoming.id) return incoming;
+  const keepIfEmpty = (nextValue: any, previousValue: any) => {
+    if (nextValue == null) return previousValue;
+    if (typeof nextValue === 'object' && !Array.isArray(nextValue) && Object.keys(nextValue).length === 0) {
+      return previousValue ?? nextValue;
+    }
+    return nextValue;
+  };
+  return {
+    ...previous,
+    ...incoming,
+    implementation: keepIfEmpty(incoming.implementation, previous.implementation),
+    output_bridge: keepIfEmpty(incoming.output_bridge, previous.output_bridge),
+    implementation_state: keepIfEmpty(incoming.implementation_state, previous.implementation_state),
+    final_result: incoming.final_result ?? previous.final_result,
+    final_evidence: incoming.final_evidence ?? previous.final_evidence,
+    orchestration_canvas_state: incoming.orchestration_canvas_state ?? previous.orchestration_canvas_state,
+  };
+}
+
 
 export const createExperimentalSwarm = createAsyncThunk(
   'experimentalSwarms/create',
@@ -232,7 +255,7 @@ const experimentalSwarmsSlice = createSlice({
       .addCase(fetchExperimentalSwarm.fulfilled, (state, action) => {
         if (state.selectedSwarmId !== action.meta.arg) return;
         state.loading = false;
-        state.swarm = action.payload.swarm;
+        state.swarm = mergeSwarmPreservingImplementation(state.swarm, action.payload.swarm);
         state.events = action.payload.events.events || [];
         state.artifacts = action.payload.artifacts.artifacts || [];
         state.messages = action.payload.messages.messages || [];
@@ -259,14 +282,7 @@ const experimentalSwarmsSlice = createSlice({
           return;
         }
 
-        state.swarm = {
-          ...state.swarm,
-          ...(payload.id ? payload : {}),
-          implementation: payload.implementation ?? state.swarm.implementation,
-          final_result: payload.final_result ?? state.swarm.final_result,
-          final_evidence: payload.final_evidence ?? state.swarm.final_evidence,
-          orchestration_canvas_state: payload.orchestration_canvas_state ?? state.swarm.orchestration_canvas_state,
-        };
+        state.swarm = mergeSwarmPreservingImplementation(state.swarm, payload);
         if (Array.isArray(payload.messages)) {
           state.messages = payload.messages;
         }
