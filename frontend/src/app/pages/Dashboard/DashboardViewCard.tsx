@@ -234,16 +234,20 @@ const DashboardViewCard: React.FC<Props> = ({
 
   const handleAcceptCandidate = useCallback(async () => {
     if (!candidateIteration || iterationActionLoading) return;
+    const shouldCloseAfterIterationAction = previewKind !== 'stable' || viewCardId !== output.id;
     setIterationActionLoading('accept');
     setIterationActionError(null);
     try {
       await dispatch(acceptOutputIteration(candidateIteration.iteration_id)).unwrap();
+      window.dispatchEvent(new CustomEvent('openswarm:output-iterations-updated', { detail: { outputId: output.id } }));
+      if (shouldCloseAfterIterationAction) {
+        dispatch(removeViewCard(viewCardId));
+        return;
+      }
       await refreshCandidateIterations();
       setPreviewMode('stable');
       setShowDiffPanel(false);
       previewRef.current?.reload();
-      if (previewKind !== 'stable') dispatch(removeViewCard(viewCardId));
-      window.dispatchEvent(new CustomEvent('openswarm:output-iterations-updated', { detail: { outputId: output.id } }));
     } catch (error: any) {
       setIterationActionError(error?.message || 'Accept candidate failed');
     } finally {
@@ -253,16 +257,20 @@ const DashboardViewCard: React.FC<Props> = ({
 
   const handleDiscardCandidate = useCallback(async () => {
     if (!candidateIteration || iterationActionLoading) return;
+    const shouldCloseAfterIterationAction = previewKind !== 'stable' || viewCardId !== output.id;
     setIterationActionLoading('discard');
     setIterationActionError(null);
     try {
       await dispatch(discardOutputIteration(candidateIteration.iteration_id)).unwrap();
+      window.dispatchEvent(new CustomEvent('openswarm:output-iterations-updated', { detail: { outputId: output.id } }));
+      if (shouldCloseAfterIterationAction) {
+        dispatch(removeViewCard(viewCardId));
+        return;
+      }
       await refreshCandidateIterations();
       setPreviewMode('stable');
       setShowDiffPanel(false);
       previewRef.current?.reload();
-      if (previewKind !== 'stable') dispatch(removeViewCard(viewCardId));
-      window.dispatchEvent(new CustomEvent('openswarm:output-iterations-updated', { detail: { outputId: output.id } }));
     } catch (error: any) {
       setIterationActionError(error?.message || 'Discard candidate failed');
     } finally {
