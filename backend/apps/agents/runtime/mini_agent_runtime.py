@@ -102,6 +102,7 @@ class MiniAgentRuntime:
                 messages=messages,
                 system_prompt=system_prompt,
                 agent_id=context.contract.id,
+                runtime_state=self._provider_runtime_state(context),
                 task_id=context.task.id,
                 tools=self._provider_tool_schemas(context.contract.allowed_tools),
                 metadata=self._provider_metadata(context),
@@ -216,6 +217,26 @@ class MiniAgentRuntime:
         from backend.apps.agents.orchestration.models import AgentToAgentMessage
 
         return AgentToAgentMessage(type=message_type, from_agent_id=from_agent_id, **kwargs)
+
+    @staticmethod
+    def _provider_runtime_state(context: MiniAgentRuntimeContext) -> dict[str, Any]:
+        return {
+            "runtime": "mini_agent_runtime",
+            "task_id": context.task.id,
+            "task_type": getattr(context.task, "task_type", None),
+            "task_title": context.task.title,
+            "task_status": getattr(context.task, "status", None),
+            "agent_contract_id": context.contract.id,
+            "agent_role": context.contract.role,
+            "assigned_contract_id": getattr(context.task, "assigned_contract_id", None),
+            "allowed_tools": list(context.contract.allowed_tools or []),
+            "workspace_path": context.workspace_path,
+            "swarm_id": context.swarm_id,
+            "acceptance_criteria": list(context.contract.acceptance_criteria or []),
+            "output_contract": dict(context.contract.output_contract or {}),
+            "inputs_keys": sorted(str(key) for key in (context.inputs or {}).keys()),
+            "provider_tool_format": context.provider_tool_format,
+        }
 
     @staticmethod
     def _provider_metadata(context: MiniAgentRuntimeContext) -> dict[str, Any]:
