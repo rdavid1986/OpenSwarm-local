@@ -13,6 +13,11 @@ class _FakePlannerAdapter:
         self.content = content
 
     async def run_turn(self, context):
+        assert "sos openswarm" in context.system_prompt.lower()
+        assert "modo refine" in context.system_prompt.lower()
+        assert "el modelo razona, pero no inventa estado" in context.system_prompt.lower()
+        assert "state_context" in context.messages[0]["content"]
+        assert "model_response_contract_prompt" in context.messages[0]["content"]
         yield ProviderEvent(type="message_final", payload={"message": {"role": "assistant", "content": self.content}})
 
 
@@ -27,9 +32,30 @@ def test_build_candidate_refinement_prompt_includes_allowed_files_only():
     )
 
     assert "Make hero blue." in prompt
+    assert "openswarm_system_prompt" in prompt
+    assert "modo refine" in prompt.lower()
+    assert "state_context" in prompt
+    assert "state_context_prompt" in prompt
+    assert "model_response_contract_prompt" in prompt
     assert "index.html" in prompt
     assert "styles.css" in prompt
     assert '"backend.py": "print' not in prompt
+    assert "Do not claim the active Output was changed" in prompt
+
+
+def test_build_candidate_refinement_prompt_includes_candidate_state_context():
+    prompt = build_candidate_refinement_prompt(
+        requested_change="Make hero blue.",
+        files_after={"index.html": "<html></html>"},
+        output_id="out-1",
+        candidate_iteration_id="iter-1",
+        candidate_workspace_path="/tmp/candidate",
+    )
+
+    assert '"route": "candidate_refinement"' in prompt
+    assert '"output_id": "out-1"' in prompt
+    assert '"candidate_iteration_id": "iter-1"' in prompt
+    assert '"has_candidate_iteration": true' in prompt
 
 
 def test_normalize_candidate_refinement_plan_accepts_changed_allowed_file():

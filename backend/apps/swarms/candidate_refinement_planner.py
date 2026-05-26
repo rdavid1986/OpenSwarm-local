@@ -14,6 +14,9 @@ from typing import Any, Callable
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health
 from backend.apps.agents.runtime.provider import ProviderTurnContext
+from backend.apps.swarms.model_response_contract import build_model_response_contract_prompt
+from backend.apps.swarms.state_context import build_state_context_payload, build_state_context_prompt
+from backend.apps.swarms.system_prompt import build_openswarm_system_prompt
 
 
 ALLOWED_CANDIDATE_FILES = {"index.html", "styles.css", "content.json", "schema.json"}
@@ -59,19 +62,45 @@ def build_candidate_refinement_prompt(
     *,
     requested_change: str,
     files_after: dict[str, str],
+    candidate_iteration_id: str | None = None,
+    output_id: str | None = None,
+    candidate_workspace_path: str | None = None,
 ) -> str:
+    state_context = build_state_context_payload(
+        mode="refine",
+        route="candidate_refinement",
+        user_message=requested_change,
+        pending_action_type="run_refinement_pipeline",
+        output_id=output_id,
+        candidate_iteration_id=candidate_iteration_id,
+        available_context={
+            "candidate_iteration_id": candidate_iteration_id,
+            "candidate_workspace_path": candidate_workspace_path,
+            "allowed_files": sorted(ALLOWED_CANDIDATE_FILES),
+            "files_after_keys": sorted(path for path in files_after.keys() if path in ALLOWED_CANDIDATE_FILES),
+        },
+    )
     payload = {
         "task": "Plan safe text file updates for a candidate app refinement.",
+        "openswarm_system_prompt": build_openswarm_system_prompt(mode="refine", task_kind="candidate_refinement"),
+        "state_context": state_context,
+        "state_context_prompt": build_state_context_prompt(state_context),
+        "model_response_contract_prompt": build_model_response_contract_prompt("candidate_refinement"),
         "requested_change": requested_change,
         "allowed_files": sorted(ALLOWED_CANDIDATE_FILES),
         "rules": [
             "Return only one JSON object.",
+            "Follow openswarm_system_prompt.",
+            "Use state_context as the real state snapshot.",
+            "Use model_response_contract_prompt as safety guidance only; keep expected_json_shape as the required output schema.",
             "Only include file_updates for files that need changes.",
             "Every key in file_updates must be one of allowed_files.",
             "Every value in file_updates must be the complete new text content for that file.",
             "Do not include explanations outside JSON.",
             "Do not request tool execution.",
             "Do not modify backend.py or any file outside allowed_files.",
+            "Do not claim the active Output was changed; this only proposes candidate files_after updates.",
+            "Do not invent output_id, candidate_iteration_id, workspace paths, files, diffs, or evidence.",
         ],
         "expected_json_shape": {
             "status": "planned | no_change | failed",
@@ -164,6 +193,9 @@ async def plan_candidate_refinement_file_updates(
     files_after: dict[str, str],
     model: str = "qwen2.5-coder:14b",
     adapter_factory: Callable[[], OllamaAdapter] | None = None,
+    candidate_iteration_id: str | None = None,
+    output_id: str | None = None,
+    candidate_workspace_path: str | None = None,
 ) -> dict[str, Any]:
     """Ask a model to propose candidate file updates without side effects."""
 
@@ -212,17 +244,16 @@ async def plan_candidate_refinement_file_updates(
         session_id="candidate-refinement-planner",
         agent_id="candidate-refinement-planner",
         model=model,
-        system_prompt=(
-            "You are OpenSwarm's candidate refinement file planner. "
-            "Return only one JSON object. Do not execute tools. "
-            "Plan complete replacement text for allowed candidate files only."
-        ),
+        system_prompt=build_openswarm_system_prompt(mode="refine", task_kind="candidate_refinement"),
         messages=[
             {
                 "role": "user",
                 "content": build_candidate_refinement_prompt(
                     requested_change=change,
                     files_after=allowed_existing_files,
+                    candidate_iteration_id=candidate_iteration_id,
+                    output_id=output_id,
+                    candidate_workspace_path=candidate_workspace_path,
                 ),
             }
         ],

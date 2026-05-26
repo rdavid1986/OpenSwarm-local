@@ -2195,6 +2195,9 @@ async def _execute_candidate_refinement(
         requested_change=requested_change,
         files_after=dict(iteration.files_after or {}),
         model=model,
+        candidate_iteration_id=candidate_iteration_id,
+        output_id=str(refinement_request.get("output_id") or metadata.get("output_id") or "").strip() or None,
+        candidate_workspace_path=str(getattr(iteration, "candidate_workspace_path", "") or "").strip() or None,
     )
 
     if not plan.get("ok"):
