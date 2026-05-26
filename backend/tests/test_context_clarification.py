@@ -178,6 +178,7 @@ def test_context_clarification_prompt_composes_master_system_prompt():
     assert "openswarm_system_prompt" in prompt
     assert "state_context" in prompt
     assert "state_context_prompt" in prompt
+    assert "model_response_contract_prompt" in prompt
     assert "el modelo razona, pero no inventa estado" in prompt.lower()
     assert "expected_json_shape" in prompt
 

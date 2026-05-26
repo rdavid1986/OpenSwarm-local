@@ -14,6 +14,7 @@ from uuid import uuid5, NAMESPACE_URL
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health, is_local_model
 from backend.apps.agents.runtime.provider import ProviderTurnContext
+from backend.apps.swarms.model_response_contract import build_model_response_contract_prompt
 from backend.apps.swarms.state_context import build_state_context_payload, build_state_context_prompt
 from backend.apps.swarms.system_prompt import build_openswarm_system_prompt
 
@@ -298,6 +299,7 @@ def build_model_context_clarification_prompt(
         "openswarm_system_prompt": master_prompt,
         "state_context": state_context,
         "state_context_prompt": build_state_context_prompt(state_context),
+        "model_response_contract_prompt": build_model_response_contract_prompt("context_clarification"),
         "user_message": user_message,
         "swarm_mode": swarm_mode or "ask",
         "available_context": available_context if isinstance(available_context, dict) else {},
@@ -308,6 +310,7 @@ def build_model_context_clarification_prompt(
             "Return only one JSON object.",
             "Follow openswarm_system_prompt.",
             "Use state_context as the real state snapshot.",
+            "Use model_response_contract_prompt as safety guidance only; keep expected_json_shape as the required output schema.",
             "Do not execute tools.",
             "Do not claim actions were executed.",
             "The model reasons, but must not invent state.",
