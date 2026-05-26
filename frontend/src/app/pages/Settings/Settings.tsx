@@ -1328,7 +1328,7 @@ const Settings: React.FC = () => {
 
   const modelOptions = useMemo(() => {
     if (!modelsLoaded || Object.keys(modelsByProvider).length === 0) {
-      const key = settings.connection_mode === 'openswarm-pro' ? 'OpenSwarm Pro' : 'Anthropic';
+      const key = 'Ollama Local';
       return {
         grouped: { [key]: DEFAULT_MODEL_FALLBACK },
         flat: DEFAULT_MODEL_FALLBACK.map((m) => ({ ...m, provider: key })),

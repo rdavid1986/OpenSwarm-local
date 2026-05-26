@@ -138,9 +138,10 @@ const ICON_MAP: Record<string, React.ReactNode> = {
 const FALLBACK_MODE_BASE = { label: 'Agent', icon: ICON_MAP.smart_toy };
 
 const FALLBACK_MODELS = [
-  { value: 'sonnet', label: 'Claude Sonnet 4.6', context_window: 1_000_000, reasoning: true },
-  { value: 'opus', label: 'Claude Opus 4.6', context_window: 1_000_000, reasoning: true },
-  { value: 'haiku', label: 'Claude Haiku 4.5', context_window: 200_000, reasoning: true },
+  { value: 'ollama/qwen2.5-coder:14b', label: 'Ollama Qwen 2.5 Coder 14B', context_window: 128_000, reasoning: true, billing_kind: 'free', is_free: true },
+  { value: 'ollama/qwen2.5-coder:32b', label: 'Ollama Qwen 2.5 Coder 32B', context_window: 128_000, reasoning: true, billing_kind: 'free', is_free: true },
+  { value: 'ollama/qwen3.6:latest', label: 'Ollama Qwen 3.6', context_window: 128_000, reasoning: true, billing_kind: 'free', is_free: true },
+  { value: 'ollama/codellama:34b', label: 'Ollama CodeLlama 34B', context_window: 16_000, reasoning: false, billing_kind: 'free', is_free: true },
 ];
 
 function formatTokenCount(n: number): string {
@@ -292,7 +293,7 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
   // to pick a label since no models have been fetched yet.
   const allModelOptions = useMemo(() => {
     if (!modelsLoaded || Object.keys(modelsByProvider).length === 0) {
-      const key = connectionMode === 'openswarm-pro' ? 'OpenSwarm Pro' : 'Anthropic';
+      const key = 'Ollama Local';
       return { flat: FALLBACK_MODELS.map(m => ({ ...m, provider: key })), grouped: { [key]: FALLBACK_MODELS } };
     }
     const flat: Array<any> = [];

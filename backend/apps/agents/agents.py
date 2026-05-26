@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import JSONResponse
 import asyncio
+import os
 import json
 import logging
 
@@ -659,6 +660,65 @@ async def list_models():
 
     result: dict[str, list[dict]] = {}
 
+    def _ollama_label(model_name: str) -> str:
+        clean = str(model_name or "").strip()
+        display = clean.replace(":latest", "").replace("-", " ").replace("_", " ")
+        return "Ollama " + " ".join(part.capitalize() for part in display.split())
+
+    def _ollama_context_window(model_name: str) -> int:
+        lower = str(model_name or "").lower()
+        if "codellama" in lower:
+            return 16_000
+        if "qwen" in lower:
+            return 128_000
+        if "phi" in lower:
+            return 16_000
+        return 32_000
+
+    def _ollama_reasoning(model_name: str) -> bool:
+        lower = str(model_name or "").lower()
+        return any(token in lower for token in ("qwen3", "qwen3.", "qwq", "deepseek-r1", "reason"))
+
+    def _ollama_tiers(model_name: str) -> list[int]:
+        lower = str(model_name or "").lower()
+        if "qwen3" in lower or "qwen2.5-coder:32" in lower or "34b" in lower or "36" in lower:
+            return [3, 3, 1]
+        if "14b" in lower:
+            return [2, 4, 1]
+        return [2, 3, 1]
+
+    async def _fetch_ollama_models() -> list[dict]:
+        import httpx
+        base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                response = await client.get(f"{base_url}/api/tags")
+                response.raise_for_status()
+                data = response.json()
+        except Exception as e:
+            logger.debug(f"Ollama model fetch failed: {e}")
+            return []
+        models = []
+        seen: set[str] = set()
+        for item in data.get("models", []):
+            name = str(item.get("name") or item.get("model") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            models.append({
+                "value": f"ollama/{name}",
+                "label": _ollama_label(name),
+                "context_window": _ollama_context_window(name),
+                "reasoning": _ollama_reasoning(name),
+                "input_cost_per_1m": 0.0,
+                "output_cost_per_1m": 0.0,
+                "is_free": True,
+                "billing_kind": "free",
+                "tiers": _ollama_tiers(name),
+            })
+        return models
+
+
     anthropic_models = BUILTIN_MODELS.get("Anthropic", [])
     adaptive = [m for m in anthropic_models if m.get("route") not in ("cc", "api")]
     cc_variants = [m for m in anthropic_models if m.get("route") == "cc"]
@@ -729,6 +789,10 @@ async def list_models():
             })
         if visible:
             result[provider_name] = visible
+
+    ollama_models = await _fetch_ollama_models()
+    if ollama_models:
+        result["Ollama Local"] = ollama_models
 
     # OR catalog fetched straight from openrouter.ai (independent of 9Router
     # boot state) so picker populates the moment a key lands.
