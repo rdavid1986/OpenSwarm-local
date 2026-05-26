@@ -15,6 +15,7 @@ from backend.apps.agents.orchestration.store import SwarmStore, swarm_store
 from backend.apps.agents.runtime.provider import ProviderAdapter, ProviderTurnContext
 from backend.apps.agents.runtime.provider_turn_harness import ProviderTurnHarness, ProviderTurnHarnessResult
 from backend.apps.agents.runtime.tools import ToolRuntime, tool_runtime
+from backend.apps.agents.runtime.mini_agent_prompt_context import build_mini_agent_system_prompt
 
 MiniAgentStatus = Literal["completed", "failed"]
 
@@ -85,6 +86,11 @@ class MiniAgentRuntime:
             task=context.task,
             inputs=context.inputs,
         )
+        system_prompt = build_mini_agent_system_prompt(
+            contract=context.contract,
+            task=context.task,
+            inputs=context.inputs,
+        )
         harness = ProviderTurnHarness(
             provider=context.provider,
             provider_tool_format=context.provider_tool_format,
@@ -94,6 +100,7 @@ class MiniAgentRuntime:
                 session_id=context.session_id or f"mini-{context.task.id}",
                 model=context.model,
                 messages=messages,
+                system_prompt=system_prompt,
                 agent_id=context.contract.id,
                 task_id=context.task.id,
                 tools=self._provider_tool_schemas(context.contract.allowed_tools),
