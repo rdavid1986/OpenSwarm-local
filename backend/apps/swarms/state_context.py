@@ -10,9 +10,16 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from backend.apps.swarms.project_memory import (
+    build_project_memory_manifest,
+    extract_project_memory_refs,
+    summarize_project_memory_manifest,
+)
+
 
 MISSING = "missing"
 UNKNOWN = "unknown"
+EMPTY = "empty"
 MAX_TEXT = 600
 MAX_LIST_ITEMS = 12
 MAX_DICT_ITEMS = 24
@@ -87,6 +94,62 @@ def _available_context_summary(available_context: dict[str, Any]) -> dict[str, A
     }
 
 
+def _project_memory_payload(
+    *,
+    project_memory_manifest: dict[str, Any] | None,
+    project_memory_summary: str | None,
+    project_memory_refs: dict[str, Any] | None,
+    available_context: dict[str, Any],
+) -> dict[str, Any]:
+    raw_manifest = (
+        project_memory_manifest
+        if isinstance(project_memory_manifest, dict)
+        else available_context.get("project_memory_manifest")
+        if isinstance(available_context.get("project_memory_manifest"), dict)
+        else available_context.get("project_memory")
+        if isinstance(available_context.get("project_memory"), dict)
+        else None
+    )
+    raw_summary = _first_text(project_memory_summary, available_context.get("project_memory_summary"))
+    raw_refs = (
+        project_memory_refs
+        if isinstance(project_memory_refs, dict)
+        else available_context.get("project_memory_refs")
+        if isinstance(available_context.get("project_memory_refs"), dict)
+        else None
+    )
+
+    if not raw_manifest:
+        return {
+            "status": EMPTY,
+            "summary": "Project Memory: empty",
+            "refs": normalize_state_context_value(raw_refs or {}),
+            "manifest": None,
+        }
+
+    manifest = build_project_memory_manifest(
+        project_id=raw_manifest.get("project_id"),
+        swarm_id=raw_manifest.get("swarm_id"),
+        workspace_id=raw_manifest.get("workspace_id"),
+        current_goal=raw_manifest.get("current_goal"),
+        decisions=raw_manifest.get("decisions"),
+        outputs=raw_manifest.get("outputs"),
+        accepted_iterations=raw_manifest.get("accepted_iterations"),
+        candidate_iterations=raw_manifest.get("candidate_iterations"),
+        artifacts=raw_manifest.get("artifacts"),
+        evidence=raw_manifest.get("evidence"),
+        constraints=raw_manifest.get("constraints"),
+        open_questions=raw_manifest.get("open_questions"),
+        last_updated_source=raw_manifest.get("last_updated_source"),
+    )
+    return {
+        "status": "present",
+        "summary": raw_summary or summarize_project_memory_manifest(manifest),
+        "refs": normalize_state_context_value(raw_refs or extract_project_memory_refs(manifest)),
+        "manifest": normalize_state_context_value(manifest),
+    }
+
+
 def build_state_context_payload(
     *,
     mode: str | None = None,
@@ -102,6 +165,9 @@ def build_state_context_payload(
     provider_health: dict[str, Any] | None = None,
     model_name: str | None = None,
     guard_status: str | None = None,
+    project_memory_manifest: dict[str, Any] | None = None,
+    project_memory_summary: str | None = None,
+    project_memory_refs: dict[str, Any] | None = None,
     available_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a normalized snapshot from caller-provided state only."""
@@ -117,6 +183,12 @@ def build_state_context_payload(
         candidate_iteration_id,
         context.get("candidate_iteration_id"),
         context.get("iteration_id"),
+    )
+    resolved_project_memory = _project_memory_payload(
+        project_memory_manifest=project_memory_manifest,
+        project_memory_summary=project_memory_summary,
+        project_memory_refs=project_memory_refs,
+        available_context=context,
     )
 
     payload = {
@@ -139,6 +211,10 @@ def build_state_context_payload(
         "provider_health_status": _first_text(provider.get("status"), context.get("provider_health_status")) or MISSING,
         "model_name": _first_text(model_name, provider.get("model"), context.get("model_name")) or MISSING,
         "guard_status": _first_text(guard_status, context.get("guard_status"), context.get("claim_guard_status")) or MISSING,
+        "project_memory_status": resolved_project_memory["status"],
+        "project_memory_summary": resolved_project_memory["summary"],
+        "project_memory_refs": resolved_project_memory["refs"],
+        "project_memory_manifest": resolved_project_memory["manifest"],
         "available_context_summary": _available_context_summary(context),
     }
     return normalize_state_context_value(payload)
@@ -154,6 +230,10 @@ def build_state_context_prompt(context: dict[str, Any]) -> str:
             "- Treat missing/null/empty fields as unavailable state, not permission to invent values.",
             "- Treat unknown fields as unknown until the system provides evidence.",
             "- The model may reason over this context, but guards authorize or block actions.",
+            "Project Memory:",
+            f"- status: {_as_dict(normalized).get('project_memory_status') or EMPTY}",
+            f"- summary: {_as_dict(normalized).get('project_memory_summary') or 'Project Memory: empty'}",
+            "- refs: " + json.dumps(_as_dict(normalized).get("project_memory_refs") or {}, ensure_ascii=False, sort_keys=True),
             json.dumps(normalized, ensure_ascii=False, indent=2, sort_keys=True),
         ]
     )

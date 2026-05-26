@@ -198,6 +198,30 @@ def test_context_clarification_prompt_includes_unified_state_context_values():
     assert '"provider_health_status": "available"' in prompt
 
 
+def test_context_clarification_prompt_preserves_project_memory_context():
+    fallback = resolve_context_clarification(user_message="Continuar", swarm_mode="app_builder")
+
+    prompt = build_model_context_clarification_prompt(
+        user_message="Continuar",
+        swarm_mode="app_builder",
+        fallback_decision=fallback,
+        available_context={
+            "project_memory_manifest": {
+                "project_id": "project-1",
+                "swarm_id": "swarm-1",
+                "current_goal": "Crear una landing",
+                "outputs": [{"output_id": "output-1"}],
+            }
+        },
+    )
+
+    assert "Project Memory:" in prompt
+    assert '"project_memory_status": "present"' in prompt
+    assert '"current_goal": "Crear una landing"' in prompt
+    assert '"output_ids": [' in prompt
+    assert '"output-1"' in prompt
+
+
 def test_model_context_clarification_normalizer_preserves_json_contract():
     fallback = resolve_context_clarification(user_message="Quiero crear una app", swarm_mode="app_builder")
 

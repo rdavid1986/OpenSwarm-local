@@ -25,6 +25,9 @@ def test_state_context_payload_normalizes_missing_fields_without_inventing():
     assert payload["provider_health_status"] == "missing"
     assert payload["model_name"] == "missing"
     assert payload["guard_status"] == "missing"
+    assert payload["project_memory_status"] == "empty"
+    assert payload["project_memory_summary"] == "Project Memory: empty"
+    assert payload["project_memory_manifest"] is None
     assert payload["available_context_summary"]["status"] == "missing"
 
 
@@ -69,7 +72,49 @@ def test_state_context_prompt_explains_missing_and_unknown_semantics():
     assert "missing/null/empty fields" in prompt
     assert "unknown fields" in prompt
     assert "guards authorize or block actions" in prompt
+    assert "Project Memory:" in prompt
+    assert "Project Memory: empty" in prompt
     assert '"mode": "debug"' in prompt
+
+
+def test_state_context_payload_accepts_project_memory_manifest_and_refs():
+    payload = build_state_context_payload(
+        mode="app_builder",
+        route="context_clarification",
+        user_message="Continuar",
+        project_memory_manifest={
+            "project_id": "project-1",
+            "swarm_id": "swarm-1",
+            "current_goal": "Crear app visual",
+            "outputs": [{"output_id": "output-1"}],
+            "evidence": [{"id": "evidence-1"}],
+        },
+        project_memory_refs={"output_ids": ["output-1"], "evidence_ids": ["evidence-1"]},
+    )
+
+    assert payload["project_memory_status"] == "present"
+    assert "Project Memory Manifest summary" in payload["project_memory_summary"]
+    assert payload["project_memory_refs"]["output_ids"] == ["output-1"]
+    assert payload["project_memory_refs"]["evidence_ids"] == ["evidence-1"]
+    assert payload["project_memory_manifest"]["current_goal"] == "Crear app visual"
+    assert payload["project_memory_manifest"]["outputs"] == [{"output_id": "output-1"}]
+
+
+def test_state_context_prompt_includes_project_memory_when_present():
+    payload = build_state_context_payload(
+        project_memory_manifest={
+            "project_id": "project-1",
+            "swarm_id": "swarm-1",
+            "outputs": [{"output_id": "output-1"}],
+        }
+    )
+
+    prompt = build_state_context_prompt(payload)
+
+    assert "Project Memory:" in prompt
+    assert "status: present" in prompt
+    assert "Project Memory Manifest summary" in prompt
+    assert '"output_ids": ["output-1"]' in prompt
 
 
 def test_normalize_state_context_value_is_json_safe_and_bounded():

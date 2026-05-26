@@ -60,6 +60,7 @@ from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health
 from backend.apps.agents.runtime.provider import ProviderTurnContext
 from backend.apps.swarms.pending_action_intelligence import resolve_pending_action_intent
+from backend.apps.swarms.project_memory import build_project_memory_from_swarm_state
 from backend.apps.swarms.refinement_action_guard import evaluate_refinement_execution_guard
 from backend.apps.swarms.response_intelligence import (
     build_grounded_refinement_response,
@@ -2854,6 +2855,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
                 "active_output": bool((getattr(swarm, "output_bridge", {}) or {}).get("output_id")) if isinstance(getattr(swarm, "output_bridge", None), dict) else False,
                 "logs": None,
                 "files": bool(getattr(swarm, "artifacts", None) or getattr(swarm, "evidence", None)),
+                "project_memory_manifest": build_project_memory_from_swarm_state(swarm),
             },
             model=body.model,
         )
