@@ -9,8 +9,11 @@ Planner that will reason from IntentBrief + Project Memory + Research state.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Callable
 
+from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
+from backend.apps.agents.providers.provider_health import check_local_model_provider_health, is_local_model
+from backend.apps.agents.runtime.provider import ProviderTurnContext
 from backend.apps.swarms.model_response_contract import build_model_response_contract_prompt
 from backend.apps.swarms.state_context import build_state_context_payload, build_state_context_prompt
 from backend.apps.swarms.system_prompt import build_openswarm_system_prompt
@@ -305,3 +308,73 @@ def build_blocked_master_plan(*, reason: str) -> dict[str, Any]:
         }
     )
     return shape
+
+async def resolve_master_plan(
+    *,
+    intent_brief: dict[str, Any],
+    project_memory_manifest: dict[str, Any] | None = None,
+    research_state: dict[str, Any] | None = None,
+    available_skills: list[dict[str, Any]] | None = None,
+    model: str = "qwen2.5-coder:14b",
+    adapter_factory: Callable[[], OllamaAdapter] | None = None,
+) -> dict[str, Any]:
+    """Resolve a Master Plan through a model adapter with safe fallback."""
+
+    adapter = adapter_factory() if adapter_factory else OllamaAdapter(allow_network=True, supports_json_mode=True)
+
+    if (adapter_factory is None or isinstance(adapter, OllamaAdapter)) and is_local_model(model):
+        health = check_local_model_provider_health(
+            model=model,
+            base_url=getattr(adapter, "base_url", None),
+            timeout_seconds=2.0,
+        )
+        if not health.get("ok"):
+            return {
+                "ok": False,
+                "source": "fallback",
+                "master_plan": build_blocked_master_plan(
+                    reason=_as_text(health.get("reason")) or "Local model provider is unavailable."
+                ),
+                "provider_health": health,
+            }
+
+    context = ProviderTurnContext(
+        session_id="master-plan",
+        agent_id="master-plan",
+        model=model,
+        system_prompt=build_openswarm_system_prompt(mode="plan", task_kind="master_plan"),
+        messages=[
+            {
+                "role": "user",
+                "content": build_master_plan_prompt(
+                    intent_brief=intent_brief,
+                    project_memory_manifest=project_memory_manifest,
+                    research_state=research_state,
+                    available_skills=available_skills,
+                    model_name=model,
+                ),
+            }
+        ],
+        tools=[],
+    )
+
+    assistant_content = ""
+    try:
+        async for event in adapter.run_turn(context):
+            if event.type == "message_final":
+                message = event.payload.get("message") if isinstance(event.payload, dict) else {}
+                assistant_content = _as_text((message or {}).get("content"), max_chars=20000)
+            elif event.type == "error":
+                return {
+                    "ok": False,
+                    "source": "fallback",
+                    "master_plan": build_blocked_master_plan(reason="Master Plan model adapter returned an error."),
+                }
+    except Exception:
+        return {
+            "ok": False,
+            "source": "fallback",
+            "master_plan": build_blocked_master_plan(reason="Master Plan model adapter failed."),
+        }
+
+    return normalize_master_plan(assistant_content)
