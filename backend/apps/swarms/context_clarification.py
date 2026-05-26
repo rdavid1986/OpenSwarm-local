@@ -14,6 +14,7 @@ from uuid import uuid5, NAMESPACE_URL
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health, is_local_model
 from backend.apps.agents.runtime.provider import ProviderTurnContext
+from backend.apps.swarms.state_context import build_state_context_payload, build_state_context_prompt
 from backend.apps.swarms.system_prompt import build_openswarm_system_prompt
 
 
@@ -278,9 +279,25 @@ def build_model_context_clarification_prompt(
     available_context: dict[str, Any] | None = None,
 ) -> str:
     master_prompt = build_openswarm_system_prompt(mode=swarm_mode or "ask", task_kind="context_clarification")
+    state_context = build_state_context_payload(
+        mode=swarm_mode or "ask",
+        route="context_clarification",
+        user_message=user_message,
+        creation_type=fallback_decision.get("creation_type"),
+        project_intake_status=(available_context or {}).get("project_intake_status") if isinstance(available_context, dict) else None,
+        pending_action_type=(available_context or {}).get("pending_action") if isinstance(available_context, dict) else None,
+        output_id=(available_context or {}).get("output_id") if isinstance(available_context, dict) else None,
+        candidate_iteration_id=(available_context or {}).get("candidate_iteration_id") if isinstance(available_context, dict) else None,
+        provider_health=(available_context or {}).get("provider_health") if isinstance(available_context, dict) else None,
+        model_name=(available_context or {}).get("model_name") if isinstance(available_context, dict) else None,
+        guard_status=(available_context or {}).get("guard_status") if isinstance(available_context, dict) else None,
+        available_context=available_context,
+    )
     payload = {
         "task": "Reason about whether OpenSwarm needs clarification before responding or acting.",
         "openswarm_system_prompt": master_prompt,
+        "state_context": state_context,
+        "state_context_prompt": build_state_context_prompt(state_context),
         "user_message": user_message,
         "swarm_mode": swarm_mode or "ask",
         "available_context": available_context if isinstance(available_context, dict) else {},
@@ -290,6 +307,7 @@ def build_model_context_clarification_prompt(
         "rules": [
             "Return only one JSON object.",
             "Follow openswarm_system_prompt.",
+            "Use state_context as the real state snapshot.",
             "Do not execute tools.",
             "Do not claim actions were executed.",
             "The model reasons, but must not invent state.",

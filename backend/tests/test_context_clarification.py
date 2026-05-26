@@ -176,8 +176,25 @@ def test_context_clarification_prompt_composes_master_system_prompt():
     )
 
     assert "openswarm_system_prompt" in prompt
+    assert "state_context" in prompt
+    assert "state_context_prompt" in prompt
     assert "el modelo razona, pero no inventa estado" in prompt.lower()
     assert "expected_json_shape" in prompt
+
+
+def test_context_clarification_prompt_includes_unified_state_context_values():
+    fallback = resolve_context_clarification(user_message="Quiero crear una app", swarm_mode="app_builder")
+
+    prompt = build_model_context_clarification_prompt(
+        user_message="Quiero crear una app",
+        swarm_mode="app_builder",
+        fallback_decision=fallback,
+        available_context={"project_intake_status": "collecting", "provider_health": {"status": "available"}},
+    )
+
+    assert '"route": "context_clarification"' in prompt
+    assert '"project_intake_status": "collecting"' in prompt
+    assert '"provider_health_status": "available"' in prompt
 
 
 def test_model_context_clarification_normalizer_preserves_json_contract():
