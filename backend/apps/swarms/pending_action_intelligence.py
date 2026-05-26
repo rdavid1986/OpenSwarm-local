@@ -14,7 +14,10 @@ from typing import Any, Callable
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health, is_local_model
 from backend.apps.agents.runtime.provider import ProviderTurnContext
+from backend.apps.swarms.model_response_contract import build_model_response_contract_prompt
 from backend.apps.swarms.response_intelligence import RIStateSnapshot, build_ri_state_snapshot
+from backend.apps.swarms.state_context import build_state_context_payload, build_state_context_prompt
+from backend.apps.swarms.system_prompt import build_openswarm_system_prompt
 
 
 PENDING_ACTION_CLASSIFICATIONS = {
@@ -220,7 +223,37 @@ def build_pending_action_resolver_prompt(
     ri_state: RIStateSnapshot,
     recent_messages: list[dict[str, str]],
 ) -> str:
+    mode = swarm_mode or "swarm_card"
+    system_prompt = build_openswarm_system_prompt(mode=mode, task_kind="pending_action")
+    state_context = build_state_context_payload(
+        mode=mode,
+        route="pending_action_resolution",
+        user_message=user_message,
+        pending_action_type=ri_state.pending_action,
+        output_id=ri_state.target_output_id,
+        artifact_count=ri_state.artifact_count,
+        guard_status=ri_state.claim_guard_status,
+        available_context={
+            "ri_state": {
+                "swarm_id": ri_state.swarm_id,
+                "swarm_intent": ri_state.swarm_intent,
+                "swarm_status": ri_state.swarm_status,
+                "current_route": ri_state.current_route,
+                "pending_action": ri_state.pending_action,
+                "action_stage": ri_state.action_stage,
+                "target_output_id": ri_state.target_output_id,
+                "source_swarm_id": ri_state.source_swarm_id,
+                "available_actions": ri_state.available_actions,
+                "reason": ri_state.reason,
+            },
+            "refinement_request": canonical_refinement,
+        },
+    )
     resolver_input = {
+        "openswarm_system_prompt": system_prompt,
+        "state_context": state_context,
+        "state_context_prompt": build_state_context_prompt(state_context),
+        "model_response_contract_prompt": build_model_response_contract_prompt("pending_action"),
         "user_message": user_message,
         "swarm_mode": swarm_mode,
         "pending_action": ri_state.pending_action,
@@ -228,6 +261,15 @@ def build_pending_action_resolver_prompt(
         "available_actions": ri_state.available_actions,
         "refinement_request": canonical_refinement,
         "recent_messages": recent_messages,
+        "rules": [
+            "Return only one JSON object using the expected pending-action schema.",
+            "Follow openswarm_system_prompt.",
+            "Use state_context as the real state snapshot.",
+            "Use model_response_contract_prompt as safety guidance only; do not replace this task schema.",
+            "Do not execute tools or prepare actions.",
+            "Do not invent pending actions, output_id, requested_change, candidates, or evidence.",
+            "Never set safe_to_prepare true unless the real pending action and refinement_request match the user confirmation.",
+        ],
     }
     return json.dumps(resolver_input, ensure_ascii=False, indent=2)
 
@@ -284,13 +326,7 @@ async def resolve_pending_action_intent(
         session_id=str(getattr(swarm, "id", "") or "pending-action-resolution"),
         agent_id=getattr(swarm, "coordinator_contract_id", None) or "swarm",
         model=model,
-        system_prompt=(
-            "You are OpenSwarm's pending action intent resolver. Return only one JSON object. "
-            "Do not execute tools. Decide whether the latest user message confirms, updates, cancels, "
-            "asks to explain, needs clarification, or has no pending action. Exact words are not enough; "
-            "use the provided canonical state as source of truth. Never set safe_to_prepare true unless "
-            "the user clearly confirms the existing pending refinement, output_id matches, and requested_change is unchanged."
-        ),
+        system_prompt=build_openswarm_system_prompt(mode=swarm_mode or "swarm_card", task_kind="pending_action"),
         messages=[{"role": "user", "content": prompt}],
         tools=[],
     )

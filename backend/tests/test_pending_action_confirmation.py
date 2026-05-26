@@ -8,7 +8,8 @@ from backend.apps.agents.orchestration.orchestrator import SwarmOrchestrator
 from backend.apps.agents.orchestration.store import SwarmStore
 from backend.apps.agents.runtime.provider import ProviderEvent
 from backend.apps.swarms import swarms as swarms_module
-from backend.apps.swarms.pending_action_intelligence import resolve_pending_action_intent
+from backend.apps.swarms.pending_action_intelligence import build_pending_action_resolver_prompt, resolve_pending_action_intent
+from backend.apps.swarms.response_intelligence import build_ri_state_snapshot
 from backend.apps.outputs.models import Output
 from backend.apps.outputs import outputs as outputs_module
 
@@ -18,6 +19,11 @@ class _FakeChatAdapter:
         self.content = content
 
     async def run_turn(self, context):
+        assert "sos openswarm" in context.system_prompt.lower()
+        assert "pending_action" in context.system_prompt.lower()
+        assert "el modelo razona, pero no inventa estado" in context.system_prompt.lower()
+        assert "state_context" in context.messages[0]["content"]
+        assert "model_response_contract_prompt" in context.messages[0]["content"]
         yield ProviderEvent(type="provider_request", payload={"routed": True})
         yield ProviderEvent(
             type="message_final",
@@ -94,6 +100,45 @@ def test_invalid_model_json_falls_back_to_clarification():
 
     assert result["classification"] == "needs_clarification"
     assert result["safe_to_prepare"] is False
+
+
+def test_pending_action_resolver_prompt_composes_prompt_architecture():
+    from backend.apps.agents.orchestration.models import AgentContract, SwarmState
+
+    coordinator = AgentContract(role="CoordinatorAgent", objective="Coordinate", allowed_tools=[])
+    swarm = SwarmState(
+        title="resolver test",
+        user_prompt="Build app",
+        intent="chat",
+        coordinator_contract_id=coordinator.id,
+        contracts=[coordinator],
+        final_result={
+            "refinement_request": {
+                "output_id": "out-123",
+                "source_swarm_id": "swarm-1",
+                "requested_change": "Make the hero blue.",
+                "status": "received",
+            }
+        },
+    )
+    refinement = swarm.final_result["refinement_request"]
+    ri_state = build_ri_state_snapshot(swarm, route="refinement_request", user_message="ok")
+
+    prompt = build_pending_action_resolver_prompt(
+        user_message="ok",
+        swarm_mode="app_builder",
+        canonical_refinement=refinement,
+        ri_state=ri_state,
+        recent_messages=[],
+    )
+
+    assert "openswarm_system_prompt" in prompt
+    assert "modo app_builder" in prompt.lower()
+    assert "state_context" in prompt
+    assert '"route": "pending_action_resolution"' in prompt
+    assert '"pending_action_type": "confirm_refinement"' in prompt
+    assert "model_response_contract_prompt" in prompt
+    assert "Do not invent pending actions" in prompt
 
 
 def test_pending_action_resolver_preflights_ollama_health(monkeypatch):
