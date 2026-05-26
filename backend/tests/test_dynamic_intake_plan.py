@@ -105,3 +105,19 @@ async def test_enrich_dynamic_intake_plan_uses_adapter():
     assert result["ok"] is True
     assert result["source"] == "model"
     assert "recommended_stack_reason" in result["plan_enrichment"]
+
+
+def test_build_dynamic_plan_enrichment_prompt_can_include_intent_brief():
+    prompt = build_dynamic_plan_enrichment_prompt(
+        generated_plan={"app_type": "Dashboard"},
+        intake_state={"intake_mode": "model_assisted", "intake_profile": "dashboard"},
+        intent_brief={
+            "kind": "intent_brief",
+            "primary_goal": "Crear dashboard local con auth",
+            "known_constraints": ["backend: FastAPI"],
+        },
+    )
+
+    assert '"intent_brief": {' in prompt
+    assert '"primary_goal": "Crear dashboard local con auth"' in prompt
+    assert "backend: FastAPI" in prompt

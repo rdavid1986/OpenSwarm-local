@@ -65,6 +65,7 @@ def build_dynamic_plan_enrichment_prompt(
     generated_plan: dict[str, Any],
     intake_state: dict[str, Any],
     project_memory_manifest: dict[str, Any] | None = None,
+    intent_brief: dict[str, Any] | None = None,
 ) -> str:
     system_prompt = build_openswarm_system_prompt(mode="app_builder", task_kind="dynamic_intake")
     state_context = build_state_context_payload(
@@ -79,6 +80,7 @@ def build_dynamic_plan_enrichment_prompt(
             "intake_profile": intake_state.get("intake_profile"),
             "skipped_questions": intake_state.get("skipped_questions"),
             "question_policy": intake_state.get("question_policy"),
+            "intent_brief": intent_brief if isinstance(intent_brief, dict) else None,
         },
     )
     payload = {
@@ -88,6 +90,7 @@ def build_dynamic_plan_enrichment_prompt(
         "state_context_prompt": build_state_context_prompt(state_context),
         "model_response_contract_prompt": build_model_response_contract_prompt("dynamic_intake"),
         "generated_plan": generated_plan,
+        "intent_brief": intent_brief if isinstance(intent_brief, dict) else None,
         "intake_state": {
             "intake_mode": intake_state.get("intake_mode"),
             "intake_profile": intake_state.get("intake_profile"),
@@ -170,6 +173,7 @@ async def enrich_dynamic_intake_plan(
     adapter_factory: Callable[[], OllamaAdapter] | None = None,
     project_memory_source: Any = None,
     project_memory_manifest: dict[str, Any] | None = None,
+    intent_brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     adapter = adapter_factory() if adapter_factory else OllamaAdapter(allow_network=True, supports_json_mode=True)
 
@@ -205,6 +209,7 @@ async def enrich_dynamic_intake_plan(
                     else build_project_memory_from_swarm_state(project_memory_source)
                     if project_memory_source is not None
                     else None,
+                    intent_brief=intent_brief,
                 ),
             }
         ],

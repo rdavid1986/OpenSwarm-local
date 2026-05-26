@@ -238,3 +238,20 @@ def test_normalize_dynamic_intake_policy_blocks_full_app_skipping_any_question()
     assert result["source"] == "fallback"
     assert result["profile"] == "full_app"
     assert result["skipped_questions"] == []
+
+
+def test_build_dynamic_intake_policy_prompt_can_include_intent_brief():
+    prompt = build_dynamic_intake_policy_prompt(
+        user_message="hacelo",
+        questions=QUESTIONS,
+        fallback_profile=FALLBACK_STATIC,
+        intent_brief={
+            "kind": "intent_brief",
+            "primary_goal": "Crear dashboard local con auth",
+            "recent_user_intent_messages": ["Quiero auth con roles"],
+        },
+    )
+
+    assert '"intent_brief": {' in prompt
+    assert '"primary_goal": "Crear dashboard local con auth"' in prompt
+    assert "Quiero auth con roles" in prompt

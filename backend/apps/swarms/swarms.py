@@ -1691,6 +1691,7 @@ async def _start_project_intake(swarm, user_message: str, model: str = "qwen2.5-
         fallback_profile=fallback_profile,
         model=model,
         project_memory_source=swarm,
+        intent_brief=build_intent_brief(swarm, user_message=user_message),
     )
     skipped_questions = policy.get("skipped_questions") if isinstance(policy.get("skipped_questions"), list) else fallback_profile.get("skipped_questions", [])
     question_overrides = policy.get("question_overrides") if isinstance(policy.get("question_overrides"), dict) else {}
@@ -1767,6 +1768,7 @@ async def _advance_project_intake(swarm, user_message: str, model: str = "qwen2.
         intake_state=state,
         model=model,
         project_memory_source=project_memory_source,
+        intent_brief=build_intent_brief(swarm, user_message=user_message),
     )
     if isinstance(enrichment_result.get("plan_enrichment"), dict) and enrichment_result.get("plan_enrichment"):
         generated_plan["plan_enrichment"] = enrichment_result["plan_enrichment"]
