@@ -73,6 +73,7 @@ from backend.apps.swarms.candidate_refinement_planner import plan_candidate_refi
 from backend.apps.swarms.context_clarification import resolve_model_context_clarification
 from backend.apps.swarms.dynamic_intake_policy import resolve_dynamic_intake_policy
 from backend.apps.swarms.dynamic_intake_plan import enrich_dynamic_intake_plan
+from backend.apps.swarms.intent_brief import build_intent_brief
 from backend.apps.swarms.model_response_contract import build_model_response_contract_prompt
 from backend.apps.swarms.state_context import build_state_context_payload, build_state_context_prompt
 from backend.apps.swarms.system_prompt import build_openswarm_system_prompt
@@ -2883,6 +2884,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
                 "logs": None,
                 "files": bool(getattr(swarm, "artifacts", None) or getattr(swarm, "evidence", None)),
                 "project_memory_manifest": build_project_memory_from_swarm_state(swarm),
+                "intent_brief": build_intent_brief(swarm, user_message=user_message),
             },
             model=body.model,
         )
@@ -3017,6 +3019,7 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
         available_context={
             "ri_state": snapshot_payload(ri_state),
             "final_result_route": (getattr(swarm, "final_result", {}) or {}).get("route") if isinstance(getattr(swarm, "final_result", {}), dict) else None,
+            "intent_brief": build_intent_brief(swarm, user_message=user_message),
         },
     )
     local_chat_context = "\n\n".join([
