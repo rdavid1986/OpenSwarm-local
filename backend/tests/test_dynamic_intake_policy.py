@@ -69,6 +69,24 @@ def test_build_dynamic_intake_policy_prompt_includes_state_context_policy_route(
     assert "Use state_context as the real state snapshot." in prompt
 
 
+def test_build_dynamic_intake_policy_prompt_can_include_project_memory():
+    prompt = build_dynamic_intake_policy_prompt(
+        user_message="landing con contacto",
+        questions=QUESTIONS,
+        fallback_profile=FALLBACK_STATIC,
+        project_memory_manifest={
+            "swarm_id": "swarm-1",
+            "current_goal": "Crear landing",
+            "outputs": [{"output_id": "output-1"}],
+        },
+    )
+
+    assert '"project_memory_status": "present"' in prompt
+    assert '"current_goal": "Crear landing"' in prompt
+    assert '"output_ids": [' in prompt
+    assert '"output-1"' in prompt
+
+
 def test_normalize_dynamic_intake_policy_accepts_model_policy():
     result = normalize_dynamic_intake_policy(
         {

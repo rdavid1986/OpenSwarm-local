@@ -14,6 +14,7 @@ from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health, is_local_model
 from backend.apps.agents.runtime.provider import ProviderTurnContext
 from backend.apps.swarms.model_response_contract import build_model_response_contract_prompt
+from backend.apps.swarms.project_memory import build_project_memory_from_swarm_state
 from backend.apps.swarms.state_context import build_state_context_payload, build_state_context_prompt
 from backend.apps.swarms.system_prompt import build_openswarm_system_prompt
 
@@ -59,7 +60,12 @@ def _text_list(value: Any) -> list[str]:
     return result
 
 
-def build_dynamic_plan_enrichment_prompt(*, generated_plan: dict[str, Any], intake_state: dict[str, Any]) -> str:
+def build_dynamic_plan_enrichment_prompt(
+    *,
+    generated_plan: dict[str, Any],
+    intake_state: dict[str, Any],
+    project_memory_manifest: dict[str, Any] | None = None,
+) -> str:
     system_prompt = build_openswarm_system_prompt(mode="app_builder", task_kind="dynamic_intake")
     state_context = build_state_context_payload(
         mode="app_builder",
@@ -67,6 +73,7 @@ def build_dynamic_plan_enrichment_prompt(*, generated_plan: dict[str, Any], inta
         user_message=_as_text(intake_state.get("user_message") or intake_state.get("initial_prompt")),
         creation_type=_as_text(generated_plan.get("app_type") or intake_state.get("intake_profile")) or None,
         project_intake_status=_as_text(intake_state.get("status") or intake_state.get("intake_status")) or None,
+        project_memory_manifest=project_memory_manifest,
         available_context={
             "intake_mode": intake_state.get("intake_mode"),
             "intake_profile": intake_state.get("intake_profile"),
@@ -161,6 +168,8 @@ async def enrich_dynamic_intake_plan(
     intake_state: dict[str, Any],
     model: str = "qwen2.5-coder:14b",
     adapter_factory: Callable[[], OllamaAdapter] | None = None,
+    project_memory_source: Any = None,
+    project_memory_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     adapter = adapter_factory() if adapter_factory else OllamaAdapter(allow_network=True, supports_json_mode=True)
 
@@ -191,6 +200,11 @@ async def enrich_dynamic_intake_plan(
                 "content": build_dynamic_plan_enrichment_prompt(
                     generated_plan=generated_plan,
                     intake_state=intake_state,
+                    project_memory_manifest=project_memory_manifest
+                    if project_memory_manifest is not None
+                    else build_project_memory_from_swarm_state(project_memory_source)
+                    if project_memory_source is not None
+                    else None,
                 ),
             }
         ],

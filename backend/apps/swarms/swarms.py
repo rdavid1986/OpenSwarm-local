@@ -60,7 +60,7 @@ from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health
 from backend.apps.agents.runtime.provider import ProviderTurnContext
 from backend.apps.swarms.pending_action_intelligence import resolve_pending_action_intent
-from backend.apps.swarms.project_memory import build_project_memory_from_swarm_state
+from backend.apps.swarms.project_memory import build_project_memory_from_swarm_state, build_project_memory_manifest
 from backend.apps.swarms.refinement_action_guard import evaluate_refinement_execution_guard
 from backend.apps.swarms.response_intelligence import (
     build_grounded_refinement_response,
@@ -1689,6 +1689,7 @@ async def _start_project_intake(swarm, user_message: str, model: str = "qwen2.5-
         questions=_project_intake_questions(),
         fallback_profile=fallback_profile,
         model=model,
+        project_memory_source=swarm,
     )
     skipped_questions = policy.get("skipped_questions") if isinstance(policy.get("skipped_questions"), list) else fallback_profile.get("skipped_questions", [])
     question_overrides = policy.get("question_overrides") if isinstance(policy.get("question_overrides"), dict) else {}
@@ -1748,10 +1749,23 @@ async def _advance_project_intake(swarm, user_message: str, model: str = "qwen2.
         }
 
     generated_plan = _build_project_intake_plan(state)
+    project_memory_source = {
+        "id": getattr(swarm, "id", None),
+        "dashboard_id": getattr(swarm, "dashboard_id", None),
+        "user_prompt": getattr(swarm, "user_prompt", None),
+        "project_intake_state": {**state, "generated_plan": generated_plan},
+        "final_result": getattr(swarm, "final_result", None),
+        "artifacts": getattr(swarm, "artifacts", None),
+        "evidence": getattr(swarm, "evidence", None),
+        "final_evidence": getattr(swarm, "final_evidence", None),
+        "output_bridge": getattr(swarm, "output_bridge", None),
+        "implementation_state": getattr(swarm, "implementation_state", None),
+    }
     enrichment_result = await enrich_dynamic_intake_plan(
         generated_plan=generated_plan,
         intake_state=state,
         model=model,
+        project_memory_source=project_memory_source,
     )
     if isinstance(enrichment_result.get("plan_enrichment"), dict) and enrichment_result.get("plan_enrichment"):
         generated_plan["plan_enrichment"] = enrichment_result["plan_enrichment"]
@@ -2195,13 +2209,22 @@ async def _execute_candidate_refinement(
         }
 
     requested_change = str(refinement_request.get("requested_change") or "").strip()
+    output_id = str(refinement_request.get("output_id") or metadata.get("output_id") or "").strip() or None
+    candidate_workspace_path = str(getattr(iteration, "candidate_workspace_path", "") or "").strip() or None
     plan = await plan_candidate_refinement_file_updates(
         requested_change=requested_change,
         files_after=dict(iteration.files_after or {}),
         model=model,
         candidate_iteration_id=candidate_iteration_id,
-        output_id=str(refinement_request.get("output_id") or metadata.get("output_id") or "").strip() or None,
-        candidate_workspace_path=str(getattr(iteration, "candidate_workspace_path", "") or "").strip() or None,
+        output_id=output_id,
+        candidate_workspace_path=candidate_workspace_path,
+        project_memory_manifest=build_project_memory_manifest(
+            swarm_id=str(refinement_request.get("source_swarm_id") or metadata.get("source_swarm_id") or "").strip() or None,
+            current_goal=requested_change,
+            outputs=[{"output_id": output_id}] if output_id else None,
+            candidate_iterations=[iteration.model_dump(mode="json") if hasattr(iteration, "model_dump") else getattr(iteration, "__dict__", {})],
+            last_updated_source="candidate_refinement",
+        ),
     )
 
     if not plan.get("ok"):

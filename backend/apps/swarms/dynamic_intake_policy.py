@@ -14,6 +14,7 @@ from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health, is_local_model
 from backend.apps.agents.runtime.provider import ProviderTurnContext
 from backend.apps.swarms.model_response_contract import build_model_response_contract_prompt
+from backend.apps.swarms.project_memory import build_project_memory_from_swarm_state
 from backend.apps.swarms.state_context import build_state_context_payload, build_state_context_prompt
 from backend.apps.swarms.system_prompt import build_openswarm_system_prompt
 
@@ -58,6 +59,7 @@ def build_dynamic_intake_policy_prompt(
     user_message: str,
     questions: list[dict[str, Any]],
     fallback_profile: dict[str, Any],
+    project_memory_manifest: dict[str, Any] | None = None,
 ) -> str:
     system_prompt = build_openswarm_system_prompt(mode="app_builder", task_kind="dynamic_intake")
     state_context = build_state_context_payload(
@@ -66,6 +68,7 @@ def build_dynamic_intake_policy_prompt(
         user_message=user_message,
         creation_type=fallback_profile.get("profile"),
         project_intake_status="policy_resolution",
+        project_memory_manifest=project_memory_manifest,
         available_context={
             "fallback_profile": fallback_profile,
             "question_ids": sorted(_question_ids(questions)),
@@ -254,6 +257,8 @@ async def resolve_dynamic_intake_policy(
     fallback_profile: dict[str, Any],
     model: str = "qwen2.5-coder:14b",
     adapter_factory: Callable[[], OllamaAdapter] | None = None,
+    project_memory_source: Any = None,
+    project_memory_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     adapter = adapter_factory() if adapter_factory else OllamaAdapter(allow_network=True, supports_json_mode=True)
 
@@ -285,6 +290,11 @@ async def resolve_dynamic_intake_policy(
                     user_message=user_message,
                     questions=questions,
                     fallback_profile=fallback_profile,
+                    project_memory_manifest=project_memory_manifest
+                    if project_memory_manifest is not None
+                    else build_project_memory_from_swarm_state(project_memory_source)
+                    if project_memory_source is not None
+                    else None,
                 ),
             }
         ],

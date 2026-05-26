@@ -15,6 +15,7 @@ from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health
 from backend.apps.agents.runtime.provider import ProviderTurnContext
 from backend.apps.swarms.model_response_contract import build_model_response_contract_prompt
+from backend.apps.swarms.project_memory import build_project_memory_manifest
 from backend.apps.swarms.state_context import build_state_context_payload, build_state_context_prompt
 from backend.apps.swarms.system_prompt import build_openswarm_system_prompt
 
@@ -65,7 +66,23 @@ def build_candidate_refinement_prompt(
     candidate_iteration_id: str | None = None,
     output_id: str | None = None,
     candidate_workspace_path: str | None = None,
+    project_memory_manifest: dict[str, Any] | None = None,
 ) -> str:
+    resolved_project_memory = project_memory_manifest
+    if resolved_project_memory is None and (output_id or candidate_iteration_id or candidate_workspace_path):
+        resolved_project_memory = build_project_memory_manifest(
+            current_goal=requested_change,
+            outputs=[{"output_id": output_id}] if output_id else None,
+            candidate_iterations=[
+                {
+                    "candidate_iteration_id": candidate_iteration_id,
+                    "output_id": output_id,
+                    "candidate_workspace_path": candidate_workspace_path,
+                    "status": "candidate",
+                }
+            ] if candidate_iteration_id or candidate_workspace_path else None,
+            last_updated_source="candidate_refinement_metadata",
+        )
     state_context = build_state_context_payload(
         mode="refine",
         route="candidate_refinement",
@@ -73,6 +90,7 @@ def build_candidate_refinement_prompt(
         pending_action_type="run_refinement_pipeline",
         output_id=output_id,
         candidate_iteration_id=candidate_iteration_id,
+        project_memory_manifest=resolved_project_memory,
         available_context={
             "candidate_iteration_id": candidate_iteration_id,
             "candidate_workspace_path": candidate_workspace_path,
@@ -196,6 +214,7 @@ async def plan_candidate_refinement_file_updates(
     candidate_iteration_id: str | None = None,
     output_id: str | None = None,
     candidate_workspace_path: str | None = None,
+    project_memory_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ask a model to propose candidate file updates without side effects."""
 
@@ -254,6 +273,7 @@ async def plan_candidate_refinement_file_updates(
                     candidate_iteration_id=candidate_iteration_id,
                     output_id=output_id,
                     candidate_workspace_path=candidate_workspace_path,
+                    project_memory_manifest=project_memory_manifest,
                 ),
             }
         ],

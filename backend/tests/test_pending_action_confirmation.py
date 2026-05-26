@@ -141,6 +141,46 @@ def test_pending_action_resolver_prompt_composes_prompt_architecture():
     assert "Do not invent pending actions" in prompt
 
 
+def test_pending_action_resolver_prompt_can_include_project_memory_without_inventing_actions():
+    from backend.apps.agents.orchestration.models import AgentContract, SwarmState
+
+    coordinator = AgentContract(role="CoordinatorAgent", objective="Coordinate", allowed_tools=[])
+    swarm = SwarmState(
+        title="resolver test",
+        user_prompt="Build app",
+        intent="chat",
+        coordinator_contract_id=coordinator.id,
+        contracts=[coordinator],
+        final_result={
+            "refinement_request": {
+                "output_id": "out-123",
+                "source_swarm_id": "swarm-1",
+                "requested_change": "Make the hero blue.",
+                "status": "received",
+            }
+        },
+    )
+    refinement = swarm.final_result["refinement_request"]
+    ri_state = build_ri_state_snapshot(swarm, route="refinement_request", user_message="ok")
+
+    prompt = build_pending_action_resolver_prompt(
+        user_message="ok",
+        swarm_mode="app_builder",
+        canonical_refinement=refinement,
+        ri_state=ri_state,
+        recent_messages=[],
+        project_memory_manifest={
+            "swarm_id": "swarm-1",
+            "outputs": [{"output_id": "out-123"}],
+        },
+    )
+
+    assert '"project_memory_status": "present"' in prompt
+    assert '"output_ids": [' in prompt
+    assert '"out-123"' in prompt
+    assert "Do not invent pending actions" in prompt
+
+
 def test_pending_action_resolver_preflights_ollama_health(monkeypatch):
     from backend.apps.agents.orchestration.models import AgentContract, SwarmState
 

@@ -15,6 +15,7 @@ from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health, is_local_model
 from backend.apps.agents.runtime.provider import ProviderTurnContext
 from backend.apps.swarms.model_response_contract import build_model_response_contract_prompt
+from backend.apps.swarms.project_memory import build_project_memory_from_swarm_state
 from backend.apps.swarms.response_intelligence import RIStateSnapshot, build_ri_state_snapshot
 from backend.apps.swarms.state_context import build_state_context_payload, build_state_context_prompt
 from backend.apps.swarms.system_prompt import build_openswarm_system_prompt
@@ -222,6 +223,7 @@ def build_pending_action_resolver_prompt(
     canonical_refinement: dict[str, Any],
     ri_state: RIStateSnapshot,
     recent_messages: list[dict[str, str]],
+    project_memory_manifest: dict[str, Any] | None = None,
 ) -> str:
     mode = swarm_mode or "swarm_card"
     system_prompt = build_openswarm_system_prompt(mode=mode, task_kind="pending_action")
@@ -233,6 +235,7 @@ def build_pending_action_resolver_prompt(
         output_id=ri_state.target_output_id,
         artifact_count=ri_state.artifact_count,
         guard_status=ri_state.claim_guard_status,
+        project_memory_manifest=project_memory_manifest,
         available_context={
             "ri_state": {
                 "swarm_id": ri_state.swarm_id,
@@ -321,6 +324,7 @@ async def resolve_pending_action_intent(
         canonical_refinement=canonical_refinement,
         ri_state=ri_state,
         recent_messages=_recent_chat_messages(swarm),
+        project_memory_manifest=build_project_memory_from_swarm_state(swarm),
     )
     context = ProviderTurnContext(
         session_id=str(getattr(swarm, "id", "") or "pending-action-resolution"),

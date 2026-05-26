@@ -58,6 +58,23 @@ def test_build_candidate_refinement_prompt_includes_candidate_state_context():
     assert '"has_candidate_iteration": true' in prompt
 
 
+def test_build_candidate_refinement_prompt_includes_memory_without_claiming_applied_changes():
+    prompt = build_candidate_refinement_prompt(
+        requested_change="Make hero blue.",
+        files_after={"index.html": "<html></html>"},
+        output_id="out-1",
+        candidate_iteration_id="iter-1",
+        candidate_workspace_path="/tmp/candidate",
+    )
+
+    assert '"project_memory_status": "present"' in prompt
+    assert '"output_ids": [' in prompt
+    assert '"out-1"' in prompt
+    assert '"candidate_iteration_ids": [' in prompt
+    assert '"iter-1"' in prompt
+    assert "Do not claim the active Output was changed" in prompt
+
+
 def test_normalize_candidate_refinement_plan_accepts_changed_allowed_file():
     result = normalize_candidate_refinement_plan(
         {

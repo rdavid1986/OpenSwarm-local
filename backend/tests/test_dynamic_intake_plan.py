@@ -50,6 +50,23 @@ def test_build_dynamic_plan_enrichment_prompt_includes_state_context_route():
     assert "Use state_context as the real state snapshot." in prompt
 
 
+def test_build_dynamic_plan_enrichment_prompt_can_include_project_memory():
+    prompt = build_dynamic_plan_enrichment_prompt(
+        generated_plan={"app_type": "Landing + formulario"},
+        intake_state={"intake_mode": "model_assisted", "intake_profile": "landing"},
+        project_memory_manifest={
+            "swarm_id": "swarm-1",
+            "current_goal": "Landing previa",
+            "decisions": [{"id": "decision-1", "kind": "plan"}],
+        },
+    )
+
+    assert '"project_memory_status": "present"' in prompt
+    assert '"current_goal": "Landing previa"' in prompt
+    assert '"decision_ids": [' in prompt
+    assert '"decision-1"' in prompt
+
+
 def test_normalize_dynamic_plan_enrichment_accepts_safe_enrichment():
     result = normalize_dynamic_plan_enrichment({
         "confidence": 0.92,
