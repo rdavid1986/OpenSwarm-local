@@ -14,6 +14,7 @@ from uuid import uuid5, NAMESPACE_URL
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health, is_local_model
 from backend.apps.agents.runtime.provider import ProviderTurnContext
+from backend.apps.swarms.system_prompt import build_openswarm_system_prompt
 
 
 CLEAR_ENOUGH_MODES = {"ask", "chat"}
@@ -276,8 +277,10 @@ def build_model_context_clarification_prompt(
     fallback_decision: dict[str, Any],
     available_context: dict[str, Any] | None = None,
 ) -> str:
+    master_prompt = build_openswarm_system_prompt(mode=swarm_mode or "ask", task_kind="context_clarification")
     payload = {
         "task": "Reason about whether OpenSwarm needs clarification before responding or acting.",
+        "openswarm_system_prompt": master_prompt,
         "user_message": user_message,
         "swarm_mode": swarm_mode or "ask",
         "available_context": available_context if isinstance(available_context, dict) else {},
@@ -286,8 +289,10 @@ def build_model_context_clarification_prompt(
         "allowed_option_kinds": sorted(OPTION_KINDS),
         "rules": [
             "Return only one JSON object.",
+            "Follow openswarm_system_prompt.",
             "Do not execute tools.",
             "Do not claim actions were executed.",
+            "The model reasons, but must not invent state.",
             "Ask the minimum necessary question only if context is insufficient.",
             "If the user request is clear enough, set needs_clarification=false.",
             "Do not ask irrelevant questions.",
@@ -438,11 +443,7 @@ async def resolve_model_context_clarification(
         session_id="context-clarification",
         agent_id="context-clarification",
         model=model,
-        system_prompt=(
-            "You are OpenSwarm's context clarification reasoner. "
-            "Return only one JSON object. Do not execute tools. "
-            "Decide if the user's request needs clarification before OpenSwarm answers or acts."
-        ),
+        system_prompt=build_openswarm_system_prompt(mode=swarm_mode or intent or "ask", task_kind="context_clarification"),
         messages=[
             {
                 "role": "user",
