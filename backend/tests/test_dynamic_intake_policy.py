@@ -27,6 +27,9 @@ FALLBACK_STATIC = {
 
 class _FakeAdapter:
     async def run_turn(self, context):
+        assert "sos openswarm" in context.system_prompt.lower()
+        assert "modo app_builder" in context.system_prompt.lower()
+        assert "el modelo razona, pero no inventa estado" in context.system_prompt.lower()
         yield ProviderEvent(
             type="message_final",
             payload={
@@ -46,7 +49,24 @@ def test_build_dynamic_intake_policy_prompt_contains_question_ids():
 
     assert "landing con contacto" in prompt
     assert "backend" in prompt
+    assert "openswarm_system_prompt" in prompt
+    assert "modo app_builder" in prompt.lower()
+    assert "state_context" in prompt
+    assert "state_context_prompt" in prompt
+    assert "model_response_contract_prompt" in prompt
     assert "expected_json_shape" in prompt
+
+
+def test_build_dynamic_intake_policy_prompt_includes_state_context_policy_route():
+    prompt = build_dynamic_intake_policy_prompt(
+        user_message="landing con contacto",
+        questions=QUESTIONS,
+        fallback_profile=FALLBACK_STATIC,
+    )
+
+    assert '"route": "dynamic_intake_policy"' in prompt
+    assert '"project_intake_status": "policy_resolution"' in prompt
+    assert "Use state_context as the real state snapshot." in prompt
 
 
 def test_normalize_dynamic_intake_policy_accepts_model_policy():

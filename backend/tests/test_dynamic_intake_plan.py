@@ -10,6 +10,9 @@ from backend.apps.swarms.dynamic_intake_plan import (
 
 class _FakeAdapter:
     async def run_turn(self, context):
+        assert "sos openswarm" in context.system_prompt.lower()
+        assert "modo app_builder" in context.system_prompt.lower()
+        assert "el modelo razona, pero no inventa estado" in context.system_prompt.lower()
         yield ProviderEvent(
             type="message_final",
             payload={
@@ -27,8 +30,24 @@ def test_build_dynamic_plan_enrichment_prompt_includes_plan_and_rules():
     )
 
     assert "Landing + formulario" in prompt
+    assert "openswarm_system_prompt" in prompt
+    assert "modo app_builder" in prompt.lower()
+    assert "state_context" in prompt
+    assert "state_context_prompt" in prompt
+    assert "model_response_contract_prompt" in prompt
     assert "Do not change app_type" in prompt
     assert "expected_json_shape" in prompt
+
+
+def test_build_dynamic_plan_enrichment_prompt_includes_state_context_route():
+    prompt = build_dynamic_plan_enrichment_prompt(
+        generated_plan={"app_type": "Landing + formulario"},
+        intake_state={"intake_mode": "model_assisted", "intake_profile": "landing"},
+    )
+
+    assert '"route": "dynamic_intake_plan_enrichment"' in prompt
+    assert '"creation_type": "Landing + formulario"' in prompt
+    assert "Use state_context as the real state snapshot." in prompt
 
 
 def test_normalize_dynamic_plan_enrichment_accepts_safe_enrichment():

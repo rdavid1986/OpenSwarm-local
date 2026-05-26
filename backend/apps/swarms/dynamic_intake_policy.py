@@ -13,6 +13,9 @@ from typing import Any, Callable
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health, is_local_model
 from backend.apps.agents.runtime.provider import ProviderTurnContext
+from backend.apps.swarms.model_response_contract import build_model_response_contract_prompt
+from backend.apps.swarms.state_context import build_state_context_payload, build_state_context_prompt
+from backend.apps.swarms.system_prompt import build_openswarm_system_prompt
 
 
 CONFIDENCE_THRESHOLD = 0.70
@@ -56,8 +59,24 @@ def build_dynamic_intake_policy_prompt(
     questions: list[dict[str, Any]],
     fallback_profile: dict[str, Any],
 ) -> str:
+    system_prompt = build_openswarm_system_prompt(mode="app_builder", task_kind="dynamic_intake")
+    state_context = build_state_context_payload(
+        mode="app_builder",
+        route="dynamic_intake_policy",
+        user_message=user_message,
+        creation_type=fallback_profile.get("profile"),
+        project_intake_status="policy_resolution",
+        available_context={
+            "fallback_profile": fallback_profile,
+            "question_ids": sorted(_question_ids(questions)),
+        },
+    )
     payload = {
         "task": "Decide the minimal safe App Builder intake question policy.",
+        "openswarm_system_prompt": system_prompt,
+        "state_context": state_context,
+        "state_context_prompt": build_state_context_prompt(state_context),
+        "model_response_contract_prompt": build_model_response_contract_prompt("dynamic_intake"),
         "user_message": user_message,
         "available_questions": [
             {
@@ -71,6 +90,9 @@ def build_dynamic_intake_policy_prompt(
         "fallback_profile": fallback_profile,
         "rules": [
             "Return only one JSON object.",
+            "Follow openswarm_system_prompt.",
+            "Use state_context as the real state snapshot.",
+            "Use model_response_contract_prompt as safety guidance only; keep expected_json_shape as the required output schema.",
             "Do not execute tools.",
             "Do not invent question ids.",
             "Only skip questions that are clearly irrelevant to the requested project.",
@@ -255,11 +277,7 @@ async def resolve_dynamic_intake_policy(
         session_id="dynamic-intake-policy",
         agent_id="dynamic-intake-policy",
         model=model,
-        system_prompt=(
-            "You are OpenSwarm's App Builder intake policy resolver. "
-            "Return only one JSON object. Do not execute tools. "
-            "Decide which intake questions are necessary or can be safely skipped."
-        ),
+        system_prompt=build_openswarm_system_prompt(mode="app_builder", task_kind="dynamic_intake"),
         messages=[
             {
                 "role": "user",
