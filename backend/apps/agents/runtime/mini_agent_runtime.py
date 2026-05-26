@@ -187,13 +187,50 @@ class MiniAgentRuntime:
         else:
             status = "completed"
 
+        successful_tools = [entry for entry in turn_result.tool_history if entry.get("ok")]
+        failed_tools = [entry for entry in turn_result.tool_history if not entry.get("ok")]
+        attempted_tools = [
+            {
+                "tool": entry.get("tool"),
+                "status": entry.get("status"),
+                "ok": bool(entry.get("ok")),
+                "path": (entry.get("result") or {}).get("path"),
+            }
+            for entry in turn_result.tool_history
+        ]
         evidence = [
             {
                 "kind": "mini_agent_runtime",
+                "evidence_contract_version": "mini_agent_runtime.v1",
                 "status": status,
                 "turns": turn_result.turns,
+                "has_final_message": turn_result.final_message is not None,
                 "final_message": turn_result.final_message,
                 "tool_count": len(turn_result.tool_history),
+                "successful_tool_count": len(successful_tools),
+                "failed_tool_count": len(failed_tools),
+                "error_count": len(errors),
+                "planned_work": {
+                    "task_id": context.task.id,
+                    "task_title": context.task.title,
+                    "task_objective": context.task.objective,
+                    "agent_contract_id": context.contract.id,
+                    "agent_role": context.contract.role,
+                    "acceptance_criteria": list(context.contract.acceptance_criteria or []),
+                },
+                "attempted_work": {
+                    "tools": attempted_tools,
+                    "turns": turn_result.turns,
+                    "provider_event_count": len(turn_result.provider_events),
+                },
+                "completed_work": {
+                    "final_message_available": turn_result.final_message is not None,
+                    "successful_tools": [entry.get("tool") for entry in successful_tools],
+                },
+                "failed_work": {
+                    "errors": errors,
+                    "failed_tools": [entry.get("tool") for entry in failed_tools],
+                },
             }
         ]
         for entry in turn_result.tool_history:
