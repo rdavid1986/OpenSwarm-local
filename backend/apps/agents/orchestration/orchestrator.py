@@ -25,6 +25,12 @@ from backend.apps.agents.runtime.experimental_task_type_registry import (
     get_experimental_task_spec,
     validate_experimental_task_contract,
 )
+from backend.apps.swarms.model_response_contract import build_model_response_contract_prompt
+from backend.apps.swarms.system_prompt import (
+    build_mode_prompt,
+    build_openswarm_system_prompt,
+    build_state_grounding_rules,
+)
 
 
 class SwarmOrchestrator:
@@ -961,8 +967,16 @@ class SwarmOrchestrator:
             "SecurityAgent",
             "DocumentationAgent",
         ]
+        openswarm_system_prompt = build_openswarm_system_prompt(mode="plan", task_kind="model_dag_proposal")
+        mode_prompt = build_mode_prompt("plan")
+        state_grounding_rules = build_state_grounding_rules()
+        model_response_contract_prompt = build_model_response_contract_prompt("model_dag_proposal")
 
         return (
+            "openswarm_system_prompt:\n" + openswarm_system_prompt + "\n\n"
+            "mode_prompt:\n" + mode_prompt + "\n\n"
+            "state_grounding_rules:\n" + state_grounding_rules + "\n\n"
+            "model_response_contract_prompt:\n" + model_response_contract_prompt + "\n\n"
             "Create a safe DAG proposal for OpenSwarm. Return JSON only. "
             "Do not execute tools. Do not create files. Do not include markdown. "
             "The backend will validate and may reject the proposal. "

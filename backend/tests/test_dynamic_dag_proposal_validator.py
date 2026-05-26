@@ -1297,3 +1297,28 @@ def test_classify_experimental_task_rejects_unknown_explicit_task_type():
         assert "not_registered" in str(exc)
     else:
         raise AssertionError("Expected ValueError for unknown explicit task_type")
+
+
+def test_model_dag_proposal_prompt_uses_ri_prompt_architecture():
+    orchestrator = SwarmOrchestrator()
+    prompt = orchestrator._build_model_dag_proposal_prompt(
+        generated_plan={
+            "summary": "Landing estática",
+            "app_type": "static_site",
+            "main_goal": "Mostrar servicios",
+            "frontend": "HTML/CSS",
+            "backend": "none",
+            "database": "none",
+            "mvp_priority": "visual",
+            "out_of_scope": "login",
+            "visual_style": "simple",
+        }
+    )
+
+    assert "openswarm_system_prompt" in prompt
+    assert "mode_prompt" in prompt
+    assert "state_grounding_rules" in prompt
+    assert "model_response_contract_prompt" in prompt
+    assert "el modelo razona, pero no inventa estado" in prompt.lower()
+    assert "model_generated_dag" in prompt
+    assert "Do not execute tools" in prompt
