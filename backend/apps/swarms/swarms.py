@@ -60,7 +60,7 @@ from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health
 from backend.apps.agents.runtime.provider import ProviderTurnContext
 from backend.apps.swarms.pending_action_intelligence import resolve_pending_action_intent
-from backend.apps.swarms.project_memory import build_project_memory_from_swarm_state, build_project_memory_manifest
+from backend.apps.swarms.project_memory import build_project_memory_from_swarm_state
 from backend.apps.swarms.refinement_action_guard import evaluate_refinement_execution_guard
 from backend.apps.swarms.response_intelligence import (
     build_grounded_refinement_response,
@@ -2211,6 +2211,16 @@ async def _execute_candidate_refinement(
     requested_change = str(refinement_request.get("requested_change") or "").strip()
     output_id = str(refinement_request.get("output_id") or metadata.get("output_id") or "").strip() or None
     candidate_workspace_path = str(getattr(iteration, "candidate_workspace_path", "") or "").strip() or None
+    iteration_memory = iteration.model_dump(mode="json") if hasattr(iteration, "model_dump") else dict(getattr(iteration, "__dict__", {}) or {})
+    project_memory_source = {
+        "id": str(refinement_request.get("source_swarm_id") or metadata.get("source_swarm_id") or "").strip() or None,
+        "user_prompt": requested_change,
+        "output_bridge": {"output_id": output_id} if output_id else {},
+        "candidate_iterations": [iteration_memory] if iteration_memory else [],
+        "artifacts": metadata.get("artifacts") if isinstance(metadata.get("artifacts"), list) else [],
+        "evidence": metadata.get("evidence") if isinstance(metadata.get("evidence"), list) else [],
+        "final_evidence": metadata.get("final_evidence") if isinstance(metadata.get("final_evidence"), list) else [],
+    }
     plan = await plan_candidate_refinement_file_updates(
         requested_change=requested_change,
         files_after=dict(iteration.files_after or {}),
@@ -2218,13 +2228,7 @@ async def _execute_candidate_refinement(
         candidate_iteration_id=candidate_iteration_id,
         output_id=output_id,
         candidate_workspace_path=candidate_workspace_path,
-        project_memory_manifest=build_project_memory_manifest(
-            swarm_id=str(refinement_request.get("source_swarm_id") or metadata.get("source_swarm_id") or "").strip() or None,
-            current_goal=requested_change,
-            outputs=[{"output_id": output_id}] if output_id else None,
-            candidate_iterations=[iteration.model_dump(mode="json") if hasattr(iteration, "model_dump") else getattr(iteration, "__dict__", {})],
-            last_updated_source="candidate_refinement",
-        ),
+        project_memory_manifest=build_project_memory_from_swarm_state(project_memory_source),
     )
 
     if not plan.get("ok"):
