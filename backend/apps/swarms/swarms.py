@@ -72,6 +72,9 @@ from backend.apps.swarms.candidate_refinement_planner import plan_candidate_refi
 from backend.apps.swarms.context_clarification import resolve_model_context_clarification
 from backend.apps.swarms.dynamic_intake_policy import resolve_dynamic_intake_policy
 from backend.apps.swarms.dynamic_intake_plan import enrich_dynamic_intake_plan
+from backend.apps.swarms.model_response_contract import build_model_response_contract_prompt
+from backend.apps.swarms.state_context import build_state_context_payload, build_state_context_prompt
+from backend.apps.swarms.system_prompt import build_openswarm_system_prompt
 
 
 @asynccontextmanager
@@ -2973,7 +2976,23 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
         return {**_dump(swarm), "provider_events": []}
 
     adapter = OllamaAdapter(allow_network=True, supports_json_mode=False)
+    ri_state = build_ri_state_snapshot(swarm, route=route, user_message=user_message)
+    state_context = build_state_context_payload(
+        mode=swarm_mode,
+        route=route,
+        user_message=user_message,
+        pending_action_type=ri_state.pending_action,
+        output_id=ri_state.target_output_id,
+        artifact_count=ri_state.artifact_count,
+        guard_status=ri_state.claim_guard_status,
+        available_context={
+            "ri_state": snapshot_payload(ri_state),
+            "final_result_route": (getattr(swarm, "final_result", {}) or {}).get("route") if isinstance(getattr(swarm, "final_result", {}), dict) else None,
+        },
+    )
     local_chat_context = "\n\n".join([
+        build_state_context_prompt(state_context),
+        build_model_response_contract_prompt("swarm_chat"),
         build_response_context(swarm, route=route, user_message=user_message),
         _build_local_chat_context(swarm, user_message, route),
     ])
@@ -2983,6 +3002,8 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
         agent_id=coordinator_id,
         model=body.model,
         system_prompt=(
+            build_openswarm_system_prompt(mode=swarm_mode or "swarm_card", task_kind="swarm_chat")
+            + "\n\n"
             "You are OpenSwarm's local-first swarm chat coordinator. "
             "Answer in plain text, not JSON. "
             "Answer in the same language as the user. "
