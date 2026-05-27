@@ -1,7 +1,14 @@
 from backend.apps.agents.orchestration.models import AgentContract, SwarmState
 from backend.apps.swarms.code_action import build_code_action_contract, build_code_action_pending_action
 from backend.apps.swarms.eval_harness import build_eval_critic_node, build_eval_evaluator_node, build_eval_loop_contract, build_eval_memory_record
-from backend.apps.swarms.response_intelligence import build_grounded_code_action_response, build_grounded_refinement_response, build_response_context
+from backend.apps.swarms.mcp_contract import (
+    build_mcp_fallback_adapter_contract,
+    build_mcp_fallback_plan,
+    build_mcp_sandbox_policy_decision,
+    build_mcp_tool_registry,
+    inspect_mcp_tool_registry,
+)
+from backend.apps.swarms.response_intelligence import build_grounded_code_action_response, build_grounded_refinement_response, build_ri_result, build_response_context
 from backend.apps.swarms.swarms import _refinement_request_response
 
 
@@ -356,3 +363,97 @@ def test_ri_result_accepts_eval_memory_record_from_payload_without_execution():
     assert "ri-eval-loop-3" in result_with_eval
     assert "passed: True" in result_with_eval
     assert "score: 1.0" in result_with_eval
+
+
+def test_response_context_includes_mcp_context_from_payload():
+    swarm = _chat_swarm()
+    registry = build_mcp_tool_registry(
+        tools=[
+            {"name": "Unity", "mcp_config": {"type": "stdio"}, "auth_status": "expired"},
+        ],
+    )
+    inspection = inspect_mcp_tool_registry(registry, target_server_name="Unity")
+    fallback = build_mcp_fallback_plan(
+        inspection=inspection,
+        fallback_adapters=[
+            build_mcp_fallback_adapter_contract(
+                server_name="Unity",
+                fallback_type="script",
+                script_path="tools/unity_cli_adapter.py",
+            )
+        ],
+        target_server_name="Unity",
+    )
+    sandbox = build_mcp_sandbox_policy_decision(
+        fallback_plan=fallback,
+        allowed_script_roots=["tools/unity"],
+    )
+
+    context = build_response_context(
+        swarm,
+        route="tool_mcp",
+        user_message="Usar Unity",
+        payload={
+            "mcp_registry": registry,
+            "mcp_inspection": inspection,
+            "mcp_fallback_plan": fallback,
+            "mcp_sandbox_policy": sandbox,
+        },
+    )
+
+    assert "[mcp_context]" in context
+    assert "MCP Registry:" in context
+    assert "MCP Inspection:" in context
+    assert "sandbox_decision:" in context
+    assert "mcp_target_not_installed" not in context
+    assert "unity" in context
+
+
+def test_ri_payload_transports_mcp_context_fields():
+    swarm = _chat_swarm()
+    registry = build_mcp_tool_registry(
+        tools=[
+            {"name": "Unity", "mcp_config": {"type": "stdio"}, "auth_status": "expired"},
+        ],
+    )
+    inspection = inspect_mcp_tool_registry(registry, target_server_name="Unity")
+    fallback = build_mcp_fallback_plan(
+        inspection=inspection,
+        fallback_adapters=[
+            build_mcp_fallback_adapter_contract(
+                server_name="Unity",
+                fallback_type="script",
+                script_path="tools/unity_cli_adapter.py",
+            )
+        ],
+        target_server_name="Unity",
+    )
+
+    result = build_ri_result(
+        swarm,
+        route="refinement_request",
+        user_message="usar Unity",
+        swarm_mode="app_builder",
+        source="local",
+        response_source="local_grounded",
+        requires_provider=False,
+        payload={
+            "refinement_request": {
+                "output_id": "out-mcp",
+                "source_swarm_id": "swarm-mcp",
+                "requested_change": "Abrir Unity.",
+                "status": "received",
+                "next_action": "refinement_pipeline_pending",
+            },
+            "mcp_registry": registry,
+            "mcp_inspection": inspection,
+            "mcp_fallback_plan": fallback,
+        },
+    )
+
+    assert result.payload["ri_state"]["mcp_context_status"] == "present"
+    assert result.payload["ri_state"]["mcp_required_user_action_count"] >= 1
+    assert result.payload["mcp_registry"]["server_count"] == 1
+    assert result.payload["mcp_inspection"]["target_server_name"] == "unity"
+    assert result.payload["mcp_fallback_plan"]["target_server_name"] == "unity"
+    assert "mcp_context=present" in result.payload["ri_state"]["reason"]

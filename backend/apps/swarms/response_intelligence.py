@@ -12,6 +12,14 @@ from typing import Any
 
 from backend.apps.swarms.code_action import build_code_action_review_response
 from backend.apps.swarms.eval_harness import summarize_eval_memory_record
+from backend.apps.swarms.mcp_contract import (
+    summarize_mcp_evidence_bundle,
+    summarize_mcp_fallback_plan,
+    summarize_mcp_inspection,
+    summarize_mcp_sandbox_policy_decision,
+    summarize_mcp_tool_definition_budget,
+    summarize_mcp_tool_registry,
+)
 from backend.apps.swarms.workspace_intelligence import build_workspace_intelligence
 
 
@@ -37,6 +45,11 @@ class RIStateSnapshot:
     eval_stop_reason: str | None = None
     eval_blockers: list[str] = field(default_factory=list)
     eval_needs_refinement: bool = False
+    mcp_context_status: str | None = None
+    mcp_context_summary: str | None = None
+    mcp_required_user_action_count: int = 0
+    mcp_sandbox_decision: str | None = None
+    mcp_fallback_status: str | None = None
     available_actions: list[str] = field(default_factory=list)
     reason: str = ""
 
@@ -67,6 +80,83 @@ def _first_non_empty(*values: Any) -> str | None:
         if text:
             return text
     return None
+
+
+def _mcp_context_from_sources(*sources: dict[str, Any]) -> dict[str, Any]:
+    """Collect MCP context from caller-provided state only."""
+
+    for source in sources:
+        data = _as_dict(source)
+        registry = _as_dict(data.get("mcp_registry"))
+        inspection = _as_dict(data.get("mcp_inspection"))
+        fallback = _as_dict(data.get("mcp_fallback_plan"))
+        budget = _as_dict(data.get("mcp_tool_definition_budget"))
+        sandbox = _as_dict(data.get("mcp_sandbox_policy") or data.get("mcp_sandbox_policy_decision"))
+        evidence_bundle = _as_dict(data.get("mcp_evidence_bundle") or data.get("mcp_evidence"))
+
+        if not any([registry, inspection, fallback, budget, sandbox, evidence_bundle]):
+            continue
+
+        actions = []
+        for item in (
+            inspection.get("required_user_actions") if isinstance(inspection.get("required_user_actions"), list) else []
+        ):
+            if isinstance(item, dict):
+                actions.append(item)
+        for item in (
+            fallback.get("required_user_actions") if isinstance(fallback.get("required_user_actions"), list) else []
+        ):
+            if isinstance(item, dict):
+                actions.append(item)
+        for item in (
+            sandbox.get("required_user_actions") if isinstance(sandbox.get("required_user_actions"), list) else []
+        ):
+            if isinstance(item, dict):
+                actions.append(item)
+
+        summary_parts = []
+        if registry:
+            summary_parts.append(summarize_mcp_tool_registry(registry))
+        if inspection:
+            summary_parts.append(summarize_mcp_inspection(inspection))
+        if fallback:
+            summary_parts.append(summarize_mcp_fallback_plan(fallback))
+        if budget:
+            summary_parts.append(summarize_mcp_tool_definition_budget(budget))
+        if sandbox:
+            summary_parts.append(summarize_mcp_sandbox_policy_decision(sandbox))
+        if evidence_bundle:
+            summary_parts.append(summarize_mcp_evidence_bundle(evidence_bundle))
+
+        return {
+            "status": str(data.get("mcp_context_status") or "present"),
+            "summary": str(data.get("mcp_context_summary") or " | ".join(summary_parts) or "MCP Context: present"),
+            "registry": registry or None,
+            "inspection": inspection or None,
+            "fallback_plan": fallback or None,
+            "tool_definition_budget": budget or None,
+            "sandbox_policy": sandbox or None,
+            "evidence_bundle": evidence_bundle or None,
+            "required_user_actions": actions,
+            "required_user_action_count": int(data.get("mcp_required_user_action_count") or len(actions)),
+            "sandbox_decision": str(sandbox.get("decision") or "").strip() or None,
+            "fallback_status": str(fallback.get("status") or "").strip() or None,
+        }
+
+    return {
+        "status": "empty",
+        "summary": "MCP Context: empty",
+        "registry": None,
+        "inspection": None,
+        "fallback_plan": None,
+        "tool_definition_budget": None,
+        "sandbox_policy": None,
+        "evidence_bundle": None,
+        "required_user_actions": [],
+        "required_user_action_count": 0,
+        "sandbox_decision": None,
+        "fallback_status": None,
+    }
 
 
 def _eval_context_from_sources(*sources: dict[str, Any]) -> dict[str, Any]:
@@ -144,6 +234,7 @@ def build_ri_state_snapshot(
     claim_guard = _as_dict(final_result.get("claim_guard"))
     validation_result = _as_dict(final_result.get("validation_result"))
     eval_context = _eval_context_from_sources(payload, final_result)
+    mcp_context = _mcp_context_from_sources(payload, final_result)
 
     target_output_id = _first_non_empty(
         refinement_request.get("output_id"),
@@ -191,6 +282,12 @@ def build_ri_state_snapshot(
         reason_parts.append(f"eval_stop_reason={eval_context.get('stop_reason')}")
     if eval_context.get("blockers"):
         reason_parts.append(f"eval_blockers={len(eval_context.get('blockers') or [])}")
+    if mcp_context.get("status") == "present":
+        reason_parts.append("mcp_context=present")
+    if mcp_context.get("required_user_action_count"):
+        reason_parts.append(f"mcp_actions={mcp_context.get('required_user_action_count')}")
+    if mcp_context.get("sandbox_decision"):
+        reason_parts.append(f"mcp_sandbox={mcp_context.get('sandbox_decision')}")
     if route:
         reason_parts.append(f"route={route}")
 
@@ -215,6 +312,11 @@ def build_ri_state_snapshot(
         eval_stop_reason=eval_context.get("stop_reason"),
         eval_blockers=list(eval_context.get("blockers") or []),
         eval_needs_refinement=bool(eval_context.get("needs_refinement")),
+        mcp_context_status=mcp_context.get("status"),
+        mcp_context_summary=mcp_context.get("summary"),
+        mcp_required_user_action_count=int(mcp_context.get("required_user_action_count") or 0),
+        mcp_sandbox_decision=mcp_context.get("sandbox_decision"),
+        mcp_fallback_status=mcp_context.get("fallback_status"),
         available_actions=available_actions,
         reason="; ".join(reason_parts),
     )
@@ -341,6 +443,11 @@ def snapshot_payload(snapshot: RIStateSnapshot) -> dict[str, Any]:
             "eval_stop_reason": snapshot.eval_stop_reason,
             "eval_blockers": list(snapshot.eval_blockers),
             "eval_needs_refinement": snapshot.eval_needs_refinement,
+            "mcp_context_status": snapshot.mcp_context_status,
+            "mcp_context_summary": snapshot.mcp_context_summary,
+            "mcp_required_user_action_count": snapshot.mcp_required_user_action_count,
+            "mcp_sandbox_decision": snapshot.mcp_sandbox_decision,
+            "mcp_fallback_status": snapshot.mcp_fallback_status,
             "available_actions": snapshot.available_actions,
             "reason": snapshot.reason,
         }
@@ -449,6 +556,10 @@ def build_response_context(
         f"- eval_stop_reason: {snapshot.eval_stop_reason or 'none'}",
         f"- eval_needs_refinement: {snapshot.eval_needs_refinement}",
         f"- eval_blockers: {', '.join(snapshot.eval_blockers) if snapshot.eval_blockers else 'none'}",
+        f"- mcp_context_status: {snapshot.mcp_context_status or 'empty'}",
+        f"- mcp_required_user_actions: {snapshot.mcp_required_user_action_count}",
+        f"- mcp_sandbox_decision: {snapshot.mcp_sandbox_decision or 'none'}",
+        f"- mcp_fallback_status: {snapshot.mcp_fallback_status or 'none'}",
         "",
         "[action_semantics_policy]",
         "- action_stage is computed by the system and is authoritative.",
@@ -498,6 +609,22 @@ def build_response_context(
             f"- score: {_safe_preview(eval_context.get('score')) or 'none'}",
             f"- blockers: {', '.join(_safe_preview(item) for item in (eval_context.get('blockers') or [])[:max_items]) or 'none'}",
             f"- loop_id: {_safe_preview(eval_harness.get('loop_id')) or _safe_preview(eval_memory.get('loop_id')) or 'none'}",
+            "",
+        ])
+
+    mcp_context = _mcp_context_from_sources(payload, final_result)
+    if mcp_context.get("status") == "present":
+        sandbox = _as_dict(mcp_context.get("sandbox_policy"))
+        fallback = _as_dict(mcp_context.get("fallback_plan"))
+        inspection = _as_dict(mcp_context.get("inspection"))
+        lines.extend([
+            "[mcp_context]",
+            f"- status: {_safe_preview(mcp_context.get('status')) or 'present'}",
+            f"- summary: {_safe_preview(mcp_context.get('summary'), limit=700) or 'none'}",
+            f"- required_user_action_count: {mcp_context.get('required_user_action_count') or 0}",
+            f"- sandbox_decision: {_safe_preview(sandbox.get('decision')) or 'none'}",
+            f"- fallback_status: {_safe_preview(fallback.get('status')) or 'none'}",
+            f"- inspection_status: {_safe_preview(inspection.get('status')) or 'none'}",
             "",
         ])
 
@@ -585,6 +712,14 @@ def build_ri_result(
     if eval_context.get("status") == "present":
         payload["eval_harness"] = eval_context.get("eval_harness")
         payload["eval_memory_record"] = eval_context.get("eval_memory_record")
+    mcp_context = _mcp_context_from_sources(payload, _as_dict(getattr(swarm, "final_result", None)))
+    if mcp_context.get("status") == "present":
+        payload["mcp_registry"] = mcp_context.get("registry")
+        payload["mcp_inspection"] = mcp_context.get("inspection")
+        payload["mcp_fallback_plan"] = mcp_context.get("fallback_plan")
+        payload["mcp_tool_definition_budget"] = mcp_context.get("tool_definition_budget")
+        payload["mcp_sandbox_policy"] = mcp_context.get("sandbox_policy")
+        payload["mcp_evidence_bundle"] = mcp_context.get("evidence_bundle")
 
     context = build_response_context(
         swarm,

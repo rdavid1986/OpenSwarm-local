@@ -12,6 +12,15 @@ from typing import Any
 
 from backend.apps.swarms.code_action import normalize_code_action_contract, summarize_code_action_contract
 from backend.apps.swarms.eval_harness import build_eval_memory_record, build_eval_loop_contract, summarize_eval_memory_record
+from backend.apps.swarms.mcp_contract import (
+    build_mcp_evidence_bundle,
+    summarize_mcp_evidence_bundle,
+    summarize_mcp_fallback_plan,
+    summarize_mcp_inspection,
+    summarize_mcp_sandbox_policy_decision,
+    summarize_mcp_tool_definition_budget,
+    summarize_mcp_tool_registry,
+)
 from backend.apps.swarms.project_memory import (
     build_project_memory_manifest,
     extract_project_memory_refs,
@@ -231,6 +240,139 @@ def _pending_code_action_payload(
     }
 
 
+def _mcp_context_payload(
+    *,
+    mcp_registry: dict[str, Any] | None,
+    mcp_inspection: dict[str, Any] | None,
+    mcp_fallback_plan: dict[str, Any] | None,
+    mcp_evidence_bundle: dict[str, Any] | None,
+    mcp_tool_definition_budget: dict[str, Any] | None,
+    mcp_sandbox_policy: dict[str, Any] | None,
+    available_context: dict[str, Any],
+) -> dict[str, Any]:
+    raw_registry = (
+        mcp_registry
+        if isinstance(mcp_registry, dict)
+        else available_context.get("mcp_registry")
+        if isinstance(available_context.get("mcp_registry"), dict)
+        else None
+    )
+    raw_inspection = (
+        mcp_inspection
+        if isinstance(mcp_inspection, dict)
+        else available_context.get("mcp_inspection")
+        if isinstance(available_context.get("mcp_inspection"), dict)
+        else None
+    )
+    raw_fallback = (
+        mcp_fallback_plan
+        if isinstance(mcp_fallback_plan, dict)
+        else available_context.get("mcp_fallback_plan")
+        if isinstance(available_context.get("mcp_fallback_plan"), dict)
+        else None
+    )
+    raw_budget = (
+        mcp_tool_definition_budget
+        if isinstance(mcp_tool_definition_budget, dict)
+        else available_context.get("mcp_tool_definition_budget")
+        if isinstance(available_context.get("mcp_tool_definition_budget"), dict)
+        else None
+    )
+    raw_sandbox = (
+        mcp_sandbox_policy
+        if isinstance(mcp_sandbox_policy, dict)
+        else available_context.get("mcp_sandbox_policy")
+        if isinstance(available_context.get("mcp_sandbox_policy"), dict)
+        else available_context.get("mcp_sandbox_policy_decision")
+        if isinstance(available_context.get("mcp_sandbox_policy_decision"), dict)
+        else None
+    )
+    raw_evidence = (
+        mcp_evidence_bundle
+        if isinstance(mcp_evidence_bundle, dict)
+        else available_context.get("mcp_evidence_bundle")
+        if isinstance(available_context.get("mcp_evidence_bundle"), dict)
+        else available_context.get("mcp_evidence")
+        if isinstance(available_context.get("mcp_evidence"), dict)
+        else None
+    )
+
+    if not any([raw_registry, raw_inspection, raw_fallback, raw_budget, raw_sandbox, raw_evidence]):
+        return {
+            "status": EMPTY,
+            "summary": "MCP Context: empty",
+            "registry": None,
+            "inspection": None,
+            "fallback_plan": None,
+            "tool_definition_budget": None,
+            "sandbox_policy": None,
+            "evidence_bundle": None,
+            "required_user_actions": [],
+            "required_user_action_count": 0,
+        }
+
+    evidence_bundle = (
+        raw_evidence
+        if raw_evidence
+        else build_mcp_evidence_bundle(
+            records=[],
+            source="state_context",
+            metadata={
+                "has_registry": bool(raw_registry),
+                "has_inspection": bool(raw_inspection),
+                "has_fallback_plan": bool(raw_fallback),
+                "has_tool_definition_budget": bool(raw_budget),
+                "has_sandbox_policy": bool(raw_sandbox),
+            },
+        )
+    )
+
+    actions = [
+        *(
+            raw_inspection.get("required_user_actions", [])
+            if isinstance(raw_inspection, dict) and isinstance(raw_inspection.get("required_user_actions"), list)
+            else []
+        ),
+        *(
+            raw_fallback.get("required_user_actions", [])
+            if isinstance(raw_fallback, dict) and isinstance(raw_fallback.get("required_user_actions"), list)
+            else []
+        ),
+        *(
+            raw_sandbox.get("required_user_actions", [])
+            if isinstance(raw_sandbox, dict) and isinstance(raw_sandbox.get("required_user_actions"), list)
+            else []
+        ),
+    ]
+
+    summary_parts = []
+    if raw_registry:
+        summary_parts.append(summarize_mcp_tool_registry(raw_registry))
+    if raw_inspection:
+        summary_parts.append(summarize_mcp_inspection(raw_inspection))
+    if raw_fallback:
+        summary_parts.append(summarize_mcp_fallback_plan(raw_fallback))
+    if raw_budget:
+        summary_parts.append(summarize_mcp_tool_definition_budget(raw_budget))
+    if raw_sandbox:
+        summary_parts.append(summarize_mcp_sandbox_policy_decision(raw_sandbox))
+    if evidence_bundle:
+        summary_parts.append(summarize_mcp_evidence_bundle(evidence_bundle))
+
+    return {
+        "status": "present",
+        "summary": " | ".join(summary_parts) if summary_parts else "MCP Context: present",
+        "registry": normalize_state_context_value(raw_registry),
+        "inspection": normalize_state_context_value(raw_inspection),
+        "fallback_plan": normalize_state_context_value(raw_fallback),
+        "tool_definition_budget": normalize_state_context_value(raw_budget),
+        "sandbox_policy": normalize_state_context_value(raw_sandbox),
+        "evidence_bundle": normalize_state_context_value(evidence_bundle),
+        "required_user_actions": normalize_state_context_value(actions),
+        "required_user_action_count": len(actions),
+    }
+
+
 def _eval_harness_payload(
     *,
     eval_harness: dict[str, Any] | None,
@@ -324,6 +466,12 @@ def build_state_context_payload(
     pending_code_actions: list[Any] | None = None,
     eval_harness: dict[str, Any] | None = None,
     eval_memory_record: dict[str, Any] | None = None,
+    mcp_registry: dict[str, Any] | None = None,
+    mcp_inspection: dict[str, Any] | None = None,
+    mcp_fallback_plan: dict[str, Any] | None = None,
+    mcp_evidence_bundle: dict[str, Any] | None = None,
+    mcp_tool_definition_budget: dict[str, Any] | None = None,
+    mcp_sandbox_policy: dict[str, Any] | None = None,
     available_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a normalized snapshot from caller-provided state only."""
@@ -357,6 +505,15 @@ def build_state_context_payload(
     resolved_eval_harness = _eval_harness_payload(
         eval_harness=eval_harness,
         eval_memory_record=eval_memory_record,
+        available_context=context,
+    )
+    resolved_mcp_context = _mcp_context_payload(
+        mcp_registry=mcp_registry,
+        mcp_inspection=mcp_inspection,
+        mcp_fallback_plan=mcp_fallback_plan,
+        mcp_evidence_bundle=mcp_evidence_bundle,
+        mcp_tool_definition_budget=mcp_tool_definition_budget,
+        mcp_sandbox_policy=mcp_sandbox_policy,
         available_context=context,
     )
 
@@ -410,6 +567,16 @@ def build_state_context_payload(
         "eval_harness_summary": resolved_eval_harness["summary"],
         "eval_harness": resolved_eval_harness["loop"],
         "eval_memory_record": resolved_eval_harness["memory_record"],
+        "mcp_context_status": resolved_mcp_context["status"],
+        "mcp_context_summary": resolved_mcp_context["summary"],
+        "mcp_registry": resolved_mcp_context["registry"],
+        "mcp_inspection": resolved_mcp_context["inspection"],
+        "mcp_fallback_plan": resolved_mcp_context["fallback_plan"],
+        "mcp_tool_definition_budget": resolved_mcp_context["tool_definition_budget"],
+        "mcp_sandbox_policy": resolved_mcp_context["sandbox_policy"],
+        "mcp_evidence_bundle": resolved_mcp_context["evidence_bundle"],
+        "mcp_required_user_actions": resolved_mcp_context["required_user_actions"],
+        "mcp_required_user_action_count": resolved_mcp_context["required_user_action_count"],
         "available_context_summary": _available_context_summary(context),
     }
     return normalize_state_context_value(payload)
@@ -457,6 +624,13 @@ def build_state_context_prompt(context: dict[str, Any]) -> str:
             f"- summary: {_as_dict(normalized).get('eval_harness_summary') or 'Eval Harness: empty'}",
             "- loop: " + json.dumps(_as_dict(normalized).get("eval_harness") or {}, ensure_ascii=False, sort_keys=True),
             "- memory_record: " + json.dumps(_as_dict(normalized).get("eval_memory_record") or {}, ensure_ascii=False, sort_keys=True),
+            "MCP Context:",
+            f"- status: {_as_dict(normalized).get('mcp_context_status') or EMPTY}",
+            f"- summary: {_as_dict(normalized).get('mcp_context_summary') or 'MCP Context: empty'}",
+            f"- required_user_action_count: {_as_dict(normalized).get('mcp_required_user_action_count') or 0}",
+            "- required_user_actions: " + json.dumps(_as_dict(normalized).get("mcp_required_user_actions") or [], ensure_ascii=False, sort_keys=True),
+            "- evidence_bundle: " + json.dumps(_as_dict(normalized).get("mcp_evidence_bundle") or {}, ensure_ascii=False, sort_keys=True),
+            "- sandbox_policy: " + json.dumps(_as_dict(normalized).get("mcp_sandbox_policy") or {}, ensure_ascii=False, sort_keys=True),
             "Project Memory:",
             f"- status: {_as_dict(normalized).get('project_memory_status') or EMPTY}",
             f"- summary: {_as_dict(normalized).get('project_memory_summary') or 'Project Memory: empty'}",

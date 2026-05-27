@@ -2,6 +2,14 @@ import json
 
 from backend.apps.swarms.code_action import build_code_action_contract, build_code_action_pending_action
 from backend.apps.swarms.eval_harness import build_eval_evaluator_node, build_eval_loop_contract, build_eval_memory_record
+from backend.apps.swarms.mcp_contract import (
+    build_mcp_evidence_record,
+    build_mcp_fallback_adapter_contract,
+    build_mcp_fallback_plan,
+    build_mcp_sandbox_policy_decision,
+    build_mcp_tool_registry,
+    inspect_mcp_tool_registry,
+)
 from backend.apps.swarms.state_context import (
     build_state_context_payload,
     build_state_context_prompt,
@@ -434,3 +442,83 @@ def test_state_context_prompt_includes_eval_harness_context():
     assert "eval-loop-4" in prompt
     assert '"executed": false' in prompt
     assert '"persisted": false' in prompt
+
+
+def test_state_context_payload_accepts_mcp_context_from_arguments():
+    registry = build_mcp_tool_registry(
+        tools=[
+            {"name": "Unity", "mcp_config": {"type": "stdio"}, "auth_status": "expired"},
+        ],
+    )
+    inspection = inspect_mcp_tool_registry(registry, target_server_name="Unity")
+    fallback_plan = build_mcp_fallback_plan(
+        inspection=inspection,
+        fallback_adapters=[
+            build_mcp_fallback_adapter_contract(
+                server_name="Unity",
+                fallback_type="script",
+                script_path="tools/unity_cli_adapter.py",
+            )
+        ],
+        target_server_name="Unity",
+    )
+    sandbox_policy = build_mcp_sandbox_policy_decision(
+        fallback_plan=fallback_plan,
+        allowed_script_roots=["tools/unity"],
+    )
+    evidence = build_mcp_evidence_record(
+        server_name="Unity",
+        registry=registry,
+        inspection=inspection,
+        fallback_plan=fallback_plan,
+    )
+
+    payload = build_state_context_payload(
+        mcp_registry=registry,
+        mcp_inspection=inspection,
+        mcp_fallback_plan=fallback_plan,
+        mcp_sandbox_policy=sandbox_policy,
+        mcp_evidence_bundle={"contract_kind": "mcp_evidence_bundle", "records": [evidence], "record_count": 1},
+    )
+
+    assert payload["mcp_context_status"] == "present"
+    assert "MCP Registry:" in payload["mcp_context_summary"]
+    assert "MCP Inspection:" in payload["mcp_context_summary"]
+    assert "MCP Fallback Plan:" in payload["mcp_context_summary"]
+    assert "MCP Sandbox Policy:" in payload["mcp_context_summary"]
+    assert payload["mcp_registry"]["server_count"] == 1
+    assert payload["mcp_inspection"]["target_server_name"] == "unity"
+    assert payload["mcp_fallback_plan"]["target_server_name"] == "unity"
+    assert payload["mcp_sandbox_policy"]["contract_kind"] == "mcp_sandbox_policy_decision"
+    assert payload["mcp_evidence_bundle"]["record_count"] == 1
+    assert payload["mcp_required_user_action_count"] >= 1
+
+
+def test_state_context_payload_accepts_mcp_context_from_available_context():
+    registry = build_mcp_tool_registry(
+        tools=[
+            {"name": "Unity", "mcp_config": {"type": "stdio"}, "auth_status": "connected"},
+        ],
+        active_mcps=["Unity"],
+    )
+
+    payload = build_state_context_payload(
+        available_context={"mcp_registry": registry},
+    )
+
+    assert payload["mcp_context_status"] == "present"
+    assert payload["mcp_registry"]["active_server_count"] == 1
+    assert "MCP Registry:" in payload["mcp_context_summary"]
+
+
+def test_state_context_prompt_includes_mcp_context():
+    inspection = inspect_mcp_tool_registry(build_mcp_tool_registry(tools=[]), target_server_name="Unity")
+    payload = build_state_context_payload(mcp_inspection=inspection)
+
+    prompt = build_state_context_prompt(payload)
+
+    assert "MCP Context:" in prompt
+    assert "status: present" in prompt
+    assert "mcp_target_not_installed" in prompt
+    assert "tools/mcp/unity" in prompt
+    assert '"executed": false' in prompt
