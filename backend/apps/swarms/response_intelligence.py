@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from backend.apps.swarms.code_action import build_code_action_review_response
+from backend.apps.swarms.eval_harness import summarize_eval_memory_record
 from backend.apps.swarms.workspace_intelligence import build_workspace_intelligence
 
 
@@ -31,6 +32,11 @@ class RIStateSnapshot:
     evidence_count: int = 0
     final_evidence_count: int = 0
     approval_count: int = 0
+    eval_harness_status: str | None = None
+    eval_harness_summary: str | None = None
+    eval_stop_reason: str | None = None
+    eval_blockers: list[str] = field(default_factory=list)
+    eval_needs_refinement: bool = False
     available_actions: list[str] = field(default_factory=list)
     reason: str = ""
 
@@ -63,6 +69,58 @@ def _first_non_empty(*values: Any) -> str | None:
     return None
 
 
+def _eval_context_from_sources(*sources: dict[str, Any]) -> dict[str, Any]:
+    """Collect eval harness context from caller-provided state only."""
+
+    for source in sources:
+        data = _as_dict(source)
+        eval_harness = _as_dict(data.get("eval_harness") or data.get("eval_loop"))
+        eval_memory = _as_dict(data.get("eval_memory_record"))
+        if not eval_harness and not eval_memory:
+            continue
+
+        stop_decision = _as_dict(eval_harness.get("stop_decision"))
+        if not stop_decision and eval_memory:
+            stop_decision = _as_dict(eval_memory.get("final_decision"))
+
+        blockers = []
+        for item in list(stop_decision.get("blockers") or []) + list(eval_memory.get("blockers") or []):
+            text = str(item).strip()
+            if text and text not in blockers:
+                blockers.append(text)
+
+        summary = (
+            str(data.get("eval_harness_summary") or "").strip()
+            or summarize_eval_memory_record(eval_memory)
+            if eval_memory
+            else "Eval Harness: present"
+        )
+
+        return {
+            "status": str(data.get("eval_harness_status") or "present"),
+            "summary": summary,
+            "eval_harness": eval_harness or None,
+            "eval_memory_record": eval_memory or None,
+            "stop_reason": str(stop_decision.get("reason") or eval_memory.get("reason") or "").strip() or None,
+            "blockers": blockers,
+            "needs_refinement": bool(stop_decision.get("needs_refinement") or eval_memory.get("needs_refinement")),
+            "passed": bool(stop_decision.get("passed") or eval_memory.get("passed")),
+            "score": stop_decision.get("score", eval_memory.get("score")),
+        }
+
+    return {
+        "status": "empty",
+        "summary": "Eval Harness: empty",
+        "eval_harness": None,
+        "eval_memory_record": None,
+        "stop_reason": None,
+        "blockers": [],
+        "needs_refinement": False,
+        "passed": False,
+        "score": None,
+    }
+
+
 def build_ri_state_snapshot(
     swarm: Any,
     *,
@@ -85,6 +143,7 @@ def build_ri_state_snapshot(
 
     claim_guard = _as_dict(final_result.get("claim_guard"))
     validation_result = _as_dict(final_result.get("validation_result"))
+    eval_context = _eval_context_from_sources(payload, final_result)
 
     target_output_id = _first_non_empty(
         refinement_request.get("output_id"),
@@ -126,6 +185,12 @@ def build_ri_state_snapshot(
         reason_parts.append(f"target_output_id={target_output_id}")
     if project_intake_state.get("status"):
         reason_parts.append(f"project_intake_status={project_intake_state.get('status')}")
+    if eval_context.get("status") == "present":
+        reason_parts.append("eval_harness=present")
+    if eval_context.get("stop_reason"):
+        reason_parts.append(f"eval_stop_reason={eval_context.get('stop_reason')}")
+    if eval_context.get("blockers"):
+        reason_parts.append(f"eval_blockers={len(eval_context.get('blockers') or [])}")
     if route:
         reason_parts.append(f"route={route}")
 
@@ -145,6 +210,11 @@ def build_ri_state_snapshot(
         evidence_count=len(getattr(swarm, "evidence", []) or []),
         final_evidence_count=len(getattr(swarm, "final_evidence", []) or []),
         approval_count=len(getattr(swarm, "experimental_approvals", []) or []),
+        eval_harness_status=eval_context.get("status"),
+        eval_harness_summary=eval_context.get("summary"),
+        eval_stop_reason=eval_context.get("stop_reason"),
+        eval_blockers=list(eval_context.get("blockers") or []),
+        eval_needs_refinement=bool(eval_context.get("needs_refinement")),
         available_actions=available_actions,
         reason="; ".join(reason_parts),
     )
@@ -266,6 +336,11 @@ def snapshot_payload(snapshot: RIStateSnapshot) -> dict[str, Any]:
             "evidence_count": snapshot.evidence_count,
             "final_evidence_count": snapshot.final_evidence_count,
             "approval_count": snapshot.approval_count,
+            "eval_harness_status": snapshot.eval_harness_status,
+            "eval_harness_summary": snapshot.eval_harness_summary,
+            "eval_stop_reason": snapshot.eval_stop_reason,
+            "eval_blockers": list(snapshot.eval_blockers),
+            "eval_needs_refinement": snapshot.eval_needs_refinement,
             "available_actions": snapshot.available_actions,
             "reason": snapshot.reason,
         }
@@ -370,6 +445,10 @@ def build_response_context(
         f"- implementation_status: {snapshot.implementation_status or 'none'}",
         f"- claim_guard_status: {snapshot.claim_guard_status or 'none'}",
         f"- available_actions: {', '.join(snapshot.available_actions) if snapshot.available_actions else 'none'}",
+        f"- eval_harness_status: {snapshot.eval_harness_status or 'empty'}",
+        f"- eval_stop_reason: {snapshot.eval_stop_reason or 'none'}",
+        f"- eval_needs_refinement: {snapshot.eval_needs_refinement}",
+        f"- eval_blockers: {', '.join(snapshot.eval_blockers) if snapshot.eval_blockers else 'none'}",
         "",
         "[action_semantics_policy]",
         "- action_stage is computed by the system and is authoritative.",
@@ -402,6 +481,23 @@ def build_response_context(
             f"- status: {_safe_preview(project_intake_state.get('status')) or 'none'}",
             f"- current_question_id: {_safe_preview(project_intake_state.get('current_question_id')) or 'none'}",
             f"- answered_count: {len(answers)}",
+            "",
+        ])
+
+    eval_context = _eval_context_from_sources(payload, final_result)
+    if eval_context.get("status") == "present":
+        eval_memory = _as_dict(eval_context.get("eval_memory_record"))
+        eval_harness = _as_dict(eval_context.get("eval_harness"))
+        lines.extend([
+            "[eval_harness]",
+            f"- status: {_safe_preview(eval_context.get('status')) or 'present'}",
+            f"- summary: {_safe_preview(eval_context.get('summary'), limit=500) or 'none'}",
+            f"- stop_reason: {_safe_preview(eval_context.get('stop_reason')) or 'none'}",
+            f"- needs_refinement: {bool(eval_context.get('needs_refinement'))}",
+            f"- passed: {bool(eval_context.get('passed'))}",
+            f"- score: {_safe_preview(eval_context.get('score')) or 'none'}",
+            f"- blockers: {', '.join(_safe_preview(item) for item in (eval_context.get('blockers') or [])[:max_items]) or 'none'}",
+            f"- loop_id: {_safe_preview(eval_harness.get('loop_id')) or _safe_preview(eval_memory.get('loop_id')) or 'none'}",
             "",
         ])
 
@@ -485,6 +581,10 @@ def build_ri_result(
         payload=payload,
     )
     payload.update(snapshot_payload(state))
+    eval_context = _eval_context_from_sources(payload, _as_dict(getattr(swarm, "final_result", None)))
+    if eval_context.get("status") == "present":
+        payload["eval_harness"] = eval_context.get("eval_harness")
+        payload["eval_memory_record"] = eval_context.get("eval_memory_record")
 
     context = build_response_context(
         swarm,

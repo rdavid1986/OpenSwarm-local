@@ -1,5 +1,6 @@
 from backend.apps.agents.orchestration.models import AgentContract, SwarmState
 from backend.apps.swarms.code_action import build_code_action_contract, build_code_action_pending_action
+from backend.apps.swarms.eval_harness import build_eval_critic_node, build_eval_evaluator_node, build_eval_loop_contract, build_eval_memory_record
 from backend.apps.swarms.response_intelligence import build_grounded_code_action_response, build_grounded_refinement_response, build_response_context
 from backend.apps.swarms.swarms import _refinement_request_response
 
@@ -252,3 +253,106 @@ def test_grounded_code_action_response_explains_blocked_pending_action():
     assert "Guard: blocked" in (result.assistant_content or "")
     assert "dangerous_command" in (result.assistant_content or "")
     assert "no se ejecutó nada" in (result.assistant_content or "")
+
+
+def test_response_context_includes_eval_harness_for_model_reasoning():
+    swarm = _chat_swarm()
+    loop = build_eval_loop_contract(
+        loop_id="ri-eval-loop-1",
+        task_kind="response_intelligence",
+        nodes=[
+            build_eval_critic_node(
+                findings=[{"finding_id": "finding-ri-1", "summary": "Missing evidence."}]
+            ),
+            build_eval_evaluator_node(
+                metrics=[{"metric_id": "grounding", "name": "Grounding", "status": "failed", "score": 0.2}],
+                blockers=["missing evidence"],
+            ),
+        ],
+    )
+    swarm.final_result = {"eval_harness": loop}
+
+    context = build_response_context(
+        swarm,
+        route="chat",
+        user_message="explica estado",
+    )
+
+    assert "[eval_harness]" in context
+    assert "ri-eval-loop-1" in context
+    assert "stop_reason: blocked" in context
+    assert "needs_refinement: True" in context
+    assert "blockers: missing evidence" in context
+
+
+def test_ri_state_snapshot_includes_eval_harness_summary_and_blockers():
+    swarm = _chat_swarm()
+    loop = build_eval_loop_contract(
+        loop_id="ri-eval-loop-2",
+        task_kind="code_action_review",
+        nodes=[
+            build_eval_evaluator_node(
+                metrics=[{"metric_id": "safety", "name": "Safety", "status": "failed", "score": 0.1}],
+                blockers=["false execution claim"],
+            )
+        ],
+    )
+    swarm.final_result = {"eval_harness": loop}
+
+    result = build_grounded_refinement_response(
+        swarm,
+        user_message="estado",
+        refinement_request={
+            "output_id": "out-eval-ri",
+            "source_swarm_id": "swarm-eval-ri",
+            "requested_change": "Revisar evidencia.",
+            "status": "received",
+        },
+    )
+
+    assert result.payload["ri_state"]["eval_harness_status"] == "present"
+    assert result.payload["ri_state"]["eval_stop_reason"] == "blocked"
+    assert result.payload["ri_state"]["eval_blockers"] == ["false execution claim"]
+    assert result.payload["ri_state"]["eval_needs_refinement"] is True
+    assert "eval_harness=present" in result.payload["ri_state"]["reason"]
+    assert "eval_stop_reason=blocked" in result.payload["ri_state"]["reason"]
+    assert result.payload["eval_harness"]["loop_id"] == "ri-eval-loop-2"
+    assert result.payload["eval_memory_record"] is None
+
+
+def test_ri_result_accepts_eval_memory_record_from_payload_without_execution():
+    swarm = _chat_swarm()
+    loop = build_eval_loop_contract(
+        loop_id="ri-eval-loop-3",
+        task_kind="response_intelligence",
+        nodes=[
+            build_eval_evaluator_node(
+                metrics=[{"metric_id": "grounding", "name": "Grounding", "status": "passed", "score": 1.0}],
+                evidence_refs=["state_context"],
+            )
+        ],
+    )
+    memory = build_eval_memory_record(loop_contract=loop, memory_id="ri-memory-3")
+
+    result = build_grounded_code_action_response(
+        swarm,
+        user_message="review with eval memory",
+        pending_code_action=build_code_action_pending_action(
+            build_code_action_contract(action_id="act-eval-ri", action_type="run_command"),
+            granted_permissions=["command_execution"],
+        ),
+        swarm_mode="debug",
+    )
+
+    result_with_eval = build_response_context(
+        swarm,
+        route="code_action_review",
+        user_message="review with eval memory",
+        payload={"eval_memory_record": memory},
+    )
+
+    assert result.payload["code_action_review"]["executed"] is False
+    assert "[eval_harness]" in result_with_eval
+    assert "ri-eval-loop-3" in result_with_eval
+    assert "passed: True" in result_with_eval
+    assert "score: 1.0" in result_with_eval
