@@ -4,14 +4,18 @@ from backend.apps.swarms.mcp_contract import (
     build_mcp_host_contract,
     build_mcp_required_user_action,
     build_mcp_server_contract,
+    build_mcp_tool_definition_budget,
     build_mcp_tool_registry,
+    estimate_mcp_definition_cost,
     filter_mcp_registry_servers,
     inspect_mcp_server_contract,
     inspect_mcp_tool_registry,
     sanitize_mcp_server_name,
+    score_mcp_server_for_budget,
     search_mcp_tool_registry,
     summarize_mcp_host_contract,
     summarize_mcp_inspection,
+    summarize_mcp_tool_definition_budget,
     summarize_mcp_tool_registry,
 )
 
@@ -404,4 +408,102 @@ def test_inspect_mcp_tool_registry_summarizes_ready_and_blocked_servers():
     assert any(action["server_name"] == "gmail" for action in inspection["required_user_actions"])
     assert "MCP Inspection:" in summary
     assert "actions=2" in summary
+    assert "executed=False" in summary
+
+
+def test_estimate_mcp_definition_cost_is_deterministic_and_nonzero():
+    server = build_mcp_server_contract(
+        name="Unity",
+        description="Unity Editor automation",
+        mcp_config={"type": "stdio"},
+        tool_permissions={"create_scene": "ask", "delete_asset": "deny"},
+        active=True,
+    )
+
+    cost = estimate_mcp_definition_cost(server)
+
+    assert cost > 160
+    assert cost == estimate_mcp_definition_cost(server)
+
+
+def test_score_mcp_server_for_budget_prioritizes_active_and_query_matches():
+    active = build_mcp_server_contract(name="Unity", description="Unity Editor", active=True)
+    inactive = build_mcp_server_contract(name="Gmail", description="Email", active=False)
+
+    assert score_mcp_server_for_budget(active, query="unity") > score_mcp_server_for_budget(inactive, query="unity")
+
+
+def test_build_mcp_tool_definition_budget_includes_high_priority_servers_first():
+    registry = build_mcp_tool_registry(
+        tools=[
+            {"name": "Unity", "description": "Unity Editor", "mcp_config": {"type": "stdio"}, "auth_status": "connected"},
+            {"name": "Gmail", "description": "Email", "mcp_config": {"type": "stdio"}, "auth_status": "connected"},
+            {"name": "Slack", "description": "Chat", "mcp_config": {"type": "stdio"}, "auth_status": "connected"},
+        ],
+        active_mcps=["Unity"],
+    )
+
+    budget = build_mcp_tool_definition_budget(
+        registry,
+        max_definition_cost=600,
+        max_servers=2,
+        query="unity",
+    )
+
+    assert budget["contract_kind"] == "mcp_tool_definition_budget"
+    assert budget["included_count"] >= 1
+    assert budget["included_servers"][0]["server_name"] == "unity"
+    assert budget["included_servers"][0]["callable_now"] is True
+    assert budget["used_definition_cost"] <= 600
+    assert budget["max_servers"] == 2
+    assert budget["executed"] is False
+
+
+def test_build_mcp_tool_definition_budget_defers_when_server_limit_is_hit():
+    registry = build_mcp_tool_registry(
+        tools=[
+            {"name": "A", "mcp_config": {"type": "stdio"}, "auth_status": "connected"},
+            {"name": "B", "mcp_config": {"type": "stdio"}, "auth_status": "connected"},
+            {"name": "C", "mcp_config": {"type": "stdio"}, "auth_status": "connected"},
+        ],
+        active_mcps=["A"],
+    )
+
+    budget = build_mcp_tool_definition_budget(registry, max_definition_cost=5000, max_servers=1)
+
+    assert budget["included_count"] == 1
+    assert budget["deferred_count"] == 2
+    assert all(item["defer_reason"] == "server_limit" for item in budget["deferred_servers"])
+
+
+def test_build_mcp_tool_definition_budget_can_include_candidate_summaries():
+    registry = build_mcp_tool_registry(
+        registry_servers=[
+            {"name": "community/unity", "title": "Unity MCP", "description": "Unity automation"},
+            {"name": "community/blender", "title": "Blender MCP", "description": "Blender automation"},
+        ]
+    )
+
+    budget = build_mcp_tool_definition_budget(registry, include_candidates=True, max_servers=1)
+
+    assert budget["included_count"] == 0
+    assert budget["candidate_count"] == 1
+    assert budget["candidate_summaries"][0]["server_name"] == "community-unity"
+    assert budget["candidate_summaries"][0]["callable_now"] is False
+
+
+def test_summarize_mcp_tool_definition_budget_is_compact_and_non_executing():
+    registry = build_mcp_tool_registry(
+        tools=[
+            {"name": "Unity", "mcp_config": {"type": "stdio"}, "auth_status": "connected"},
+        ],
+        active_mcps=["Unity"],
+    )
+    budget = build_mcp_tool_definition_budget(registry, max_definition_cost=1000)
+
+    summary = summarize_mcp_tool_definition_budget(budget)
+
+    assert "MCP Tool Definition Budget:" in summary
+    assert "included=1" in summary
+    assert "used=" in summary
     assert "executed=False" in summary

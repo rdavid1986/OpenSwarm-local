@@ -654,3 +654,146 @@ def summarize_mcp_inspection(inspection: dict[str, Any] | None) -> str:
         f"findings={len(_as_list(data.get('findings')))}; "
         "executed=False"
     )
+
+
+def estimate_mcp_definition_cost(server: dict[str, Any] | None) -> int:
+    """Estimate prompt/tool-definition cost for one MCP server contract."""
+
+    data = _as_dict(server)
+    base = 160
+    text_cost = (
+        len(_as_text(data.get("name")))
+        + len(_as_text(data.get("description")))
+        + len(_as_text(data.get("server_name")))
+    )
+    allowed_tool_names = _as_list(data.get("allowed_tool_names"))
+    denied_tool_names = _as_list(data.get("denied_tool_names"))
+    permission_cost = 32 * (len(allowed_tool_names) + len(denied_tool_names))
+    transport_cost = 40 if data.get("transport") and data.get("transport") != "unknown" else 10
+    active_cost = 80 if data.get("callable_now") else 0
+    return max(1, base + text_cost + permission_cost + transport_cost + active_cost)
+
+
+def score_mcp_server_for_budget(
+    server: dict[str, Any] | None,
+    *,
+    query: str | None = None,
+) -> int:
+    """Score one MCP server for context inclusion priority."""
+
+    data = _as_dict(server)
+    query_text = _as_text(query).lower()
+    score = 0
+
+    if data.get("callable_now"):
+        score += 100
+    if data.get("gate_state") == "inactive":
+        score += 60
+    if data.get("gate_state") == "blocked":
+        score += 20
+    if data.get("allowed_by_client", True):
+        score += 25
+    if data.get("requires_user_approval"):
+        score += 10
+
+    haystack = " ".join([
+        _as_text(data.get("name")),
+        _as_text(data.get("server_name")),
+        _as_text(data.get("description")),
+        " ".join(_as_text(item) for item in _as_list(data.get("allowed_tool_names"))),
+    ]).lower()
+    if query_text and query_text in haystack:
+        score += 80
+
+    return score
+
+
+def build_mcp_tool_definition_budget(
+    registry: dict[str, Any] | None,
+    *,
+    max_definition_cost: int = 1200,
+    max_servers: int = 6,
+    query: str | None = None,
+    include_candidates: bool = False,
+) -> dict[str, Any]:
+    """Select MCP servers/candidates for prompt inclusion without loading tools."""
+
+    data = _as_dict(registry)
+    servers = [_as_dict(item) for item in _as_list(data.get("servers")) if _as_dict(item)]
+    candidates = [_as_dict(item) for item in _as_list(data.get("registry_candidates")) if _as_dict(item)]
+
+    scored: list[tuple[int, int, dict[str, Any]]] = []
+    for index, server in enumerate(servers):
+        cost = estimate_mcp_definition_cost(server)
+        score = score_mcp_server_for_budget(server, query=query)
+        scored.append((score, cost, server))
+
+    scored.sort(key=lambda item: (-item[0], item[1], _as_text(item[2].get("server_name"))))
+
+    included: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
+    used_cost = 0
+    safe_limit = max(0, int(max_servers or 0))
+    safe_budget = max(0, int(max_definition_cost or 0))
+
+    for score, cost, server in scored:
+        record = {
+            "server_name": server.get("server_name"),
+            "name": server.get("name"),
+            "gate_state": server.get("gate_state"),
+            "callable_now": bool(server.get("callable_now")),
+            "allowed_by_client": bool(server.get("allowed_by_client", True)),
+            "definition_cost": cost,
+            "priority_score": score,
+        }
+        if len(included) < safe_limit and used_cost + cost <= safe_budget:
+            included.append(record)
+            used_cost += cost
+        else:
+            reason = "server_limit" if len(included) >= safe_limit else "budget_limit"
+            deferred.append({**record, "defer_reason": reason})
+
+    candidate_records: list[dict[str, Any]] = []
+    if include_candidates:
+        for candidate in candidates[:safe_limit]:
+            candidate_records.append({
+                "server_name": candidate.get("server_name"),
+                "name": candidate.get("name"),
+                "title": candidate.get("title"),
+                "source": candidate.get("source"),
+                "callable_now": False,
+                "installed": False,
+                "definition_cost": 80 + len(_as_text(candidate.get("name"))) + len(_as_text(candidate.get("description"))),
+            })
+
+    return {
+        "contract_kind": "mcp_tool_definition_budget",
+        "max_definition_cost": safe_budget,
+        "used_definition_cost": used_cost,
+        "remaining_definition_cost": max(0, safe_budget - used_cost),
+        "max_servers": safe_limit,
+        "included_servers": included,
+        "deferred_servers": deferred,
+        "candidate_summaries": candidate_records,
+        "included_count": len(included),
+        "deferred_count": len(deferred),
+        "candidate_count": len(candidate_records),
+        "query": _as_text(query) or None,
+        "executed": False,
+        "execution_result": None,
+    }
+
+
+def summarize_mcp_tool_definition_budget(budget: dict[str, Any] | None) -> str:
+    """Return compact budget summary for prompts and audits."""
+
+    data = _as_dict(budget)
+    return (
+        "MCP Tool Definition Budget: "
+        f"included={data.get('included_count', 0)}; "
+        f"deferred={data.get('deferred_count', 0)}; "
+        f"candidates={data.get('candidate_count', 0)}; "
+        f"used={data.get('used_definition_cost', 0)}/"
+        f"{data.get('max_definition_cost', 0)}; "
+        "executed=False"
+    )
