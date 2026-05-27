@@ -225,6 +225,14 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
         value: m.value,
         label: m.label,
         context_window: m.context_window ?? 200_000,
+        estimated_context_window: m.estimated_context_window ?? null,
+        estimated_context_source: m.estimated_context_source ?? null,
+        configured_context_window: m.configured_context_window ?? null,
+        configured_context_source: m.configured_context_source ?? null,
+        declared_context_window: m.declared_context_window ?? null,
+        declared_context_source: m.declared_context_source ?? null,
+        loaded_context_window: m.loaded_context_window ?? null,
+        loaded_context_source: m.loaded_context_source ?? null,
         reasoning: !!m.reasoning,
         context_window_source: m.context_window_source ?? 'unknown',
         reasoning_source: m.reasoning_source ?? 'unknown',
@@ -398,6 +406,48 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
     };
   }, [model]);
 
+  const contextDisplayRows = (m: any) => {
+    const formatContext = (value: unknown) => {
+      const numeric = Number(value || 0);
+      return numeric > 0 ? numeric.toLocaleString() : 'No data';
+    };
+
+    return [
+      {
+        label: 'Configured context',
+        value: formatContext(m.configured_context_window),
+        source: m.configured_context_source || 'No data',
+        visible: Boolean(m.configured_context_window || m.configured_context_source),
+      },
+      {
+        label: 'Declared context',
+        value: formatContext(m.declared_context_window),
+        source: m.declared_context_source || 'No data',
+        visible: Boolean(m.declared_context_window || m.declared_context_source),
+      },
+      {
+        label: 'Loaded context',
+        value: formatContext(m.loaded_context_window),
+        source: m.loaded_context_source || 'No data',
+        visible: Boolean(m.loaded_context_window || m.loaded_context_source),
+      },
+      {
+        label: 'Estimated context',
+        value: formatContext(m.estimated_context_window || (m.context_window_source === 'estimated' ? m.context_window : null)),
+        source: m.estimated_context_source || (m.context_window_source === 'estimated' ? 'OpenSwarm estimate' : 'No data'),
+        visible: Boolean(m.estimated_context_window || m.context_window_source === 'estimated'),
+      },
+    ].filter((row) => row.visible);
+  };
+
+  const primaryContextLabel = (m: any) => {
+    if (m.configured_context_window) return 'Configured context';
+    if (m.declared_context_window) return 'Declared context';
+    if (m.loaded_context_window) return 'Loaded context';
+    if (m.context_window_source === 'estimated') return 'Estimated context';
+    return 'Context';
+  };
+
   const buildModelTooltip = useCallback((opt: any): React.ReactNode => {
     const [intel, speed, cost] = (Array.isArray(opt.tiers) && opt.tiers.length === 3)
       ? opt.tiers
@@ -541,10 +591,14 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
             </>
           )}
 
-          <span>{opt.context_window_source === 'estimated' ? 'Estimated context' : 'Context'}</span>
-          <span style={{ fontVariantNumeric: 'tabular-nums', color: c.text.secondary }}>
-            {(opt.context_window ?? 0).toLocaleString()}
-          </span>
+          {contextDisplayRows(opt).map((row) => (
+            <React.Fragment key={row.label}>
+              <span>{row.label}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums', color: c.text.secondary }}>
+                {row.value}
+              </span>
+            </React.Fragment>
+          ))}
 
           {billingKind === 'paid' && (opt.input_cost_per_1m || opt.output_cost_per_1m) ? (
             <>
@@ -722,7 +776,7 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
           </Box>
           {renderCompareBars(speed, SPEED_PALETTE, sourceLabel(m.tiers_source))}
           <Box sx={{ color: c.text.tertiary, fontSize: '0.65rem', fontWeight: 700 }}>
-            {m.context_window_source === 'estimated' ? 'Estimated context' : 'Context'}
+            {primaryContextLabel(m)}
           </Box>
           <Box component="span" sx={{ color: c.text.secondary, fontSize: '0.68rem', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
             {contextValue > 0 ? contextValue.toLocaleString() : 'None'}
@@ -751,7 +805,10 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
     ['modified', (m: any) => formatDate(m.modified_at)],
     ['cost', (m: any) => m.billing_kind === 'free' ? 'Free / Local' : (m.billing_kind || 'No data')],
     ['availability', (m: any) => m.availability === 'available' ? 'Available' : 'No data'],
-    ['context/source', (m: any) => m.context_window ? `${Number(m.context_window).toLocaleString()} (${sourceLabel(m.context_window_source)})` : 'No data'],
+    ['configured/context', (m: any) => m.configured_context_window ? `${Number(m.configured_context_window).toLocaleString()} (${m.configured_context_source || 'No source'})` : 'No data'],
+    ['declared/context', (m: any) => m.declared_context_window ? `${Number(m.declared_context_window).toLocaleString()} (${m.declared_context_source || 'No source'})` : 'No data'],
+    ['loaded/context', (m: any) => m.loaded_context_window ? `${Number(m.loaded_context_window).toLocaleString()} (${m.loaded_context_source || 'No source'})` : 'No data'],
+    ['estimated/context', (m: any) => m.estimated_context_window ? `${Number(m.estimated_context_window).toLocaleString()} (${m.estimated_context_source || 'No source'})` : 'No data'],
     ['reasoning/source', (m: any) => `${m.reasoning ? 'Yes' : 'No'} (${sourceLabel(m.reasoning_source)})`],
     ['runtime metrics', (m: any) => m.runtime_metrics ? 'Available' : 'No data'],
     ['eval results', (m: any) => m.eval_results ? 'Available' : 'No data'],
@@ -768,7 +825,10 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
       modified: 'Modified',
       cost: 'Cost',
       availability: 'Availability',
-      'context/source': 'Context source',
+      'configured/context': 'Configured context',
+      'declared/context': 'Declared context',
+      'loaded/context': 'Loaded context',
+      'estimated/context': 'Estimated context',
       'reasoning/source': 'Reasoning',
       'runtime metrics': 'Runtime metrics',
       'eval results': 'Eval results',
