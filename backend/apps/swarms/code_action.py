@@ -214,6 +214,196 @@ def build_code_action_contract(
     )
 
 
+DANGEROUS_COMMAND_TERMS = {
+    "rm -rf",
+    "git push",
+    "git push --force",
+    "format",
+    "del /s",
+    "rmdir /s",
+    "shutdown",
+    "curl ",
+    "wget ",
+    "powershell -enc",
+    "invoke-webrequest",
+    "invoke-expression",
+}
+
+WRITE_OPERATIONS = {"write", "create", "delete", "move", "copy", "patch"}
+WRITE_ACTION_TYPES = {"edit_file", "create_file", "delete_file", "move_file", "copy_file", "apply_patch"}
+
+
+def _normalize_path(value: Any) -> str:
+    return _as_text(value).replace("\\", "/").strip()
+
+
+def _path_has_traversal(path: str) -> bool:
+    normalized = _normalize_path(path)
+    parts = [part for part in normalized.split("/") if part]
+    return ".." in parts or normalized.startswith("/") or ":" in normalized.split("/")[0]
+
+
+def _path_matches(path: str, patterns: list[Any]) -> bool:
+    normalized_path = _normalize_path(path)
+    for raw_pattern in patterns:
+        pattern = _normalize_path(raw_pattern)
+        if not pattern:
+            continue
+        if normalized_path == pattern or normalized_path.startswith(pattern.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def _command_has_dangerous_term(command: str) -> list[str]:
+    lowered = _as_text(command, max_chars=1000).lower()
+    return sorted(term for term in DANGEROUS_COMMAND_TERMS if term in lowered)
+
+
+def _guard_risk_level(reasons: list[dict[str, Any]], fallback: str) -> str:
+    if any(reason.get("severity") == "critical" for reason in reasons):
+        return "critical"
+    if any(reason.get("severity") == "high" for reason in reasons):
+        return "high"
+    if any(reason.get("severity") == "medium" for reason in reasons):
+        return "medium"
+    return fallback if fallback in VALID_RISK_LEVELS else "low"
+
+
+def normalize_code_action_contract(value: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize an existing or partial code action contract."""
+
+    raw = _as_dict(value)
+    return build_code_action_contract(
+        action_id=raw.get("action_id"),
+        action_type=raw.get("action_type"),
+        title=raw.get("title"),
+        description=raw.get("description"),
+        affected_files=_as_list(raw.get("affected_files")),
+        suggested_commands=_as_list(raw.get("suggested_commands")),
+        expected_evidence=_as_list(raw.get("expected_evidence")),
+        required_permissions=_as_list(raw.get("required_permissions")),
+        status=raw.get("status"),
+        risk_level=raw.get("risk_level"),
+        source=raw.get("source"),
+        metadata=_as_dict(raw.get("metadata")),
+    )
+
+
+def evaluate_code_action_guard(
+    action: dict[str, Any] | None,
+    *,
+    allowed_files: list[Any] | None = None,
+    forbidden_files: list[Any] | None = None,
+    granted_permissions: list[Any] | None = None,
+) -> dict[str, Any]:
+    """Evaluate a code action contract without executing it."""
+
+    normalized = normalize_code_action_contract(_as_dict(action))
+    allowed = _as_list(allowed_files)
+    forbidden = _as_list(forbidden_files)
+    granted = {_as_text(item) for item in _as_list(granted_permissions) if _as_text(item)}
+    required = {_as_text(item) for item in _as_list(normalized.get("required_permissions")) if _as_text(item)}
+
+    reasons: list[dict[str, Any]] = []
+
+    def add_reason(code: str, message: str, *, severity: str = "medium", source: Any | None = None) -> None:
+        reasons.append(
+            _bounded_value(
+                {
+                    "code": code,
+                    "message": message,
+                    "severity": severity,
+                    "source": source,
+                }
+            )
+        )
+
+    missing_permissions = sorted(permission for permission in required if permission not in granted)
+    for permission in missing_permissions:
+        add_reason(
+            "permission_missing",
+            "Required permission is not granted.",
+            severity="high",
+            source={"permission": permission},
+        )
+
+    for file_item in _as_list(normalized.get("affected_files")):
+        file_dict = _as_dict(file_item)
+        path = _normalize_path(file_dict.get("path"))
+        operation = _as_text(file_dict.get("operation"))
+        if not path and operation in WRITE_OPERATIONS:
+            add_reason("file_path_missing", "Writable code action file is missing a path.", severity="high", source=file_dict)
+            continue
+
+        if path and _path_has_traversal(path):
+            add_reason("path_traversal_not_allowed", "Affected file path is outside the allowed relative path shape.", severity="critical", source=file_dict)
+
+        if path and forbidden and _path_matches(path, forbidden):
+            add_reason("file_forbidden", "Affected file overlaps forbidden files.", severity="high", source=file_dict)
+
+        if path and allowed and operation in WRITE_OPERATIONS and not _path_matches(path, allowed):
+            add_reason("file_not_allowed", "Writable affected file is not in allowed files.", severity="high", source=file_dict)
+
+    for command_item in _as_list(normalized.get("suggested_commands")):
+        command_dict = _as_dict(command_item)
+        command = _as_text(command_dict.get("command"), max_chars=1000)
+        dangerous_terms = _command_has_dangerous_term(command)
+        if dangerous_terms:
+            add_reason(
+                "dangerous_command",
+                "Suggested command contains dangerous terms.",
+                severity="critical",
+                source={"command": command, "terms": dangerous_terms},
+            )
+
+    if normalized.get("risk_level") == "critical":
+        add_reason(
+            "critical_risk_requires_block",
+            "Critical code action risk is blocked before execution.",
+            severity="critical",
+            source={"risk_level": normalized.get("risk_level")},
+        )
+
+    guard_status = "blocked" if any(reason.get("severity") in {"high", "critical"} for reason in reasons) else "pending_approval"
+    return _bounded_value(
+        {
+            "guard_status": guard_status,
+            "allowed": guard_status != "blocked",
+            "risk_level": _guard_risk_level(reasons, _as_text(normalized.get("risk_level"))),
+            "reasons": reasons,
+            "reason_count": len(reasons),
+            "missing_permissions": missing_permissions,
+            "execution_allowed": False,
+            "execution_performed": False,
+            "next_status": "blocked" if guard_status == "blocked" else "pending_approval",
+        }
+    )
+
+
+def apply_code_action_guard(
+    action: dict[str, Any] | None,
+    *,
+    allowed_files: list[Any] | None = None,
+    forbidden_files: list[Any] | None = None,
+    granted_permissions: list[Any] | None = None,
+) -> dict[str, Any]:
+    """Attach guard result and advance only to pending_approval or blocked."""
+
+    normalized = normalize_code_action_contract(_as_dict(action))
+    guard = evaluate_code_action_guard(
+        normalized,
+        allowed_files=allowed_files,
+        forbidden_files=forbidden_files,
+        granted_permissions=granted_permissions,
+    )
+    merged = dict(normalized)
+    merged["guard"] = guard
+    merged["status"] = guard["next_status"]
+    merged["executed"] = False
+    merged["execution_result"] = None
+    return _bounded_value(merged)
+
+
 def summarize_code_action_contract(action: dict[str, Any] | None) -> str:
     """Return compact summary for logs/UI/prompts."""
 
