@@ -266,3 +266,171 @@ def summarize_mcp_host_contract(contract: dict[str, Any] | None) -> str:
         "activation_gate=required; "
         "executed=False"
     )
+
+
+def build_mcp_tool_registry(
+    *,
+    tools: list[Any] | None = None,
+    active_mcps: list[Any] | None = None,
+    allowed_tools: list[Any] | None = None,
+    registry_servers: list[Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a side-effect-free MCP registry view from local tool records.
+
+    This does not read files, call network registry endpoints, activate servers,
+    derive runtime configs, refresh OAuth, or mutate sessions.
+    """
+
+    active_set = {sanitize_mcp_server_name(item) for item in _as_list(active_mcps)}
+    allowed_set = {_as_text(item) for item in _as_list(allowed_tools) if _as_text(item)}
+
+    local_servers: list[dict[str, Any]] = []
+    for tool in _as_list(tools):
+        server = build_mcp_contract_from_tool_definition(tool, active_mcps=list(active_set))
+        tool_ref = f"mcp:{server['name']}"
+        slug_ref = f"mcp:{server['server_name']}"
+        server["allowed_by_client"] = not allowed_set or tool_ref in allowed_set or slug_ref in allowed_set
+        local_servers.append(server)
+
+    remote_candidates: list[dict[str, Any]] = []
+    for item in _as_list(registry_servers):
+        raw = _as_dict(item)
+        if not raw:
+            continue
+        remote_candidates.append({
+            "contract_kind": "mcp_registry_candidate",
+            "name": _as_text(raw.get("name")),
+            "server_name": sanitize_mcp_server_name(raw.get("name")),
+            "title": _as_text(raw.get("title")),
+            "description": _as_text(raw.get("description")),
+            "source": _as_text(raw.get("source")) or "registry",
+            "remote_url": _as_text(raw.get("remoteUrl") or raw.get("remote_url")),
+            "repository_url": _as_text(raw.get("repositoryUrl") or raw.get("repository_url")),
+            "keywords": [_as_text(value) for value in _as_list(raw.get("keywords")) if _as_text(value)],
+            "installed": False,
+            "active": False,
+            "callable_now": False,
+            "executed": False,
+            "execution_result": None,
+        })
+
+    active_servers = [item for item in local_servers if item.get("gate_state") == "active"]
+    inactive_servers = [item for item in local_servers if item.get("gate_state") == "inactive"]
+    blocked_servers = [item for item in local_servers if item.get("gate_state") in {"blocked", "unavailable"}]
+    client_blocked_servers = [item for item in local_servers if item.get("allowed_by_client") is False]
+
+    return {
+        "contract_kind": "mcp_tool_registry",
+        "servers": local_servers,
+        "registry_candidates": remote_candidates,
+        "server_count": len(local_servers),
+        "active_server_count": len(active_servers),
+        "inactive_server_count": len(inactive_servers),
+        "blocked_server_count": len(blocked_servers),
+        "client_blocked_server_count": len(client_blocked_servers),
+        "candidate_count": len(remote_candidates),
+        "active_mcps": sorted(active_set),
+        "allowed_tools": sorted(allowed_set),
+        "activation_gate": {
+            "required": True,
+            "discovery_tools": ["MCPList", "MCPSearch"],
+            "activation_tool": "MCPActivate",
+            "user_approval_required": True,
+        },
+        "metadata": _as_dict(metadata),
+        "executed": False,
+        "execution_result": None,
+    }
+
+
+def filter_mcp_registry_servers(
+    registry: dict[str, Any] | None,
+    *,
+    gate_state: str | None = None,
+    callable_now: bool | None = None,
+    allowed_by_client: bool | None = None,
+) -> list[dict[str, Any]]:
+    """Filter normalized local MCP servers without changing registry state."""
+
+    data = _as_dict(registry)
+    servers = [_as_dict(item) for item in _as_list(data.get("servers")) if _as_dict(item)]
+    result: list[dict[str, Any]] = []
+    for server in servers:
+        if gate_state is not None and server.get("gate_state") != gate_state:
+            continue
+        if callable_now is not None and bool(server.get("callable_now")) is not callable_now:
+            continue
+        if allowed_by_client is not None and bool(server.get("allowed_by_client", True)) is not allowed_by_client:
+            continue
+        result.append(server)
+    return result
+
+
+def search_mcp_tool_registry(
+    registry: dict[str, Any] | None,
+    query: str | None,
+    *,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    """Search normalized local/candidate MCP registry records side-effect free."""
+
+    data = _as_dict(registry)
+    query_text = _as_text(query).lower()
+    if not query_text:
+        return []
+
+    records = [
+        *_as_list(data.get("servers")),
+        *_as_list(data.get("registry_candidates")),
+    ]
+
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for raw in records:
+        item = _as_dict(raw)
+        if not item:
+            continue
+        haystack = " ".join([
+            _as_text(item.get("name")),
+            _as_text(item.get("server_name")),
+            _as_text(item.get("title")),
+            _as_text(item.get("description")),
+            " ".join(_as_text(keyword) for keyword in _as_list(item.get("keywords"))),
+            " ".join(_as_text(tool_name) for tool_name in _as_list(item.get("allowed_tool_names"))),
+            " ".join(_as_text(tool_name) for tool_name in _as_list(item.get("denied_tool_names"))),
+        ]).lower()
+        if query_text not in haystack:
+            continue
+
+        score = 1
+        if query_text in _as_text(item.get("name")).lower():
+            score += 5
+        if query_text in _as_text(item.get("server_name")).lower():
+            score += 4
+        if bool(item.get("callable_now")):
+            score += 3
+        if item.get("gate_state") == "inactive":
+            score += 2
+        if item.get("contract_kind") == "mcp_server":
+            score += 1
+        scored.append((score, item))
+
+    scored.sort(key=lambda pair: (-pair[0], _as_text(pair[1].get("server_name"))))
+    safe_limit = max(0, int(limit or 0))
+    return [item for _, item in scored[:safe_limit]]
+
+
+def summarize_mcp_tool_registry(registry: dict[str, Any] | None) -> str:
+    """Return compact registry summary for prompts and audits."""
+
+    data = _as_dict(registry)
+    return (
+        "MCP Registry: "
+        f"servers={data.get('server_count', 0)}; "
+        f"active={data.get('active_server_count', 0)}; "
+        f"inactive={data.get('inactive_server_count', 0)}; "
+        f"blocked={data.get('blocked_server_count', 0)}; "
+        f"client_blocked={data.get('client_blocked_server_count', 0)}; "
+        f"candidates={data.get('candidate_count', 0)}; "
+        "executed=False"
+    )
