@@ -43,6 +43,7 @@ from backend.apps.auth.router import auth
 from backend.apps.web.web import web
 from backend.apps.agents.anthropic_proxy import anthropic_proxy
 from backend.apps.swarms.swarms import swarms
+from backend.apps.swarms.mcp_contract import build_mcp_activation_guard_decision
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import WebSocket, WebSocketDisconnect
 import json
@@ -514,9 +515,9 @@ async def mcp_meta(action: str, request: Request):
         return JSONResponse({"matches": matches})
 
     if action == "activate":
-        server_name = (body.get("server_name") or "").strip()
+        requested_server_name = (body.get("server_name") or "").strip()
         reason = body.get("reason") or ""
-        if not server_name:
+        if not requested_server_name:
             return JSONResponse({"error": "server_name is required"}, status_code=400)
         if not parent_session_id:
             return JSONResponse({"error": "parent_session_id is required"}, status_code=400)
@@ -526,11 +527,28 @@ async def mcp_meta(action: str, request: Request):
 
         servers = _connected_servers()
         valid_names = {s["name"] for s in servers}
-        if server_name not in valid_names:
-            return JSONResponse({"status": "unknown_server", "available": sorted(valid_names)})
+        guard = build_mcp_activation_guard_decision(
+            server_name=requested_server_name,
+            registry={"servers": servers, "status": "ready"},
+            active_mcps=list(session.active_mcps),
+            reason=reason,
+            metadata={"source": "mcp_meta_activate", "parent_session_id": parent_session_id},
+        )
+        server_name = guard.get("server_name") or requested_server_name
 
-        if server_name in session.active_mcps:
-            return JSONResponse({"status": "already_active", "server_name": server_name})
+        if server_name not in valid_names:
+            return JSONResponse({"status": "unknown_server", "available": sorted(valid_names), "guard": guard})
+
+        if guard["decision"] == "block":
+            return JSONResponse({
+                "status": "blocked",
+                "server_name": server_name,
+                "available": sorted(valid_names),
+                "guard": guard,
+            }, status_code=400)
+
+        if guard["decision"] == "already_active" or server_name in session.active_mcps:
+            return JSONResponse({"status": "already_active", "server_name": server_name, "guard": guard})
 
         session.active_mcps.append(server_name)
         session.needs_fork = True
@@ -571,7 +589,7 @@ async def mcp_meta(action: str, request: Request):
             "for confirmation."
         )
 
-        return JSONResponse({"status": "activated", "server_name": server_name, "auto_continue": True})
+        return JSONResponse({"status": "activated", "server_name": server_name, "auto_continue": True, "guard": guard})
 
     return JSONResponse({"error": f"unknown action: {action}"}, status_code=400)
 
