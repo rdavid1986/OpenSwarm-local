@@ -1,9 +1,12 @@
 from backend.apps.swarms.context_selection import (
     apply_context_budget_exclusion_policy,
     apply_context_budget_to_policy,
+    apply_context_inclusion_explanations,
     build_context_budget_summary,
+    build_context_inclusion_explanations,
     build_context_selection_policy,
     build_ranked_context_selection_policy,
+    explain_context_source_inclusion,
     normalize_context_selection_value,
     normalize_context_source,
     rank_context_sources,
@@ -382,3 +385,125 @@ def test_apply_context_budget_exclusion_policy_is_noop_when_budget_unknown():
     assert [source["source_id"] for source in result["selected_sources"]] == ["a.py"]
     assert result["excluded_sources"] == []
     assert result["context_budget"]["context_budget_status"] == "unknown_budget"
+
+
+def test_explain_context_source_inclusion_uses_existing_source_metadata():
+    explanation = explain_context_source_inclusion(
+        {
+            "source_kind": "filesystem",
+            "source_id": "frontend/src/App.tsx",
+            "status": "selected",
+            "reason": "allowed_file_for_task",
+            "freshness": "fresh",
+            "confidence": 0.85,
+            "budget_cost": 700,
+            "metadata": {
+                "directly_related": True,
+                "allowed": True,
+                "has_evidence": True,
+            },
+        }
+    )
+
+    assert explanation["source_kind"] == "filesystem"
+    assert explanation["source_id"] == "frontend/src/App.tsx"
+    assert explanation["status"] == "selected"
+    assert explanation["explanation_status"] == "included"
+    assert explanation["reason"] == "allowed_file_for_task"
+    assert explanation["freshness"] == "fresh"
+    assert explanation["confidence"] == 0.85
+    assert explanation["budget_cost"] == 700
+    assert explanation["metadata"]["directly_related"] is True
+    assert "allowed_file_for_task" in explanation["explanation_reasons"]
+    assert "directly_related" in explanation["explanation_reasons"]
+    assert "allowed" in explanation["explanation_reasons"]
+    assert "has_evidence" in explanation["explanation_reasons"]
+
+
+def test_explain_context_source_inclusion_preserves_budget_exclusion_reason():
+    explanation = explain_context_source_inclusion(
+        {
+            "source_kind": "docs",
+            "source_id": "large_reference.md",
+            "status": "excluded",
+            "reason": "excluded_by_context_budget",
+            "confidence": 0.1,
+            "budget_cost": 3000,
+            "excluded_by": "context_budget_policy",
+            "excluded_reason": "context_budget_exceeded",
+        }
+    )
+
+    assert explanation["explanation_status"] == "excluded"
+    assert explanation["excluded_by"] == "context_budget_policy"
+    assert explanation["excluded_reason"] == "context_budget_exceeded"
+    assert "excluded_by_context_budget" in explanation["explanation_reasons"]
+    assert "context_budget_policy" in explanation["explanation_reasons"]
+    assert "context_budget_exceeded" in explanation["explanation_reasons"]
+
+
+def test_build_context_inclusion_explanations_groups_policy_sources():
+    policy = build_context_selection_policy(
+        selected_sources=[
+            {
+                "source_kind": "filesystem",
+                "source_id": "frontend/src/App.tsx",
+                "reason": "direct_task_file",
+                "freshness": "fresh",
+                "confidence": 0.9,
+            }
+        ],
+        excluded_sources=[
+            {
+                "source_kind": "filesystem",
+                "source_id": "backend/main.py",
+                "reason": "forbidden_file",
+                "metadata": {"forbidden": True},
+            }
+        ],
+        required_sources_missing=[
+            {
+                "source_kind": "runtime_checkpoints",
+                "source_id": "checkpoint-1",
+                "reason": "not_available_to_caller",
+            }
+        ],
+    )
+
+    explanations = build_context_inclusion_explanations(policy)
+
+    assert explanations["selected_sources"][0]["explanation_status"] == "included"
+    assert explanations["excluded_sources"][0]["explanation_status"] == "excluded"
+    assert explanations["required_sources_missing"][0]["explanation_status"] == "missing"
+    assert explanations["selected_sources"][0]["reason"] == "direct_task_file"
+    assert explanations["excluded_sources"][0]["reason"] == "forbidden_file"
+    assert explanations["required_sources_missing"][0]["reason"] == "not_available_to_caller"
+
+
+def test_apply_context_inclusion_explanations_attaches_trace_without_mutating_sources():
+    policy = build_context_selection_policy(
+        selected_sources=[
+            {
+                "source_kind": "filesystem",
+                "source_id": "a.py",
+                "reason": "allowed_file",
+                "budget_cost": 500,
+            }
+        ],
+        excluded_sources=[
+            {
+                "source_kind": "docs",
+                "source_id": "old.md",
+                "reason": "stale_context",
+                "freshness": "stale",
+            }
+        ],
+    )
+
+    enriched = apply_context_inclusion_explanations(policy)
+
+    assert enriched["selected_sources"] == policy["selected_sources"]
+    assert enriched["excluded_sources"] == policy["excluded_sources"]
+    assert enriched["context_inclusion_explanations"]["selected_sources"][0]["source_id"] == "a.py"
+    assert enriched["context_inclusion_explanations"]["excluded_sources"][0]["source_id"] == "old.md"
+    assert enriched["context_inclusion_explanations"]["excluded_sources"][0]["freshness"] == "stale"

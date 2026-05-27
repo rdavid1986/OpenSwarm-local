@@ -130,6 +130,8 @@ def normalize_context_source(value: Any) -> dict[str, Any]:
             "budget_cost": _count_or_zero(raw.get("budget_cost")),
             "refs": normalize_context_selection_value(raw.get("refs") or {}),
             "metadata": normalize_context_selection_value(raw.get("metadata") or {}),
+            "excluded_reason": raw.get("excluded_reason"),
+            "excluded_by": raw.get("excluded_by"),
         }
     )
 
@@ -313,6 +315,101 @@ def rank_context_sources(sources: list[Any] | None) -> list[dict[str, Any]]:
         ),
         reverse=True,
     )
+
+
+def explain_context_source_inclusion(value: Any) -> dict[str, Any]:
+    """Explain why a context source was included, excluded, missing, or blocked.
+
+    The helper only uses metadata already attached to the source. It does not
+    fetch context, inspect files, call models, mutate policy state, or invent
+    missing evidence.
+    """
+
+    source = score_context_source(value)
+    metadata = _as_dict(source.get("metadata"))
+    status = _as_text(source.get("status")) or UNKNOWN
+    reason = _as_text(source.get("reason")) or "caller_provided"
+    freshness = source.get("freshness")
+    confidence_raw = source.get("confidence")
+    confidence = float(confidence_raw) if isinstance(confidence_raw, int | float) else 0.0
+    confidence = max(0.0, min(1.0, confidence))
+    budget_cost = _count_or_zero(source.get("budget_cost"))
+
+    excluded_reason = _as_text(metadata.get("excluded_reason") or source.get("excluded_reason"))
+    excluded_by = _as_text(metadata.get("excluded_by") or source.get("excluded_by"))
+
+    explanation_reasons: list[str] = []
+    if reason:
+        explanation_reasons.append(reason)
+    for rank_reason in _as_list(source.get("rank_reasons")):
+        rank_reason_text = _as_text(rank_reason)
+        if rank_reason_text and rank_reason_text not in explanation_reasons:
+            explanation_reasons.append(rank_reason_text)
+    if excluded_reason and excluded_reason not in explanation_reasons:
+        explanation_reasons.append(excluded_reason)
+    if excluded_by and excluded_by not in explanation_reasons:
+        explanation_reasons.append(excluded_by)
+
+    if status == "selected":
+        explanation_status = "included"
+    elif status == "excluded":
+        explanation_status = "excluded"
+    elif status == "missing":
+        explanation_status = "missing"
+    elif status == "blocked":
+        explanation_status = "blocked"
+    else:
+        explanation_status = UNKNOWN
+
+    explanation = {
+        "source_kind": source.get("source_kind"),
+        "source_id": source.get("source_id"),
+        "status": status,
+        "explanation_status": explanation_status,
+        "reason": reason,
+        "rank_reasons": source.get("rank_reasons") or [],
+        "freshness": freshness,
+        "confidence": confidence,
+        "budget_cost": budget_cost,
+        "rank_score": source.get("rank_score"),
+        "metadata": metadata,
+        "excluded_reason": excluded_reason or None,
+        "excluded_by": excluded_by or None,
+        "explanation_reasons": explanation_reasons,
+    }
+    return normalize_context_selection_value(explanation)
+
+
+def build_context_inclusion_explanations(policy: dict[str, Any] | None) -> dict[str, Any]:
+    """Build traceable inclusion/exclusion explanations for a policy."""
+
+    normalized = _as_dict(normalize_context_selection_value(policy or {}))
+    return normalize_context_selection_value(
+        {
+            "selected_sources": [
+                explain_context_source_inclusion(source)
+                for source in _as_list(normalized.get("selected_sources"))
+            ],
+            "excluded_sources": [
+                explain_context_source_inclusion(source)
+                for source in _as_list(normalized.get("excluded_sources"))
+            ],
+            "required_sources_missing": [
+                explain_context_source_inclusion(source)
+                for source in _as_list(normalized.get("required_sources_missing"))
+            ],
+        }
+    )
+
+
+def apply_context_inclusion_explanations(policy: dict[str, Any] | None) -> dict[str, Any]:
+    """Attach inclusion/exclusion explanations to a normalized policy."""
+
+    normalized = _as_dict(normalize_context_selection_value(policy or {}))
+    merged = dict(normalized)
+    merged["context_inclusion_explanations"] = build_context_inclusion_explanations(normalized)
+    return normalize_context_selection_value(merged)
+
 
 
 
