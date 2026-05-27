@@ -181,6 +181,7 @@ def build_openswarm_system_prompt(*, mode: str | None = None, task_kind: str | N
                 "Artifacts/evidence: usalos como fuente de verdad para afirmar cambios; si faltan, explica la incertidumbre.",
                 "Provider/model health: si provider_health indica unavailable o model_missing, informalo claramente y no ocultes el bloqueo.",
                 "Guards: nunca los reemplaces con razonamiento del modelo; si un guard bloquea, explica el motivo.",
+                "Code actions: si propones cambios de codigo, proponelos como contrato estructurado; no afirmes ejecucion sin diff, evidence y validation reales.",
                 "Cuando preguntar: pregunta solo si falta contexto necesario para evitar inventar o ejecutar mal.",
                 "Cuando responder: responde directo si el pedido y el estado real son suficientes.",
                 "Cuando no ejecutar: no ejecutes ni confirmes por texto ambiguo, baja confianza, falta de estado, falta de health o ausencia de pending action.",

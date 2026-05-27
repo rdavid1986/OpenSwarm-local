@@ -1,4 +1,5 @@
 from backend.apps.swarms.model_response_contract import (
+    build_code_action_prompt_contract,
     build_model_response_contract_prompt,
     normalize_model_response_contract,
     validate_model_response_contract,
@@ -133,3 +134,25 @@ def test_low_confidence_prefers_safe_next_action():
     )
 
     assert result["next_action"] == "no_action"
+
+
+def test_code_action_prompt_contract_requires_structured_non_executing_actions():
+    prompt = build_code_action_prompt_contract()
+
+    assert "Code action prompt contract" in prompt
+    assert "Do not execute" in prompt
+    assert "code_action contract" in prompt
+    assert "affected_files" in prompt
+    assert "suggested_commands" in prompt
+    assert "expected_evidence" in prompt
+    assert "execution_claim" in prompt
+    assert "guards_required" in prompt
+
+
+def test_model_response_contract_for_code_action_includes_code_action_contract():
+    prompt = build_model_response_contract_prompt("code_action")
+
+    assert "propose_code_action" in prompt
+    assert "code_actions" in prompt
+    assert "Code action prompt contract" in prompt
+    assert "Do not claim files changed" in prompt

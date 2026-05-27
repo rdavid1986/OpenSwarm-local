@@ -29,6 +29,19 @@ BASE_CONTRACT_FIELDS = {
     "reason",
 }
 
+CODE_ACTION_CONTRACT_FIELDS = {
+    "action_id",
+    "action_type",
+    "title",
+    "description",
+    "affected_files",
+    "suggested_commands",
+    "expected_evidence",
+    "required_permissions",
+    "risk_level",
+    "reason",
+}
+
 
 def _as_text(value: Any, *, max_chars: int = MAX_TEXT) -> str:
     return str(value or "").strip()[:max_chars]
@@ -89,6 +102,54 @@ def _fallback_contract(*, task_kind: str | None = None, reason: str = "Invalid m
     }
 
 
+def build_code_action_prompt_contract() -> str:
+    """Return prompt contract for model-proposed code actions."""
+
+    contract = {
+        "code_actions": [
+            {
+                "action_id": "string or null; stable id if caller provided one",
+                "action_type": "inspect | edit_file | create_file | delete_file | move_file | copy_file | run_command | apply_patch | validate | review_diff",
+                "title": "short human-readable action title",
+                "description": "what the action proposes, without claiming it ran",
+                "affected_files": [
+                    {
+                        "path": "relative path only, if known from state_context",
+                        "operation": "inspect | read | write | create | delete | move | copy | patch | validate",
+                        "reason": "why this file is relevant",
+                        "allowed": "boolean; true only if state_context says it is allowed",
+                    }
+                ],
+                "suggested_commands": [
+                    {
+                        "command": "validation command only; do not include destructive commands",
+                        "cwd": "relative working directory",
+                        "purpose": "why this command would validate the action",
+                    }
+                ],
+                "expected_evidence": ["diff summary", "changed files", "validation output"],
+                "required_permissions": ["filesystem_write or command_execution when needed"],
+                "risk_level": "low | medium | high | critical",
+                "reason": "short reason grounded in state_context",
+            }
+        ],
+        "execution_claim": "must be false unless runtime evidence already exists in state_context",
+        "guards_required": True,
+    }
+    return "\n".join(
+        [
+            "Code action prompt contract:",
+            "Use this only to propose code actions. Do not execute, approve, or claim completion.",
+            "Every proposed code action must be compatible with the code_action contract.",
+            "Affected file paths must come from state_context or user-provided context; do not invent paths.",
+            "Commands are suggestions for later guarded execution; do not include destructive commands.",
+            "Do not claim files changed, tests passed, or commands ran unless explicit evidence exists in state_context.",
+            "Guards and runtime execution remain responsible for permission checks, execution, diff, evidence, and validation.",
+            json.dumps(contract, ensure_ascii=False, indent=2, sort_keys=True),
+        ]
+    )
+
+
 def build_model_response_contract_prompt(task_kind: str | None = None) -> str:
     """Return a textual JSON contract block for safe model responses."""
 
@@ -97,12 +158,13 @@ def build_model_response_contract_prompt(task_kind: str | None = None) -> str:
         "answer": "string; concise answer grounded in provided state",
         "needs_clarification": "boolean; true when missing state blocks safe continuation",
         "clarification_question": "string or null; minimum necessary question",
-        "next_action": "string; must be no_action, ask_clarification, or an action explicitly allowed by the caller",
+        "next_action": "string; must be no_action, ask_clarification, propose_code_action, or an action explicitly allowed by the caller",
         "allowed_actions": ["no_action", "ask_clarification"],
         "risks": ["string risk labels, no invented facts"],
         "evidence_refs": ["ids/paths explicitly present in provided evidence only"],
         "confidence": "float between 0.0 and 1.0",
         "reason": "short reason grounded in state_context",
+        "code_actions": "optional list; only when next_action=propose_code_action and caller allows it",
     }
     return "\n".join(
         [
@@ -110,8 +172,10 @@ def build_model_response_contract_prompt(task_kind: str | None = None) -> str:
             "Return one JSON object with exactly this safe envelope unless a task-specific schema overrides it.",
             "Do not execute tools, mutate state, or authorize actions from this contract alone.",
             "Do not invent evidence_refs; use only evidence explicitly present in state_context.",
+            "If proposing code actions, use next_action=propose_code_action only when allowed by caller and include code_actions.",
             "If information is missing or confidence is low, use next_action=ask_clarification or no_action.",
             json.dumps(contract, ensure_ascii=False, indent=2, sort_keys=True),
+            build_code_action_prompt_contract() if task == "code_action" else "",
         ]
     )
 

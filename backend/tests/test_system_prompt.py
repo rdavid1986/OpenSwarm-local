@@ -68,3 +68,13 @@ def test_context_clarification_still_composes_master_prompt_and_json_contract():
     assert "modo app_builder" in prompt
     assert "expected_json_shape" in prompt
     assert "clarification_options" in prompt
+
+
+def test_master_prompt_mentions_structured_code_actions_without_execution_claims():
+    prompt = build_openswarm_system_prompt(mode="debug", task_kind="code_action").lower()
+
+    assert "code actions" in prompt
+    assert "contrato estructurado" in prompt
+    assert "no afirmes ejecucion" in prompt
+    assert "diff" in prompt
+    assert "validation" in prompt
