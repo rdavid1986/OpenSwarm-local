@@ -1,8 +1,11 @@
 from backend.apps.swarms.eval_harness import (
     build_default_eval_loop_contract,
+    build_default_eval_planner_node,
     build_eval_loop_contract,
+    build_eval_planner_node,
     normalize_eval_metric,
     normalize_eval_node,
+    normalize_eval_planner_criterion,
     normalize_eval_stop_policy,
     summarize_eval_loop,
 )
@@ -107,3 +110,97 @@ def test_summarize_eval_loop_handles_empty_nodes():
     summary = summarize_eval_loop(nodes=[], stop_policy={}, status="draft")
 
     assert summary == "Eval Loop: status=draft; nodes=0; types=none; max_iterations=3; min_score=0.8; executed=False"
+
+
+def test_normalize_eval_planner_criterion_preserves_required_evidence():
+    criterion = normalize_eval_planner_criterion(
+        {
+            "criterion_id": "grounding",
+            "name": "Grounding",
+            "description": "Claims must be grounded.",
+            "severity": "critical",
+            "metric_refs": ["grounding"],
+            "evidence_required": ["state_context", ""],
+        }
+    )
+
+    assert criterion["criterion_id"] == "grounding"
+    assert criterion["name"] == "Grounding"
+    assert criterion["severity"] == "critical"
+    assert criterion["metric_refs"] == ["grounding"]
+    assert criterion["evidence_required"] == ["state_context"]
+    assert criterion["required"] is True
+
+
+def test_build_eval_planner_node_creates_non_executing_planner_contract():
+    planner = build_eval_planner_node(
+        node_id="planner-1",
+        objective="Plan RI evaluation.",
+        task_kind="response_intelligence",
+        criteria=[
+            {
+                "criterion_id": "contract",
+                "name": "Contract",
+                "metric_refs": ["contract_validity"],
+                "evidence_required": ["expected_json"],
+            }
+        ],
+        expected_metrics=[
+            {"metric_id": "contract_validity", "name": "Contract validity", "status": "draft", "score": 0.2}
+        ],
+        required_evidence=["state_context"],
+        risks=["contract_drift"],
+        suggested_nodes=[
+            {"node_id": "critic", "node_type": "critic", "objective": "Review defects."}
+        ],
+    )
+
+    assert planner["node_id"] == "planner-1"
+    assert planner["node_type"] == "planner"
+    assert planner["status"] == "ready"
+    assert planner["objective"] == "Plan RI evaluation."
+    assert planner["requires_provider"] is False
+    assert planner["executed"] is False
+    assert planner["execution_result"] is None
+    assert planner["metadata"]["task_kind"] == "response_intelligence"
+    assert planner["metadata"]["criteria"][0]["criterion_id"] == "contract"
+    assert planner["metadata"]["expected_metrics"][0]["metric_id"] == "contract_validity"
+    assert planner["metadata"]["required_evidence"] == ["state_context"]
+    assert planner["metadata"]["risks"] == ["contract_drift"]
+    assert planner["metadata"]["suggested_nodes"][0]["node_type"] == "critic"
+
+
+def test_build_default_eval_planner_node_contains_core_open_swarm_criteria():
+    planner = build_default_eval_planner_node(
+        objective="Evaluate code action review.",
+        task_kind="code_action_review",
+    )
+
+    criterion_ids = [item["criterion_id"] for item in planner["metadata"]["criteria"]]
+    metric_ids = [item["metric_id"] for item in planner["metadata"]["expected_metrics"]]
+
+    assert planner["node_type"] == "planner"
+    assert planner["objective"] == "Evaluate code action review."
+    assert planner["metadata"]["task_kind"] == "code_action_review"
+    assert criterion_ids == ["contract_validity", "grounding", "safety"]
+    assert metric_ids == ["contract_validity", "grounding", "safety"]
+    assert "false_execution_claim" in planner["metadata"]["risks"]
+    assert planner["executed"] is False
+
+
+def test_default_eval_loop_uses_rich_planner_node_contract():
+    contract = build_default_eval_loop_contract(
+        objective="Evaluate response intelligence.",
+        task_kind="response_intelligence",
+    )
+
+    planner = contract["nodes"][0]
+
+    assert planner["node_type"] == "planner"
+    assert planner["metadata"]["task_kind"] == "response_intelligence"
+    assert [item["criterion_id"] for item in planner["metadata"]["criteria"]] == [
+        "contract_validity",
+        "grounding",
+        "safety",
+    ]
+    assert planner["executed"] is False

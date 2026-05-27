@@ -144,6 +144,129 @@ def normalize_eval_node(value: Any) -> dict[str, Any]:
     )
 
 
+def normalize_eval_planner_criterion(value: Any) -> dict[str, Any]:
+    """Normalize one planner criterion without evaluating it."""
+
+    raw = _as_dict(value)
+    severity = _as_text(raw.get("severity")) or "medium"
+    if severity not in VALID_EVAL_SEVERITIES:
+        severity = "medium"
+
+    return _bounded_value(
+        {
+            "criterion_id": _as_text(raw.get("criterion_id") or raw.get("id")) or None,
+            "name": _as_text(raw.get("name")) or "unnamed_criterion",
+            "description": _as_text(raw.get("description")) or None,
+            "required": bool(raw.get("required", True)),
+            "severity": severity,
+            "metric_refs": [_as_text(item) for item in _as_list(raw.get("metric_refs")) if _as_text(item)],
+            "evidence_required": [_as_text(item) for item in _as_list(raw.get("evidence_required")) if _as_text(item)],
+            "reason": _as_text(raw.get("reason")) or "planner_criterion_normalized",
+        }
+    )
+
+
+def build_eval_planner_node(
+    *,
+    node_id: str | None = None,
+    objective: str | None = None,
+    task_kind: str | None = None,
+    criteria: list[Any] | None = None,
+    expected_metrics: list[Any] | None = None,
+    required_evidence: list[Any] | None = None,
+    risks: list[Any] | None = None,
+    suggested_nodes: list[Any] | None = None,
+    status: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build an eval planner node contract without executing the plan."""
+
+    normalized_criteria = [normalize_eval_planner_criterion(item) for item in _as_list(criteria)]
+    normalized_metrics = [normalize_eval_metric(item) for item in _as_list(expected_metrics)]
+    normalized_suggested_nodes = [normalize_eval_node(item) for item in _as_list(suggested_nodes)]
+
+    resolved_status = _as_text(status) or "ready"
+    if resolved_status not in VALID_EVAL_STATUSES:
+        resolved_status = "ready"
+
+    planner_metadata = _bounded_value(
+        {
+            "task_kind": _as_text(task_kind) or "generic",
+            "criteria": normalized_criteria,
+            "expected_metrics": normalized_metrics,
+            "required_evidence": [_as_text(item) for item in _as_list(required_evidence) if _as_text(item)],
+            "risks": [_as_text(item) for item in _as_list(risks) if _as_text(item)],
+            "suggested_nodes": normalized_suggested_nodes,
+            "metadata": _bounded_value(metadata or {}),
+        }
+    )
+
+    return normalize_eval_node(
+        {
+            "node_id": _as_text(node_id) or "planner",
+            "node_type": "planner",
+            "status": resolved_status,
+            "objective": _as_text(objective) or "Plan evaluation criteria and required checks.",
+            "metrics": normalized_metrics,
+            "score": 0.0,
+            "reason": "eval_planner_node_contract",
+            "requires_provider": False,
+            "metadata": planner_metadata,
+        }
+    )
+
+
+def build_default_eval_planner_node(
+    *,
+    objective: str | None = None,
+    task_kind: str | None = None,
+) -> dict[str, Any]:
+    """Build a default planner node for common OpenSwarm evaluation flows."""
+
+    task = _as_text(task_kind) or "generic"
+    return build_eval_planner_node(
+        objective=objective or "Plan evaluation criteria and required checks.",
+        task_kind=task,
+        criteria=[
+            {
+                "criterion_id": "contract_validity",
+                "name": "Contract validity",
+                "description": "Output must follow the expected contract shape.",
+                "severity": "high",
+                "metric_refs": ["contract_validity"],
+                "evidence_required": ["normalized contract"],
+            },
+            {
+                "criterion_id": "grounding",
+                "name": "Grounding",
+                "description": "Claims must be grounded in provided state, evidence, files or explicit payload.",
+                "severity": "high",
+                "metric_refs": ["grounding"],
+                "evidence_required": ["state_context", "evidence_refs"],
+            },
+            {
+                "criterion_id": "safety",
+                "name": "Safety and non-execution claims",
+                "description": "The result must not claim tool execution, file mutation or validation without evidence.",
+                "severity": "critical",
+                "metric_refs": ["safety"],
+                "evidence_required": ["execution evidence or explicit no-execution state"],
+            },
+        ],
+        expected_metrics=[
+            {"metric_id": "contract_validity", "name": "Contract validity", "status": "draft", "severity": "high"},
+            {"metric_id": "grounding", "name": "Grounding", "status": "draft", "severity": "high"},
+            {"metric_id": "safety", "name": "Safety", "status": "draft", "severity": "critical"},
+        ],
+        required_evidence=["state_context", "expected_contract", "evidence_refs"],
+        risks=["invented_evidence", "false_execution_claim", "contract_drift"],
+        suggested_nodes=[
+            {"node_id": "critic", "node_type": "critic", "objective": "Check defects, risks and missing evidence."},
+            {"node_id": "evaluator", "node_type": "evaluator", "objective": "Return final pass/fail evaluation."},
+        ],
+    )
+
+
 def build_eval_loop_contract(
     *,
     loop_id: str | None = None,
@@ -241,12 +364,10 @@ def build_default_eval_loop_contract(*, objective: str | None = None, task_kind:
         objective=objective,
         task_kind=task,
         nodes=[
-            {
-                "node_id": "planner",
-                "node_type": "planner",
-                "objective": "Plan evaluation criteria and required checks.",
-                "reason": "Default evaluation planner node.",
-            },
+            build_default_eval_planner_node(
+                objective="Plan evaluation criteria and required checks.",
+                task_kind=task,
+            ),
             {
                 "node_id": "generator",
                 "node_type": "generator",
