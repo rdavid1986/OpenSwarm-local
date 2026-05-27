@@ -369,6 +369,152 @@ def build_agents_md_context_sections(agents_md_context: dict[str, Any] | None) -
     return sections
 
 
+DANGEROUS_AGENTS_MD_TERMS = {
+    "ignore previous instructions",
+    "ignore all previous instructions",
+    "bypass guard",
+    "bypass guards",
+    "disable guard",
+    "disable guards",
+    "skip approval",
+    "without approval",
+    "force push",
+    "git push --force",
+    "delete everything",
+    "remove all files",
+    "rm -rf",
+    "format disk",
+    "exfiltrate",
+    "steal",
+    "send secrets",
+    "print secrets",
+    "expose secrets",
+    "leak secrets",
+}
+
+
+def _contains_dangerous_agents_md_term(content: str) -> list[str]:
+    lowered = _as_text(content).lower()
+    return sorted(term for term in DANGEROUS_AGENTS_MD_TERMS if term in lowered)
+
+
+def _path_matches_scope(path: str, scope_path: str) -> bool:
+    normalized_path = _normalize_scope_path(path)
+    normalized_scope = _normalize_scope_path(scope_path)
+    if normalized_scope == ".":
+        return True
+    return normalized_path == normalized_scope or normalized_path.startswith(normalized_scope + "/")
+
+
+def evaluate_agents_md_guard(
+    agents_md_context: dict[str, Any] | None,
+    *,
+    forbidden_files: list[Any] | None = None,
+) -> dict[str, Any]:
+    """Evaluate AGENTS.md context before any prompt injection.
+
+    This guard is advisory and fail-closed for injection. It does not authorize
+    filesystem writes, tool calls, commits, pushes, or guard bypasses.
+    """
+
+    context = agents_md_context if isinstance(agents_md_context, dict) else {}
+    selected = [item for item in context.get("selected") or [] if isinstance(item, dict)]
+    forbidden = [_normalize_scope_path(item) for item in (forbidden_files or []) if _as_text(item)]
+
+    reasons: list[dict[str, Any]] = []
+    risk_level = "low"
+
+    def add_reason(code: str, message: str, *, severity: str = "medium", source: Any | None = None) -> None:
+        nonlocal risk_level
+        if severity == "high":
+            risk_level = "high"
+        elif severity == "medium" and risk_level == "low":
+            risk_level = "medium"
+        reasons.append(
+            {
+                "code": code,
+                "message": message,
+                "severity": severity,
+                "source": source,
+            }
+        )
+
+    for item in selected:
+        dangerous_terms = _contains_dangerous_agents_md_term(_as_text(item.get("content")))
+        if dangerous_terms:
+            add_reason(
+                "dangerous_instruction_detected",
+                "AGENTS.md contains instructions that appear to bypass guards, approvals, or secrets policy.",
+                severity="high",
+                source={
+                    "path": item.get("path"),
+                    "scope_path": item.get("scope_path"),
+                    "terms": dangerous_terms,
+                },
+            )
+
+        scope_path = _normalize_scope_path(item.get("scope_path"))
+        conflicting_forbidden = [path for path in forbidden if _path_matches_scope(path, scope_path)]
+        if conflicting_forbidden:
+            add_reason(
+                "forbidden_scope_overlap",
+                "AGENTS.md scope overlaps forbidden files. It cannot authorize access to those files.",
+                severity="high",
+                source={
+                    "path": item.get("path"),
+                    "scope_path": scope_path,
+                    "forbidden_files": conflicting_forbidden,
+                },
+            )
+
+    guard_status = "allowed" if risk_level == "low" else "blocked"
+    return {
+        "guard_status": guard_status,
+        "risk_level": risk_level,
+        "allowed_to_inject": guard_status == "allowed",
+        "reason_count": len(reasons),
+        "reasons": reasons,
+        "injection_authorizes_actions": False,
+        "actions_still_require_runtime_guards": True,
+    }
+
+
+def apply_agents_md_guard(
+    agents_md_context: dict[str, Any] | None,
+    *,
+    forbidden_files: list[Any] | None = None,
+) -> dict[str, Any]:
+    """Attach guard evaluation to scoped AGENTS.md context."""
+
+    context = dict(agents_md_context) if isinstance(agents_md_context, dict) else {}
+    guard = evaluate_agents_md_guard(context, forbidden_files=forbidden_files)
+    context["guard"] = guard
+    context["injection_ready"] = bool(context.get("injection_ready")) and guard["allowed_to_inject"]
+    context["injected"] = False
+    return context
+
+
+def build_guarded_agents_md_context_sections(
+    agents_md_context: dict[str, Any] | None,
+    *,
+    forbidden_files: list[Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Build state_context sections only when AGENTS.md guard allows injection."""
+
+    guarded = apply_agents_md_guard(agents_md_context, forbidden_files=forbidden_files)
+    guard = guarded.get("guard") if isinstance(guarded.get("guard"), dict) else {}
+    if not guard.get("allowed_to_inject"):
+        return []
+
+    sections = build_agents_md_context_sections(guarded)
+    for section in sections:
+        metadata = section.setdefault("metadata", {})
+        metadata["agents_md_guard_status"] = guard.get("guard_status")
+        metadata["agents_md_risk_level"] = guard.get("risk_level")
+        metadata["injection_authorizes_actions"] = False
+    return sections
+
+
 def discover_agents_md_files(
     repo_root: str | Path,
     *,
