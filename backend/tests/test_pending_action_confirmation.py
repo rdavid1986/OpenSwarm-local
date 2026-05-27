@@ -8,6 +8,7 @@ from backend.apps.agents.orchestration.orchestrator import SwarmOrchestrator
 from backend.apps.agents.orchestration.store import SwarmStore
 from backend.apps.agents.runtime.provider import ProviderEvent
 from backend.apps.swarms import swarms as swarms_module
+from backend.apps.swarms.code_action import build_code_action_contract, build_code_action_pending_action
 from backend.apps.swarms.pending_action_intelligence import build_pending_action_resolver_prompt, resolve_pending_action_intent
 from backend.apps.swarms.response_intelligence import build_ri_state_snapshot
 from backend.apps.outputs.models import Output
@@ -901,3 +902,74 @@ def test_confirm_pending_refinement_executes_candidate_iteration_without_mutatin
     assert "candidate" in summary.lower()
     assert "Output activo todavía no fue modificado" in summary
     assert "Accept o Discard" in summary
+
+
+def test_pending_code_action_review_uses_local_ri_without_execution(monkeypatch, tmp_path):
+    client, orchestrator, store = _client(monkeypatch, tmp_path)
+    swarm = _create_chat_swarm(store, orchestrator, pending=False)
+    action = build_code_action_contract(
+        action_id="act-route-1",
+        action_type="edit_file",
+        title="Review route hook",
+        affected_files=[{"path": "backend/apps/swarms/swarms.py", "operation": "write"}],
+        expected_evidence=["diff summary", "pytest output"],
+    )
+    pending = build_code_action_pending_action(
+        action,
+        allowed_files=["backend/apps/swarms/swarms.py"],
+        granted_permissions=["filesystem_write"],
+    )
+    swarm.final_result = {
+        "status": "completed",
+        "route": "code_action_review",
+        "pending_code_actions": [pending],
+    }
+    store.save(swarm)
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "revisar code action", "swarm_mode": "debug"},
+    )
+
+    assert response.status_code == 200
+    final_result = response.json()["final_result"]
+    assert final_result["route"] == "code_action_review"
+    assert final_result["code_action_review"]["status"] == "review_ready"
+    assert final_result["code_action_review"]["executed"] is False
+    assert final_result["code_action_review"]["execution_allowed"] is False
+    assert final_result["code_action_review"]["execution_result"] is None
+    assert final_result["pending_code_actions"][0]["pending_action_type"] == "code_action"
+    assert "Pending code action: Review route hook" in final_result["summary"]
+    assert "no se ejecutó nada" in final_result["summary"]
+
+
+def test_pending_code_action_review_explains_blocked_action(monkeypatch, tmp_path):
+    client, orchestrator, store = _client(monkeypatch, tmp_path)
+    swarm = _create_chat_swarm(store, orchestrator, pending=False)
+    action = build_code_action_contract(
+        action_id="act-route-2",
+        action_type="run_command",
+        title="Blocked route hook",
+        suggested_commands=[{"command": "git push --force"}],
+    )
+    pending = build_code_action_pending_action(action, granted_permissions=["command_execution"])
+    swarm.final_result = {
+        "status": "completed",
+        "route": "code_action_review",
+        "pending_code_actions": [pending],
+    }
+    store.save(swarm)
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "explica code action", "swarm_mode": "debug"},
+    )
+
+    assert response.status_code == 200
+    final_result = response.json()["final_result"]
+    assert final_result["route"] == "code_action_review"
+    assert final_result["code_action_review"]["status"] == "blocked"
+    assert final_result["code_action_review"]["executed"] is False
+    assert "Blocked route hook" in final_result["summary"]
+    assert "Guard: blocked" in final_result["summary"]
+    assert "dangerous_command" in final_result["summary"]

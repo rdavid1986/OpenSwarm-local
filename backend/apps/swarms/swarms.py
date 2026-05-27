@@ -63,6 +63,7 @@ from backend.apps.swarms.pending_action_intelligence import resolve_pending_acti
 from backend.apps.swarms.project_memory import build_project_memory_from_swarm_state
 from backend.apps.swarms.refinement_action_guard import evaluate_refinement_execution_guard
 from backend.apps.swarms.response_intelligence import (
+    build_grounded_code_action_response,
     build_grounded_refinement_response,
     build_response_context,
     build_ri_state_snapshot,
@@ -937,6 +938,58 @@ def _is_structured_pending_refinement_action(user_message: str) -> bool:
         "update_refinement",
         "update",
     }
+
+
+def _get_pending_code_actions(swarm) -> list[dict[str, Any]]:
+    final_result = getattr(swarm, "final_result", None)
+    if not isinstance(final_result, dict):
+        return []
+    raw_actions = final_result.get("pending_code_actions")
+    if not isinstance(raw_actions, list):
+        return []
+    actions: list[dict[str, Any]] = []
+    for item in raw_actions:
+        if not isinstance(item, dict):
+            continue
+        if item.get("pending_action_type") != "code_action" and "code_action" not in item:
+            continue
+        status = str(item.get("status") or "").strip().lower()
+        if status in {"pending_approval", "blocked"}:
+            actions.append(item)
+    return actions
+
+
+def _is_code_action_review_request(user_message: str) -> bool:
+    normalized = (user_message or "").strip().lower()
+    if not normalized:
+        return False
+    review_terms = {
+        "review code action",
+        "revisar code action",
+        "revisa code action",
+        "explica code action",
+        "explicar code action",
+        "pending code action",
+        "acción de código",
+        "accion de codigo",
+        "cambio de código pendiente",
+        "cambio de codigo pendiente",
+    }
+    return any(term in normalized for term in review_terms)
+
+
+def _pending_code_action_response(user_message: str, swarm=None, swarm_mode: str | None = None) -> tuple[str, dict[str, Any]] | None:
+    pending_actions = _get_pending_code_actions(swarm)
+    if not pending_actions or not _is_code_action_review_request(user_message):
+        return None
+
+    ri_result = build_grounded_code_action_response(
+        swarm,
+        user_message=user_message,
+        pending_code_action=pending_actions[0],
+        swarm_mode=swarm_mode,
+    )
+    return ri_result.assistant_content or "", ri_result.payload
 
 
 def _refinement_request_response(user_message: str, swarm=None, swarm_mode: str | None = None) -> tuple[str, dict[str, Any]]:
@@ -2489,7 +2542,12 @@ def _save_local_chat_message(swarm, coordinator_id: str, assistant_content: str,
         swarm.final_result["refinement_execution_guard"] = payload["refinement_execution_guard"]
     if "refinement_execution_result" in payload:
         swarm.final_result["refinement_execution_result"] = payload["refinement_execution_result"]
-
+    if "pending_code_actions" in payload:
+        swarm.final_result["pending_code_actions"] = payload["pending_code_actions"]
+    if "pending_code_action" in payload:
+        swarm.final_result["pending_code_action"] = payload["pending_code_action"]
+    if "code_action_review" in payload:
+        swarm.final_result["code_action_review"] = payload["code_action_review"]
 
 
 def _controlled_chat_response(route: str, user_message: str, swarm) -> str | None:
@@ -2874,6 +2932,30 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
         route = "implementation_request"
     if swarm_mode == "ask" and route == "implementation_request":
         route = "normal_chat"
+
+    pending_code_action_response = _pending_code_action_response(user_message, swarm, swarm_mode=swarm_mode)
+    if pending_code_action_response:
+        assistant_content, code_action_payload = pending_code_action_response
+        code_action_payload["swarm_mode"] = swarm_mode
+        code_action_payload.update(snapshot_payload(build_ri_state_snapshot(
+            swarm,
+            route="code_action_review",
+            user_message=user_message,
+            payload=code_action_payload,
+        )))
+        _save_local_chat_message(swarm, coordinator_id, assistant_content, code_action_payload)
+        swarm = swarm_orchestrator.store.save(swarm)
+        event_trace_runtime.create(
+            swarm_id=swarm.id,
+            event_type="chat_completed",
+            payload={
+                "message": "code_action_reviewed",
+                "source": "local_code_action_review",
+                "route": "code_action_review",
+                "swarm_mode": swarm_mode,
+            },
+        )
+        return {**_dump(swarm), "provider_events": []}
 
     if swarm_mode in {"plan", "debug", "skill_builder", "app_builder"} and not _is_project_intake_collecting(swarm):
         clarification = await resolve_model_context_clarification(
