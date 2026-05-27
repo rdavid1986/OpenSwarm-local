@@ -1,10 +1,13 @@
 from backend.apps.swarms.eval_harness import (
+    build_default_eval_critic_node,
     build_default_eval_generator_node,
     build_default_eval_loop_contract,
     build_default_eval_planner_node,
+    build_eval_critic_node,
     build_eval_generator_node,
     build_eval_loop_contract,
     build_eval_planner_node,
+    normalize_eval_critic_finding,
     normalize_eval_generator_candidate,
     normalize_eval_metric,
     normalize_eval_node,
@@ -305,3 +308,105 @@ def test_default_eval_loop_uses_rich_generator_node_contract():
     assert generator["metadata"]["task_kind"] == "response_intelligence"
     assert generator["metadata"]["candidates"] == []
     assert generator["executed"] is False
+
+
+def test_normalize_eval_critic_finding_preserves_missing_evidence_and_recommendation():
+    finding = normalize_eval_critic_finding(
+        {
+            "finding_id": "finding-1",
+            "kind": "unsupported_claim",
+            "status": "needs_refinement",
+            "severity": "critical",
+            "summary": "Claim lacks evidence.",
+            "claim_ref": "claim:no_execution",
+            "criterion_ref": "grounding",
+            "metric_ref": "grounding",
+            "evidence_refs": ["state_context"],
+            "missing_evidence": ["execution_result"],
+            "recommendation": "Remove execution claim or provide evidence.",
+        }
+    )
+
+    assert finding["finding_id"] == "finding-1"
+    assert finding["kind"] == "unsupported_claim"
+    assert finding["status"] == "needs_refinement"
+    assert finding["severity"] == "critical"
+    assert finding["claim_ref"] == "claim:no_execution"
+    assert finding["evidence_refs"] == ["state_context"]
+    assert finding["missing_evidence"] == ["execution_result"]
+    assert finding["recommendation"] == "Remove execution claim or provide evidence."
+
+
+def test_build_eval_critic_node_creates_non_executing_critic_contract():
+    critic = build_eval_critic_node(
+        node_id="critic-1",
+        objective="Critique RI response candidate.",
+        task_kind="response_intelligence",
+        findings=[
+            {
+                "finding_id": "finding-2",
+                "kind": "contract_violation",
+                "severity": "high",
+                "summary": "Missing required field.",
+                "missing_evidence": ["expected_contract"],
+            }
+        ],
+        unsupported_claims=["Tests passed without evidence."],
+        contract_violations=["missing evidence_refs"],
+        missing_evidence=["pytest output"],
+        refinement_recommendations=["Add evidence_refs or remove claim."],
+        input_refs=["candidate:cand-2"],
+        output_refs=["critic:finding-2"],
+    )
+
+    assert critic["node_id"] == "critic-1"
+    assert critic["node_type"] == "critic"
+    assert critic["status"] == "ready"
+    assert critic["objective"] == "Critique RI response candidate."
+    assert critic["input_refs"] == ["candidate:cand-2"]
+    assert critic["output_refs"] == ["critic:finding-2"]
+    assert critic["requires_provider"] is False
+    assert critic["executed"] is False
+    assert critic["execution_result"] is None
+    assert critic["metadata"]["task_kind"] == "response_intelligence"
+    assert critic["metadata"]["finding_count"] == 1
+    assert critic["metadata"]["high_count"] == 1
+    assert critic["metadata"]["critical_count"] == 0
+    assert critic["metadata"]["unsupported_claims"] == ["Tests passed without evidence."]
+    assert critic["metadata"]["contract_violations"] == ["missing evidence_refs"]
+    assert critic["metadata"]["missing_evidence"] == ["pytest output"]
+    assert critic["metadata"]["refinement_recommendations"] == ["Add evidence_refs or remove claim."]
+    assert critic["metrics"][0]["metric_id"] == "critic_findings"
+    assert critic["metrics"][0]["status"] == "needs_refinement"
+
+
+def test_build_default_eval_critic_node_is_empty_and_non_executing():
+    critic = build_default_eval_critic_node(
+        objective="Critique code action review.",
+        task_kind="code_action_review",
+    )
+
+    assert critic["node_type"] == "critic"
+    assert critic["objective"] == "Critique code action review."
+    assert critic["metadata"]["task_kind"] == "code_action_review"
+    assert critic["metadata"]["findings"] == []
+    assert critic["metadata"]["finding_count"] == 0
+    assert critic["metrics"][0]["status"] == "passed"
+    assert critic["metadata"]["metadata"]["critic_source"] == "not_run"
+    assert critic["executed"] is False
+    assert critic["execution_result"] is None
+
+
+def test_default_eval_loop_uses_rich_critic_node_contract():
+    contract = build_default_eval_loop_contract(
+        objective="Evaluate response intelligence.",
+        task_kind="response_intelligence",
+    )
+
+    critic = contract["nodes"][2]
+
+    assert critic["node_type"] == "critic"
+    assert critic["metadata"]["task_kind"] == "response_intelligence"
+    assert critic["metadata"]["findings"] == []
+    assert critic["metadata"]["finding_count"] == 0
+    assert critic["executed"] is False

@@ -365,6 +365,126 @@ def build_default_eval_generator_node(
     )
 
 
+def normalize_eval_critic_finding(value: Any) -> dict[str, Any]:
+    """Normalize one critic finding without judging external state."""
+
+    raw = _as_dict(value)
+    severity = _as_text(raw.get("severity")) or "medium"
+    if severity not in VALID_EVAL_SEVERITIES:
+        severity = "medium"
+
+    status = _as_text(raw.get("status")) or "draft"
+    if status not in VALID_EVAL_STATUSES:
+        status = "draft"
+
+    return _bounded_value(
+        {
+            "finding_id": _as_text(raw.get("finding_id") or raw.get("id")) or None,
+            "kind": _as_text(raw.get("kind") or raw.get("type")) or "defect",
+            "status": status,
+            "severity": severity,
+            "summary": _as_text(raw.get("summary")) or None,
+            "claim_ref": _as_text(raw.get("claim_ref")) or None,
+            "criterion_ref": _as_text(raw.get("criterion_ref")) or None,
+            "metric_ref": _as_text(raw.get("metric_ref")) or None,
+            "evidence_refs": [_as_text(item) for item in _as_list(raw.get("evidence_refs")) if _as_text(item)],
+            "missing_evidence": [_as_text(item) for item in _as_list(raw.get("missing_evidence")) if _as_text(item)],
+            "recommendation": _as_text(raw.get("recommendation")) or None,
+            "reason": _as_text(raw.get("reason")) or "critic_finding_normalized",
+        }
+    )
+
+
+def build_eval_critic_node(
+    *,
+    node_id: str | None = None,
+    objective: str | None = None,
+    task_kind: str | None = None,
+    findings: list[Any] | None = None,
+    unsupported_claims: list[Any] | None = None,
+    contract_violations: list[Any] | None = None,
+    missing_evidence: list[Any] | None = None,
+    refinement_recommendations: list[Any] | None = None,
+    input_refs: list[Any] | None = None,
+    output_refs: list[Any] | None = None,
+    status: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build an eval critic node contract without running critique."""
+
+    normalized_findings = [normalize_eval_critic_finding(item) for item in _as_list(findings)]
+    resolved_status = _as_text(status) or "ready"
+    if resolved_status not in VALID_EVAL_STATUSES:
+        resolved_status = "ready"
+
+    critical_count = sum(1 for item in normalized_findings if item.get("severity") == "critical")
+    high_count = sum(1 for item in normalized_findings if item.get("severity") == "high")
+    total_findings = len(normalized_findings)
+    score = 1.0 if total_findings == 0 else max(0.0, 1.0 - (critical_count * 0.4) - (high_count * 0.25) - (total_findings * 0.1))
+
+    critic_metadata = _bounded_value(
+        {
+            "task_kind": _as_text(task_kind) or "generic",
+            "findings": normalized_findings,
+            "unsupported_claims": [_as_text(item) for item in _as_list(unsupported_claims) if _as_text(item)],
+            "contract_violations": [_as_text(item) for item in _as_list(contract_violations) if _as_text(item)],
+            "missing_evidence": [_as_text(item) for item in _as_list(missing_evidence) if _as_text(item)],
+            "refinement_recommendations": [
+                _as_text(item) for item in _as_list(refinement_recommendations) if _as_text(item)
+            ],
+            "finding_count": total_findings,
+            "critical_count": critical_count,
+            "high_count": high_count,
+            "metadata": _bounded_value(metadata or {}),
+        }
+    )
+
+    return normalize_eval_node(
+        {
+            "node_id": _as_text(node_id) or "critic",
+            "node_type": "critic",
+            "status": resolved_status,
+            "objective": _as_text(objective) or "Identify defects, risks, missing evidence and contract violations.",
+            "input_refs": input_refs,
+            "output_refs": output_refs,
+            "metrics": [
+                {
+                    "metric_id": "critic_findings",
+                    "name": "Critic findings",
+                    "status": "passed" if total_findings == 0 else "needs_refinement",
+                    "score": score,
+                    "severity": "critical" if critical_count else "high" if high_count else "info",
+                    "reason": "critic_findings_metric",
+                }
+            ],
+            "score": score,
+            "reason": "eval_critic_node_contract",
+            "requires_provider": False,
+            "metadata": critic_metadata,
+        }
+    )
+
+
+def build_default_eval_critic_node(
+    *,
+    objective: str | None = None,
+    task_kind: str | None = None,
+) -> dict[str, Any]:
+    """Build a default critic node for OpenSwarm evaluation loops."""
+
+    task = _as_text(task_kind) or "generic"
+    return build_eval_critic_node(
+        objective=objective or "Identify defects, risks, missing evidence and contract violations.",
+        task_kind=task,
+        findings=[],
+        unsupported_claims=[],
+        contract_violations=[],
+        missing_evidence=[],
+        refinement_recommendations=[],
+        metadata={"critic_source": "not_run"},
+    )
+
+
 def build_eval_loop_contract(
     *,
     loop_id: str | None = None,
@@ -470,12 +590,10 @@ def build_default_eval_loop_contract(*, objective: str | None = None, task_kind:
                 objective="Generate or receive candidate output for evaluation.",
                 task_kind=task,
             ),
-            {
-                "node_id": "critic",
-                "node_type": "critic",
-                "objective": "Identify defects, risks, missing evidence and contract violations.",
-                "reason": "Default evaluation critic node.",
-            },
+            build_default_eval_critic_node(
+                objective="Identify defects, risks, missing evidence and contract violations.",
+                task_kind=task,
+            ),
             {
                 "node_id": "refiner",
                 "node_type": "refiner",
