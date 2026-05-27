@@ -1,5 +1,6 @@
 from backend.apps.agents.orchestration.models import AgentContract, SwarmState
-from backend.apps.swarms.response_intelligence import build_grounded_refinement_response, build_response_context
+from backend.apps.swarms.code_action import build_code_action_contract, build_code_action_pending_action
+from backend.apps.swarms.response_intelligence import build_grounded_code_action_response, build_grounded_refinement_response, build_response_context
 from backend.apps.swarms.swarms import _refinement_request_response
 
 
@@ -188,3 +189,66 @@ def test_response_context_includes_action_stage_policy_for_model_reasoning():
     assert "[action_semantics_policy]" in context
     assert "action_stage is computed by the system and is authoritative" in context
     assert "preparation happened but execution did not" in context
+
+
+def test_grounded_code_action_response_reviews_pending_action_without_execution():
+    swarm = _chat_swarm()
+    action = build_code_action_contract(
+        action_id="act-ri-1",
+        action_type="edit_file",
+        title="Update RI code action flow",
+        affected_files=[{"path": "backend/apps/swarms/response_intelligence.py", "operation": "write"}],
+        suggested_commands=[{"command": "python -m pytest backend/tests/test_response_intelligence_grounded_refinement.py -q"}],
+        expected_evidence=["diff summary", "pytest output"],
+    )
+    pending = build_code_action_pending_action(
+        action,
+        allowed_files=["backend/apps/swarms/response_intelligence.py"],
+        granted_permissions=["filesystem_write"],
+    )
+
+    result = build_grounded_code_action_response(
+        swarm,
+        user_message="review this code action",
+        swarm_mode="debug",
+        pending_code_action=pending,
+    )
+
+    assert result.requires_provider is False
+    assert result.route == "code_action_review"
+    assert result.response_source == "local_grounded_code_action"
+    assert result.payload["route"] == "code_action_review"
+    assert result.payload["swarm_mode"] == "debug"
+    assert result.payload["code_action_review"]["status"] == "review_ready"
+    assert result.payload["code_action_review"]["executed"] is False
+    assert result.payload["code_action_review"]["execution_allowed"] is False
+    assert result.payload["code_action_review"]["execution_result"] is None
+    assert "Pending code action: Update RI code action flow" in (result.assistant_content or "")
+    assert "Guard: pending_approval" in (result.assistant_content or "")
+    assert "backend/apps/swarms/response_intelligence.py" in (result.assistant_content or "")
+    assert "no se ejecutó nada" in (result.assistant_content or "")
+
+
+def test_grounded_code_action_response_explains_blocked_pending_action():
+    swarm = _chat_swarm()
+    action = build_code_action_contract(
+        action_id="act-ri-2",
+        action_type="run_command",
+        title="Dangerous RI command",
+        suggested_commands=[{"command": "git push --force"}],
+    )
+    pending = build_code_action_pending_action(action, granted_permissions=["command_execution"])
+
+    result = build_grounded_code_action_response(
+        swarm,
+        user_message="review blocked action",
+        pending_code_action=pending,
+    )
+
+    assert result.requires_provider is False
+    assert result.payload["code_action_review"]["status"] == "blocked"
+    assert result.payload["code_action_review"]["executed"] is False
+    assert "Dangerous RI command" in (result.assistant_content or "")
+    assert "Guard: blocked" in (result.assistant_content or "")
+    assert "dangerous_command" in (result.assistant_content or "")
+    assert "no se ejecutó nada" in (result.assistant_content or "")

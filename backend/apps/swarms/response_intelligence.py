@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from backend.apps.swarms.code_action import build_code_action_review_response
 from backend.apps.swarms.workspace_intelligence import build_workspace_intelligence
 
 
@@ -561,6 +562,41 @@ def _build_grounded_refinement_content(
         f"Siguiente acción interna: {next_action or 'confirm_refinement'}.",
         "No voy a reiniciar el intake ni crear un proyecto nuevo.",
     ])
+
+
+def build_grounded_code_action_response(
+    swarm: Any,
+    *,
+    user_message: str,
+    pending_code_action: dict[str, Any],
+    swarm_mode: str | None = None,
+) -> RIResult:
+    """Build a local grounded response for a pending code action.
+
+    This generator does not execute tools, call providers, mutate files, approve
+    the action, or claim evidence. It only explains a pending code action using
+    the code_action review contract.
+    """
+
+    review = build_code_action_review_response(pending_code_action)
+    payload = {
+        "route": "code_action_review",
+        "pending_code_action": dict(_as_dict(pending_code_action)),
+        "code_action_review": review,
+        "pending_code_actions": [dict(_as_dict(pending_code_action))],
+    }
+
+    return build_ri_result(
+        swarm,
+        route="code_action_review",
+        user_message=user_message,
+        swarm_mode=swarm_mode,
+        source="local",
+        response_source="local_grounded_code_action",
+        requires_provider=False,
+        assistant_content=str(review.get("assistant_content") or ""),
+        payload=payload,
+    )
 
 
 def build_grounded_refinement_response(
