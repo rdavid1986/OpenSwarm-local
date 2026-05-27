@@ -1,4 +1,5 @@
 from backend.apps.swarms.context_selection import (
+    apply_context_budget_exclusion_policy,
     apply_context_budget_to_policy,
     build_context_budget_summary,
     build_context_selection_policy,
@@ -312,3 +313,72 @@ def test_apply_context_budget_to_policy_attaches_budget_summary():
     assert enriched["context_budget"]["context_budget_available_for_context"] == 5000
     assert enriched["context_budget"]["context_budget_remaining"] == 4000
     assert enriched["context_budget"]["overflow_strategy"] == "summarize_lowest_ranked_sources"
+
+def test_apply_context_budget_exclusion_policy_preserves_overflow_as_excluded():
+    policy = build_context_selection_policy(
+        selected_sources=[
+            {
+                "source_kind": "filesystem",
+                "source_id": "important.py",
+                "freshness": "fresh",
+                "confidence": 0.9,
+                "budget_cost": 1000,
+                "metadata": {"directly_related": True, "allowed": True},
+            },
+            {
+                "source_kind": "docs",
+                "source_id": "large_reference.md",
+                "confidence": 0.1,
+                "budget_cost": 3000,
+            },
+        ],
+        context_budget_total=3000,
+        context_budget_source="configured",
+    )
+
+    result = apply_context_budget_exclusion_policy(
+        policy,
+        reserved_response_budget=1000,
+    )
+
+    assert [source["source_id"] for source in result["selected_sources"]] == ["important.py"]
+    assert result["excluded_sources"][0]["source_id"] == "large_reference.md"
+    assert result["excluded_sources"][0]["status"] == "excluded"
+    assert result["excluded_sources"][0]["reason"] == "excluded_by_context_budget"
+    assert result["excluded_sources"][0]["metadata"]["excluded_by"] == "context_budget_policy"
+    assert result["excluded_sources"][0]["metadata"]["excluded_reason"] == "context_budget_exceeded"
+    assert result["context_budget"]["context_budget_status"] == "within_budget"
+    assert result["context_budget_used"] == 1000
+
+
+def test_apply_context_budget_exclusion_policy_keeps_existing_excluded_sources():
+    policy = build_context_selection_policy(
+        selected_sources=[
+            {"source_kind": "filesystem", "source_id": "a.py", "budget_cost": 500},
+        ],
+        excluded_sources=[
+            {"source_kind": "filesystem", "source_id": "forbidden.py", "reason": "forbidden_file"},
+        ],
+        context_budget_total=2000,
+        context_budget_source="configured",
+    )
+
+    result = apply_context_budget_exclusion_policy(policy, reserved_response_budget=500)
+
+    assert [source["source_id"] for source in result["selected_sources"]] == ["a.py"]
+    assert any(source["source_id"] == "forbidden.py" for source in result["excluded_sources"])
+    assert result["context_budget"]["context_budget_status"] == "within_budget"
+
+
+def test_apply_context_budget_exclusion_policy_is_noop_when_budget_unknown():
+    policy = build_context_selection_policy(
+        selected_sources=[
+            {"source_kind": "filesystem", "source_id": "a.py", "budget_cost": 500},
+        ],
+    )
+
+    result = apply_context_budget_exclusion_policy(policy)
+
+    assert [source["source_id"] for source in result["selected_sources"]] == ["a.py"]
+    assert result["excluded_sources"] == []
+    assert result["context_budget"]["context_budget_status"] == "unknown_budget"

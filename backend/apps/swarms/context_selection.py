@@ -408,6 +408,78 @@ def apply_context_budget_to_policy(
     return normalize_context_selection_value(merged)
 
 
+
+def apply_context_budget_exclusion_policy(
+    policy: dict[str, Any] | None,
+    *,
+    reserved_response_budget: int | None = None,
+    reserved_tool_budget: int | None = None,
+    reserved_evidence_budget: int | None = None,
+    overflow_strategy: str | None = None,
+) -> dict[str, Any]:
+    """Move lowest-priority selected sources to excluded_sources when over budget.
+
+    This helper is deterministic and side-effect free. It does not delete
+    context candidates; it preserves overflowed items as excluded sources with a
+    traceable reason.
+    """
+
+    enriched = apply_context_budget_to_policy(
+        policy,
+        reserved_response_budget=reserved_response_budget,
+        reserved_tool_budget=reserved_tool_budget,
+        reserved_evidence_budget=reserved_evidence_budget,
+        overflow_strategy=overflow_strategy,
+    )
+    budget = _as_dict(enriched.get("context_budget"))
+    available = _count_or_zero(budget.get("context_budget_available_for_context"))
+
+    if not available:
+        return normalize_context_selection_value(enriched)
+
+    selected_ranked = rank_context_sources(_as_list(enriched.get("selected_sources")))
+    kept: list[dict[str, Any]] = []
+    excluded_by_budget: list[dict[str, Any]] = []
+    used = 0
+
+    for source in selected_ranked:
+        source_cost = _count_or_zero(_as_dict(source).get("budget_cost"))
+        if used + source_cost <= available:
+            kept.append(source)
+            used += source_cost
+            continue
+
+        excluded = dict(source)
+        excluded["status"] = "excluded"
+        excluded["reason"] = "excluded_by_context_budget"
+        excluded_metadata = dict(_as_dict(excluded.get("metadata")))
+        excluded_metadata["excluded_reason"] = "context_budget_exceeded"
+        excluded_metadata["excluded_by"] = "context_budget_policy"
+        excluded["metadata"] = excluded_metadata
+        excluded_by_budget.append(normalize_context_selection_value(excluded))
+
+    merged = dict(enriched)
+    merged["selected_sources"] = kept
+    merged["excluded_sources"] = rank_context_sources(
+        _as_list(enriched.get("excluded_sources")) + excluded_by_budget
+    )
+    merged["context_budget"] = build_context_budget_summary(
+        context_budget_total=budget.get("context_budget_total"),
+        context_budget_used=used,
+        selected_sources=kept,
+        reserved_response_budget=budget.get("reserved_response_budget"),
+        reserved_tool_budget=budget.get("reserved_tool_budget"),
+        reserved_evidence_budget=budget.get("reserved_evidence_budget"),
+        context_budget_source=budget.get("context_budget_source"),
+        overflow_strategy=budget.get("overflow_strategy"),
+    )
+    merged["context_budget_used"] = merged["context_budget"]["context_budget_used"]
+    merged["context_budget_total"] = merged["context_budget"]["context_budget_total"]
+    merged["context_budget_source"] = merged["context_budget"]["context_budget_source"]
+    merged["selection_reason"] = _as_text(merged.get("selection_reason")) or "context_budget_policy"
+    return normalize_context_selection_value(merged)
+
+
 def build_ranked_context_selection_policy(**kwargs: Any) -> dict[str, Any]:
     """Build a policy and rank its selected sources."""
 
