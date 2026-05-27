@@ -1070,3 +1070,183 @@ def summarize_mcp_evidence_bundle(bundle: dict[str, Any] | None) -> str:
         f"actions={data.get('required_user_action_count', 0)}; "
         "executed=False"
     )
+
+
+VALID_MCP_SANDBOX_DECISIONS = {"allow", "requires_approval", "block"}
+MCP_SANDBOX_DANGEROUS_COMMANDS = {
+    "rm",
+    "del",
+    "erase",
+    "format",
+    "shutdown",
+    "reboot",
+    "powershell",
+    "pwsh",
+    "cmd",
+    "bash",
+    "sh",
+}
+MCP_SANDBOX_NETWORK_FLAGS = {"--url", "--host", "--listen", "--port", "--remote", "--server"}
+MCP_SANDBOX_WRITE_FLAGS = {
+    "--write",
+    "--delete",
+    "--remove",
+    "--force",
+    "--output",
+    "--out",
+    "--projectPath",
+    "-projectPath",
+}
+
+
+def classify_mcp_sandbox_risk(
+    *,
+    command: str | None = None,
+    args: list[Any] | None = None,
+    script_path: str | None = None,
+    fallback_type: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Classify MCP/fallback sandbox risk without executing anything."""
+
+    clean_command = _as_text(command)
+    command_name = clean_command.replace("\\", "/").split("/")[-1].lower()
+    clean_args = [_as_text(item) for item in _as_list(args) if _as_text(item)]
+    clean_script = _as_text(script_path)
+    normalized_type = normalize_mcp_fallback_type(fallback_type)
+    data = _as_dict(metadata)
+
+    risk_flags: list[str] = []
+
+    if command_name in MCP_SANDBOX_DANGEROUS_COMMANDS:
+        risk_flags.append("dangerous_command")
+
+    lowered_args = [item.lower() for item in clean_args]
+    if any(item in MCP_SANDBOX_NETWORK_FLAGS for item in lowered_args):
+        risk_flags.append("network_surface")
+    if any(item in MCP_SANDBOX_WRITE_FLAGS for item in clean_args):
+        risk_flags.append("write_surface")
+    if any(".." in item.replace("\\", "/").split("/") for item in clean_args + [clean_script]):
+        risk_flags.append("path_traversal")
+    if data.get("requires_network"):
+        risk_flags.append("network_required")
+    if data.get("writes_files"):
+        risk_flags.append("writes_files")
+    if data.get("external_app"):
+        risk_flags.append("external_app")
+    if normalized_type == "manual":
+        risk_flags.append("manual_only")
+    if normalized_type == "none":
+        risk_flags.append("no_fallback")
+
+    if "dangerous_command" in risk_flags or "path_traversal" in risk_flags:
+        level = "high"
+    elif {"network_surface", "network_required", "writes_files", "write_surface", "external_app"} & set(risk_flags):
+        level = "medium"
+    elif risk_flags:
+        level = "low"
+    else:
+        level = "low"
+
+    return {
+        "contract_kind": "mcp_sandbox_risk",
+        "risk_level": level,
+        "risk_flags": sorted(set(risk_flags)),
+        "command": clean_command or None,
+        "args": clean_args,
+        "script_path": clean_script or None,
+        "fallback_type": normalized_type,
+        "executed": False,
+        "execution_result": None,
+    }
+
+
+def build_mcp_sandbox_policy_decision(
+    *,
+    fallback_adapter: dict[str, Any] | None = None,
+    fallback_plan: dict[str, Any] | None = None,
+    allowed_commands: list[Any] | None = None,
+    allowed_script_roots: list[Any] | None = None,
+    require_approval_for_external_apps: bool = True,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build sandbox decision for MCP fallback/tool use without execution."""
+
+    plan = _as_dict(fallback_plan)
+    adapter = _as_dict(fallback_adapter) or _as_dict(plan.get("selected_fallback"))
+    command = _as_text(adapter.get("command"))
+    args = _as_list(adapter.get("args"))
+    script_path = _as_text(adapter.get("script_path"))
+    fallback_type = adapter.get("fallback_type")
+    allowed_command_set = {_as_text(item).lower() for item in _as_list(allowed_commands) if _as_text(item)}
+    allowed_roots = [_as_text(item).replace("\\", "/").rstrip("/") for item in _as_list(allowed_script_roots) if _as_text(item)]
+
+    risk = classify_mcp_sandbox_risk(
+        command=command,
+        args=args,
+        script_path=script_path,
+        fallback_type=fallback_type,
+        metadata={**_as_dict(adapter.get("metadata")), **_as_dict(metadata)},
+    )
+
+    reasons: list[str] = []
+    command_name = command.replace("\\", "/").split("/")[-1].lower() if command else ""
+    if not adapter:
+        reasons.append("fallback_adapter_missing")
+    if command_name and allowed_command_set and command_name not in allowed_command_set:
+        reasons.append("command_not_allowlisted")
+    if script_path and allowed_roots:
+        normalized_script = script_path.replace("\\", "/")
+        if not any(normalized_script.startswith(root + "/") or normalized_script == root for root in allowed_roots):
+            reasons.append("script_path_outside_allowed_roots")
+    if adapter.get("requires_user_approval"):
+        reasons.append("adapter_requires_user_approval")
+    if require_approval_for_external_apps and "external_app" in risk.get("risk_flags", []):
+        reasons.append("external_app_requires_approval")
+    if risk.get("risk_level") == "high":
+        reasons.append("high_risk")
+
+    if "high_risk" in reasons or "command_not_allowlisted" in reasons or "script_path_outside_allowed_roots" in reasons:
+        decision = "block"
+    elif reasons or risk.get("risk_level") == "medium":
+        decision = "requires_approval"
+    else:
+        decision = "allow"
+
+    actions: list[dict[str, Any]] = []
+    if decision == "requires_approval":
+        actions.append(build_mcp_required_user_action(
+            action_type="review_permissions",
+            target=f"pending-actions/mcp/{adapter.get('server_name') or 'unknown'}/sandbox",
+            label=f"Review sandbox policy for {(adapter.get('server_name') or 'MCP').replace('-', ' ').title()}",
+            reason="mcp_sandbox_requires_approval",
+            server_name=adapter.get("server_name"),
+        ))
+
+    return {
+        "contract_kind": "mcp_sandbox_policy_decision",
+        "decision": decision,
+        "reasons": reasons,
+        "risk": risk,
+        "fallback_adapter": adapter or None,
+        "required_user_actions": actions,
+        "allowed_commands": sorted(allowed_command_set),
+        "allowed_script_roots": allowed_roots,
+        "executed": False,
+        "execution_result": None,
+    }
+
+
+def summarize_mcp_sandbox_policy_decision(decision: dict[str, Any] | None) -> str:
+    """Return compact MCP sandbox decision summary."""
+
+    data = _as_dict(decision)
+    risk = _as_dict(data.get("risk"))
+    return (
+        "MCP Sandbox Policy: "
+        f"decision={data.get('decision') or 'empty'}; "
+        f"risk={risk.get('risk_level') or 'unknown'}; "
+        f"reasons={len(_as_list(data.get('reasons')))}; "
+        f"actions={len(_as_list(data.get('required_user_actions')))}; "
+        "executed=False"
+    )

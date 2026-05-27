@@ -7,8 +7,10 @@ from backend.apps.swarms.mcp_contract import (
     build_mcp_fallback_plan,
     build_mcp_host_contract,
     build_mcp_required_user_action,
+    build_mcp_sandbox_policy_decision,
     build_mcp_server_contract,
     build_mcp_tool_definition_budget,
+    classify_mcp_sandbox_risk,
     build_mcp_tool_registry,
     estimate_mcp_definition_cost,
     filter_mcp_registry_servers,
@@ -23,6 +25,7 @@ from backend.apps.swarms.mcp_contract import (
     summarize_mcp_fallback_plan,
     summarize_mcp_host_contract,
     summarize_mcp_inspection,
+    summarize_mcp_sandbox_policy_decision,
     summarize_mcp_tool_definition_budget,
     summarize_mcp_tool_registry,
 )
@@ -736,3 +739,113 @@ def test_summarize_mcp_evidence_record_and_bundle_are_compact():
     assert "MCP Evidence Bundle:" in bundle_summary
     assert "records=1" in bundle_summary
     assert "executed=False" in bundle_summary
+
+
+def test_classify_mcp_sandbox_risk_detects_external_write_surface():
+    risk = classify_mcp_sandbox_risk(
+        command="unity",
+        args=["-batchmode", "-projectPath", "."],
+        fallback_type="cli",
+        metadata={"external_app": True, "writes_files": True},
+    )
+
+    assert risk["contract_kind"] == "mcp_sandbox_risk"
+    assert risk["risk_level"] == "medium"
+    assert "external_app" in risk["risk_flags"]
+    assert "writes_files" in risk["risk_flags"]
+    assert "write_surface" in risk["risk_flags"]
+    assert risk["executed"] is False
+
+
+def test_build_mcp_sandbox_policy_decision_allows_safe_allowlisted_script():
+    adapter = build_mcp_fallback_adapter_contract(
+        server_name="Unity",
+        fallback_type="script",
+        script_path="tools/unity/read_scene.py",
+        requires_user_approval=False,
+    )
+
+    decision = build_mcp_sandbox_policy_decision(
+        fallback_adapter=adapter,
+        allowed_script_roots=["tools/unity"],
+    )
+
+    assert decision["contract_kind"] == "mcp_sandbox_policy_decision"
+    assert decision["decision"] == "allow"
+    assert decision["reasons"] == []
+    assert decision["risk"]["risk_level"] == "low"
+    assert decision["executed"] is False
+
+
+def test_build_mcp_sandbox_policy_decision_requires_approval_for_external_app():
+    adapter = build_mcp_fallback_adapter_contract(
+        server_name="Unity",
+        fallback_type="cli",
+        command="unity",
+        args=["-batchmode"],
+        requires_user_approval=False,
+        metadata={"external_app": True},
+    )
+
+    decision = build_mcp_sandbox_policy_decision(
+        fallback_adapter=adapter,
+        allowed_commands=["unity"],
+    )
+
+    assert decision["decision"] == "requires_approval"
+    assert "external_app_requires_approval" in decision["reasons"]
+    assert decision["required_user_actions"][0]["action_type"] == "review_permissions"
+
+
+def test_build_mcp_sandbox_policy_decision_blocks_unallowlisted_command():
+    adapter = build_mcp_fallback_adapter_contract(
+        server_name="Unity",
+        fallback_type="cli",
+        command="powershell",
+        args=["Remove-Item", "-Recurse"],
+    )
+
+    decision = build_mcp_sandbox_policy_decision(
+        fallback_adapter=adapter,
+        allowed_commands=["unity"],
+    )
+
+    assert decision["decision"] == "block"
+    assert "command_not_allowlisted" in decision["reasons"]
+    assert "high_risk" in decision["reasons"]
+
+
+def test_build_mcp_sandbox_policy_decision_blocks_script_outside_root():
+    adapter = build_mcp_fallback_adapter_contract(
+        server_name="Unity",
+        fallback_type="script",
+        script_path="../danger.py",
+        requires_user_approval=False,
+    )
+
+    decision = build_mcp_sandbox_policy_decision(
+        fallback_adapter=adapter,
+        allowed_script_roots=["tools/unity"],
+    )
+
+    assert decision["decision"] == "block"
+    assert "script_path_outside_allowed_roots" in decision["reasons"]
+    assert "high_risk" in decision["reasons"]
+
+
+def test_summarize_mcp_sandbox_policy_decision_is_compact_and_non_executing():
+    adapter = build_mcp_fallback_adapter_contract(
+        server_name="Unity",
+        fallback_type="cli",
+        command="unity",
+    )
+    decision = build_mcp_sandbox_policy_decision(
+        fallback_adapter=adapter,
+        allowed_commands=["unity"],
+    )
+
+    summary = summarize_mcp_sandbox_policy_decision(decision)
+
+    assert "MCP Sandbox Policy:" in summary
+    assert "decision=requires_approval" in summary
+    assert "executed=False" in summary
