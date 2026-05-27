@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from backend.config.Apps import SubApp
 from backend.apps.tools_lib.models import ToolDefinition, ToolCreate, ToolUpdate, BUILTIN_TOOLS
+from backend.apps.swarms.mcp_contract import build_mcp_settings_store_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,22 @@ def _connected_html() -> HTMLResponse:
     </script>
     </body></html>
     """)
+
+
+
+
+@tools_lib.router.get("/mcp/settings-snapshot")
+async def get_mcp_settings_snapshot():
+    """Return sanitized MCP settings snapshot.
+
+    This endpoint exposes configuration metadata only. It never returns raw
+    credentials, OAuth tokens, env values, header values, or activates MCPs.
+    """
+
+    return build_mcp_settings_store_snapshot(
+        tools=_load_all(),
+        metadata={"source": "tools_lib", "persisted_source": "ToolDefinition"},
+    )
 
 
 @tools_lib.router.get("/{tool_id}")

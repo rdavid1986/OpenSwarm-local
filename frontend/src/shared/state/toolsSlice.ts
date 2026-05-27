@@ -18,6 +18,47 @@ export interface ToolDefinition {
   enabled?: boolean;
 }
 
+export interface McpPersistedSettingsSnapshot {
+  contract_kind: 'mcp_persisted_settings_snapshot';
+  tool_id?: string | null;
+  name?: string | null;
+  server_name?: string | null;
+  description?: string | null;
+  enabled: boolean;
+  auth_type: string;
+  auth_status: string;
+  connected_account_email?: string | null;
+  transport: string;
+  command?: string | null;
+  args: any[];
+  url_configured: boolean;
+  env_keys: string[];
+  header_keys: string[];
+  sanitized_mcp_config: Record<string, any>;
+  tool_permissions: Record<string, string>;
+  permission_count: number;
+  sandbox_decision?: string | null;
+  sandbox_reasons: any[];
+  secrets_persisted: false;
+  activation_scope: 'session_only';
+  activation_gate: string;
+  executed: false;
+  execution_result: null;
+}
+
+export interface McpSettingsStoreSnapshot {
+  contract_kind: 'mcp_settings_store_snapshot';
+  tools: McpPersistedSettingsSnapshot[];
+  tool_count: number;
+  enabled_count: number;
+  configured_count: number;
+  secrets_persisted: false;
+  activation_scope: 'session_only';
+  activation_gate: string;
+  executed: false;
+  execution_result: null;
+}
+
 export interface BuiltinTool {
   name: string;
   display_name?: string;
@@ -33,9 +74,11 @@ interface ToolsState {
   loading: boolean;
   loaded: boolean;
   builtinLoaded: boolean;
+  mcpSettingsSnapshot: McpSettingsStoreSnapshot | null;
+  mcpSettingsSnapshotLoading: boolean;
 }
 
-const initialState: ToolsState = { items: {}, builtinTools: [], builtinPermissions: {}, loading: false, loaded: false, builtinLoaded: false };
+const initialState: ToolsState = { items: {}, builtinTools: [], builtinPermissions: {}, loading: false, loaded: false, builtinLoaded: false, mcpSettingsSnapshot: null, mcpSettingsSnapshotLoading: false };
 
 export const fetchTools = createAsyncThunk(
   'tools/fetch',
@@ -45,6 +88,15 @@ export const fetchTools = createAsyncThunk(
     return data.tools as ToolDefinition[];
   },
   { condition: (_, { getState }) => !(getState() as { tools: ToolsState }).tools.loading },
+);
+
+export const fetchMcpSettingsSnapshot = createAsyncThunk(
+  'tools/fetchMcpSettingsSnapshot',
+  async () => {
+    const res = await fetch(`${TOOLS_API}/mcp/settings-snapshot`);
+    const data = await res.json();
+    return data as McpSettingsStoreSnapshot;
+  }
 );
 
 export const fetchBuiltinTools = createAsyncThunk(
@@ -190,6 +242,12 @@ const toolsSlice = createSlice({
         for (const t of action.payload) state.items[t.id] = t;
       })
       .addCase(fetchTools.rejected, (state) => { state.loading = false; state.loaded = true; })
+      .addCase(fetchMcpSettingsSnapshot.pending, (state) => { state.mcpSettingsSnapshotLoading = true; })
+      .addCase(fetchMcpSettingsSnapshot.fulfilled, (state, action) => {
+        state.mcpSettingsSnapshotLoading = false;
+        state.mcpSettingsSnapshot = action.payload;
+      })
+      .addCase(fetchMcpSettingsSnapshot.rejected, (state) => { state.mcpSettingsSnapshotLoading = false; })
       .addCase(fetchBuiltinTools.fulfilled, (state, action) => { state.builtinTools = action.payload; state.builtinLoaded = true; })
       .addCase(createTool.fulfilled, (state, action) => { state.items[action.payload.id] = action.payload; })
       .addCase(updateTool.fulfilled, (state, action) => { state.items[action.payload.id] = action.payload; })
