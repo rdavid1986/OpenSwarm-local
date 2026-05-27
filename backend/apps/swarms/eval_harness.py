@@ -485,6 +485,116 @@ def build_default_eval_critic_node(
     )
 
 
+def normalize_eval_refinement_proposal(value: Any) -> dict[str, Any]:
+    """Normalize one refiner proposal without applying it."""
+
+    raw = _as_dict(value)
+    status = _as_text(raw.get("status")) or "draft"
+    if status not in VALID_EVAL_STATUSES:
+        status = "draft"
+
+    severity = _as_text(raw.get("severity")) or "medium"
+    if severity not in VALID_EVAL_SEVERITIES:
+        severity = "medium"
+
+    return _bounded_value(
+        {
+            "proposal_id": _as_text(raw.get("proposal_id") or raw.get("id")) or None,
+            "status": status,
+            "severity": severity,
+            "summary": _as_text(raw.get("summary")) or None,
+            "target_ref": _as_text(raw.get("target_ref")) or None,
+            "finding_refs": [_as_text(item) for item in _as_list(raw.get("finding_refs")) if _as_text(item)],
+            "required_evidence": [_as_text(item) for item in _as_list(raw.get("required_evidence")) if _as_text(item)],
+            "expected_change": _as_text(raw.get("expected_change")) or None,
+            "risk": _as_text(raw.get("risk")) or None,
+            "reason": _as_text(raw.get("reason")) or "refinement_proposal_normalized",
+            "applied": False,
+            "executed": False,
+            "execution_result": None,
+        }
+    )
+
+
+def build_eval_refiner_node(
+    *,
+    node_id: str | None = None,
+    objective: str | None = None,
+    task_kind: str | None = None,
+    proposals: list[Any] | None = None,
+    finding_refs: list[Any] | None = None,
+    blocked_reasons: list[Any] | None = None,
+    input_refs: list[Any] | None = None,
+    output_refs: list[Any] | None = None,
+    status: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build an eval refiner node contract without applying refinements."""
+
+    normalized_proposals = [normalize_eval_refinement_proposal(item) for item in _as_list(proposals)]
+    resolved_status = _as_text(status) or "ready"
+    if resolved_status not in VALID_EVAL_STATUSES:
+        resolved_status = "ready"
+
+    blocked = [_as_text(item) for item in _as_list(blocked_reasons) if _as_text(item)]
+    proposal_count = len(normalized_proposals)
+    score = 1.0 if proposal_count > 0 and not blocked else 0.0 if blocked else 0.5
+
+    refiner_metadata = _bounded_value(
+        {
+            "task_kind": _as_text(task_kind) or "generic",
+            "proposals": normalized_proposals,
+            "proposal_count": proposal_count,
+            "finding_refs": [_as_text(item) for item in _as_list(finding_refs) if _as_text(item)],
+            "blocked_reasons": blocked,
+            "metadata": _bounded_value(metadata or {}),
+        }
+    )
+
+    return normalize_eval_node(
+        {
+            "node_id": _as_text(node_id) or "refiner",
+            "node_type": "refiner",
+            "status": resolved_status,
+            "objective": _as_text(objective) or "Propose safe refinements without applying them.",
+            "input_refs": input_refs,
+            "output_refs": output_refs,
+            "metrics": [
+                {
+                    "metric_id": "refinement_proposals",
+                    "name": "Refinement proposals",
+                    "status": "blocked" if blocked else "passed" if proposal_count else "draft",
+                    "score": score,
+                    "severity": "high" if blocked else "info",
+                    "reason": "refinement_proposals_metric",
+                }
+            ],
+            "score": score,
+            "reason": "eval_refiner_node_contract",
+            "requires_provider": False,
+            "metadata": refiner_metadata,
+        }
+    )
+
+
+def build_default_eval_refiner_node(
+    *,
+    objective: str | None = None,
+    task_kind: str | None = None,
+) -> dict[str, Any]:
+    """Build a default refiner node for OpenSwarm evaluation loops."""
+
+    task = _as_text(task_kind) or "generic"
+    return build_eval_refiner_node(
+        objective=objective or "Propose improvements when evaluation fails and refinement is allowed.",
+        task_kind=task,
+        proposals=[],
+        finding_refs=[],
+        blocked_reasons=[],
+        metadata={"refiner_source": "not_run"},
+    )
+
+
 def build_eval_loop_contract(
     *,
     loop_id: str | None = None,
@@ -594,12 +704,10 @@ def build_default_eval_loop_contract(*, objective: str | None = None, task_kind:
                 objective="Identify defects, risks, missing evidence and contract violations.",
                 task_kind=task,
             ),
-            {
-                "node_id": "refiner",
-                "node_type": "refiner",
-                "objective": "Propose improvements when evaluation fails and refinement is allowed.",
-                "reason": "Default evaluation refiner node.",
-            },
+            build_default_eval_refiner_node(
+                objective="Propose improvements when evaluation fails and refinement is allowed.",
+                task_kind=task,
+            ),
             {
                 "node_id": "evaluator",
                 "node_type": "evaluator",

@@ -3,15 +3,18 @@ from backend.apps.swarms.eval_harness import (
     build_default_eval_generator_node,
     build_default_eval_loop_contract,
     build_default_eval_planner_node,
+    build_default_eval_refiner_node,
     build_eval_critic_node,
     build_eval_generator_node,
     build_eval_loop_contract,
     build_eval_planner_node,
+    build_eval_refiner_node,
     normalize_eval_critic_finding,
     normalize_eval_generator_candidate,
     normalize_eval_metric,
     normalize_eval_node,
     normalize_eval_planner_criterion,
+    normalize_eval_refinement_proposal,
     normalize_eval_stop_policy,
     summarize_eval_loop,
 )
@@ -410,3 +413,114 @@ def test_default_eval_loop_uses_rich_critic_node_contract():
     assert critic["metadata"]["findings"] == []
     assert critic["metadata"]["finding_count"] == 0
     assert critic["executed"] is False
+
+
+def test_normalize_eval_refinement_proposal_never_applies_changes():
+    proposal = normalize_eval_refinement_proposal(
+        {
+            "proposal_id": "proposal-1",
+            "status": "ready",
+            "severity": "high",
+            "summary": "Remove unsupported claim.",
+            "target_ref": "candidate:cand-2",
+            "finding_refs": ["finding-2", ""],
+            "required_evidence": ["updated summary"],
+            "expected_change": "Remove tests passed claim.",
+            "risk": "claim may remain ambiguous",
+            "applied": True,
+            "executed": True,
+            "execution_result": {"claimed": True},
+        }
+    )
+
+    assert proposal["proposal_id"] == "proposal-1"
+    assert proposal["status"] == "ready"
+    assert proposal["severity"] == "high"
+    assert proposal["target_ref"] == "candidate:cand-2"
+    assert proposal["finding_refs"] == ["finding-2"]
+    assert proposal["required_evidence"] == ["updated summary"]
+    assert proposal["expected_change"] == "Remove tests passed claim."
+    assert proposal["applied"] is False
+    assert proposal["executed"] is False
+    assert proposal["execution_result"] is None
+
+
+def test_build_eval_refiner_node_creates_non_applying_refiner_contract():
+    refiner = build_eval_refiner_node(
+        node_id="refiner-1",
+        objective="Refine RI response candidate.",
+        task_kind="response_intelligence",
+        proposals=[
+            {
+                "proposal_id": "proposal-2",
+                "summary": "Add missing evidence refs.",
+                "target_ref": "candidate:cand-2",
+                "finding_refs": ["finding-2"],
+                "required_evidence": ["evidence_refs"],
+            }
+        ],
+        finding_refs=["finding-2"],
+        input_refs=["critic:finding-2"],
+        output_refs=["proposal:proposal-2"],
+    )
+
+    assert refiner["node_id"] == "refiner-1"
+    assert refiner["node_type"] == "refiner"
+    assert refiner["status"] == "ready"
+    assert refiner["objective"] == "Refine RI response candidate."
+    assert refiner["input_refs"] == ["critic:finding-2"]
+    assert refiner["output_refs"] == ["proposal:proposal-2"]
+    assert refiner["requires_provider"] is False
+    assert refiner["executed"] is False
+    assert refiner["execution_result"] is None
+    assert refiner["metadata"]["task_kind"] == "response_intelligence"
+    assert refiner["metadata"]["proposal_count"] == 1
+    assert refiner["metadata"]["finding_refs"] == ["finding-2"]
+    assert refiner["metadata"]["proposals"][0]["proposal_id"] == "proposal-2"
+    assert refiner["metadata"]["proposals"][0]["applied"] is False
+    assert refiner["metrics"][0]["metric_id"] == "refinement_proposals"
+    assert refiner["metrics"][0]["status"] == "passed"
+
+
+def test_build_eval_refiner_node_reports_blocked_reasons():
+    refiner = build_eval_refiner_node(
+        task_kind="code_action_review",
+        blocked_reasons=["stop_policy_disallows_refinement"],
+    )
+
+    assert refiner["node_type"] == "refiner"
+    assert refiner["metadata"]["blocked_reasons"] == ["stop_policy_disallows_refinement"]
+    assert refiner["metrics"][0]["status"] == "blocked"
+    assert refiner["score"] == 0.0
+    assert refiner["executed"] is False
+
+
+def test_build_default_eval_refiner_node_is_empty_and_non_executing():
+    refiner = build_default_eval_refiner_node(
+        objective="Refine code action review.",
+        task_kind="code_action_review",
+    )
+
+    assert refiner["node_type"] == "refiner"
+    assert refiner["objective"] == "Refine code action review."
+    assert refiner["metadata"]["task_kind"] == "code_action_review"
+    assert refiner["metadata"]["proposals"] == []
+    assert refiner["metadata"]["proposal_count"] == 0
+    assert refiner["metadata"]["metadata"]["refiner_source"] == "not_run"
+    assert refiner["executed"] is False
+    assert refiner["execution_result"] is None
+
+
+def test_default_eval_loop_uses_rich_refiner_node_contract():
+    contract = build_default_eval_loop_contract(
+        objective="Evaluate response intelligence.",
+        task_kind="response_intelligence",
+    )
+
+    refiner = contract["nodes"][3]
+
+    assert refiner["node_type"] == "refiner"
+    assert refiner["metadata"]["task_kind"] == "response_intelligence"
+    assert refiner["metadata"]["proposals"] == []
+    assert refiner["metadata"]["proposal_count"] == 0
+    assert refiner["executed"] is False
