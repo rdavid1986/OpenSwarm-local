@@ -861,6 +861,106 @@ def evaluate_eval_loop_stop_policy(
     )
 
 
+def collect_eval_loop_memory_items(loop_contract: dict[str, Any] | None) -> dict[str, Any]:
+    """Collect portable eval memory items without persisting them."""
+
+    loop = _as_dict(loop_contract)
+    nodes = [_as_dict(item) for item in _as_list(loop.get("nodes"))]
+
+    findings: list[Any] = []
+    proposals: list[Any] = []
+    evidence_refs: list[str] = []
+    blockers: list[str] = []
+
+    for node in nodes:
+        metadata = _as_dict(node.get("metadata"))
+        findings.extend(_as_list(metadata.get("findings")))
+        proposals.extend(_as_list(metadata.get("proposals")))
+        evidence_refs.extend(_as_text(item) for item in _as_list(metadata.get("evidence_refs")) if _as_text(item))
+        blockers.extend(_as_text(item) for item in _as_list(metadata.get("blockers")) if _as_text(item))
+        final_decision = _as_dict(metadata.get("final_decision"))
+        evidence_refs.extend(_as_text(item) for item in _as_list(final_decision.get("evidence_refs")) if _as_text(item))
+        blockers.extend(_as_text(item) for item in _as_list(final_decision.get("blockers")) if _as_text(item))
+
+    stop_decision = _as_dict(loop.get("stop_decision"))
+    blockers.extend(_as_text(item) for item in _as_list(stop_decision.get("blockers")) if _as_text(item))
+
+    return _bounded_value(
+        {
+            "findings": findings,
+            "proposals": proposals,
+            "evidence_refs": sorted({item for item in evidence_refs if item}),
+            "blockers": sorted({item for item in blockers if item}),
+        }
+    )
+
+
+def build_eval_memory_record(
+    *,
+    loop_contract: dict[str, Any] | None = None,
+    memory_id: str | None = None,
+    source: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a side-effect-free memory record for future eval retrieval.
+
+    This does not persist to DB, project memory, filesystem, or vector storage.
+    It only returns the normalized record that a later persistence layer may store.
+    """
+
+    loop = _as_dict(loop_contract)
+    stop_decision = _as_dict(loop.get("stop_decision"))
+    memory_items = collect_eval_loop_memory_items(loop)
+    score = _bounded_score(stop_decision.get("score"))
+
+    return _bounded_value(
+        {
+            "memory_id": _as_text(memory_id) or None,
+            "kind": "eval_memory_record",
+            "source": _as_text(source) or "eval_harness",
+            "loop_id": _as_text(loop.get("loop_id")) or None,
+            "task_kind": _as_text(loop.get("task_kind")) or "generic",
+            "objective": _as_text(loop.get("objective")) or None,
+            "status": _as_text(stop_decision.get("status") or loop.get("status")) or "draft",
+            "passed": bool(stop_decision.get("passed", False)),
+            "blocked": bool(stop_decision.get("blocked", False)),
+            "needs_refinement": bool(stop_decision.get("needs_refinement", False)),
+            "score": score,
+            "min_score": stop_decision.get("min_score"),
+            "reason": _as_text(stop_decision.get("reason")) or "eval_memory_record",
+            "node_count": int(loop.get("node_count") or 0),
+            "findings": memory_items.get("findings", []),
+            "proposals": memory_items.get("proposals", []),
+            "evidence_refs": memory_items.get("evidence_refs", []),
+            "blockers": memory_items.get("blockers", []),
+            "final_decision": stop_decision,
+            "persisted": False,
+            "executed": False,
+            "execution_result": None,
+            "metadata": _bounded_value(metadata or {}),
+        }
+    )
+
+
+def summarize_eval_memory_record(memory_record: dict[str, Any] | None) -> str:
+    """Return compact summary for an eval memory record."""
+
+    record = _as_dict(memory_record)
+    return (
+        "Eval Memory: "
+        f"task_kind={_as_text(record.get('task_kind')) or MISSING}; "
+        f"status={_as_text(record.get('status')) or MISSING}; "
+        f"passed={bool(record.get('passed', False))}; "
+        f"blocked={bool(record.get('blocked', False))}; "
+        f"needs_refinement={bool(record.get('needs_refinement', False))}; "
+        f"score={record.get('score', 0.0)}; "
+        f"findings={len(_as_list(record.get('findings')))}; "
+        f"proposals={len(_as_list(record.get('proposals')))}; "
+        f"evidence_refs={len(_as_list(record.get('evidence_refs')))}; "
+        "persisted=False"
+    )
+
+
 def summarize_eval_loop(
     *,
     nodes: list[Any] | None = None,

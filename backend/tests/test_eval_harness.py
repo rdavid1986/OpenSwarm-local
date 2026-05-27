@@ -6,11 +6,13 @@ from backend.apps.swarms.eval_harness import (
     build_default_eval_planner_node,
     build_default_eval_refiner_node,
     build_eval_critic_node,
+    build_eval_memory_record,
     build_eval_evaluator_node,
     build_eval_generator_node,
     build_eval_loop_contract,
     build_eval_planner_node,
     build_eval_refiner_node,
+    collect_eval_loop_memory_items,
     evaluate_eval_loop_stop_policy,
     normalize_eval_critic_finding,
     normalize_eval_final_decision,
@@ -21,6 +23,7 @@ from backend.apps.swarms.eval_harness import (
     normalize_eval_refinement_proposal,
     normalize_eval_stop_policy,
     summarize_eval_loop,
+    summarize_eval_memory_record,
 )
 
 
@@ -732,3 +735,139 @@ def test_eval_loop_contract_includes_stop_decision_without_execution():
     assert contract["stop_decision"]["should_stop"] is True
     assert contract["stop_decision"]["reason"] == "passed"
     assert contract["stop_decision"]["executed"] is False
+
+
+def test_collect_eval_loop_memory_items_collects_findings_proposals_evidence_and_blockers():
+    loop = build_eval_loop_contract(
+        loop_id="loop-memory-1",
+        objective="Evaluate memory collection.",
+        task_kind="response_intelligence",
+        nodes=[
+            build_eval_critic_node(
+                findings=[
+                    {
+                        "finding_id": "finding-memory-1",
+                        "summary": "Missing evidence.",
+                        "missing_evidence": ["pytest output"],
+                    }
+                ],
+                missing_evidence=["pytest output"],
+            ),
+            build_eval_refiner_node(
+                proposals=[
+                    {
+                        "proposal_id": "proposal-memory-1",
+                        "summary": "Add evidence refs.",
+                        "required_evidence": ["pytest output"],
+                    }
+                ]
+            ),
+            build_eval_evaluator_node(
+                metrics=[{"metric_id": "grounding", "name": "Grounding", "status": "failed", "score": 0.2}],
+                evidence_refs=["state_context"],
+                blockers=["missing evidence"],
+            ),
+        ],
+    )
+
+    items = collect_eval_loop_memory_items(loop)
+
+    assert items["findings"][0]["finding_id"] == "finding-memory-1"
+    assert items["proposals"][0]["proposal_id"] == "proposal-memory-1"
+    assert items["evidence_refs"] == ["state_context"]
+    assert items["blockers"] == ["missing evidence"]
+
+
+def test_build_eval_memory_record_is_side_effect_free_and_portable():
+    loop = build_eval_loop_contract(
+        loop_id="loop-memory-2",
+        objective="Evaluate RI memory.",
+        task_kind="response_intelligence",
+        nodes=[
+            build_eval_evaluator_node(
+                metrics=[
+                    {"metric_id": "grounding", "name": "Grounding", "status": "passed", "score": 0.9},
+                    {"metric_id": "safety", "name": "Safety", "status": "passed", "score": 1.0},
+                ],
+                evidence_refs=["state_context", "ri_state"],
+            )
+        ],
+        stop_policy={"max_iterations": 3, "min_score": 0.8},
+    )
+
+    record = build_eval_memory_record(
+        loop_contract=loop,
+        memory_id="memory-1",
+        source="unit_test",
+        metadata={"suite": "eval_harness"},
+    )
+
+    assert record["memory_id"] == "memory-1"
+    assert record["kind"] == "eval_memory_record"
+    assert record["source"] == "unit_test"
+    assert record["loop_id"] == "loop-memory-2"
+    assert record["task_kind"] == "response_intelligence"
+    assert record["status"] == "passed"
+    assert record["passed"] is True
+    assert record["blocked"] is False
+    assert record["needs_refinement"] is False
+    assert record["score"] == 0.95
+    assert record["evidence_refs"] == ["ri_state", "state_context"]
+    assert record["persisted"] is False
+    assert record["executed"] is False
+    assert record["execution_result"] is None
+    assert record["metadata"]["suite"] == "eval_harness"
+
+
+def test_build_eval_memory_record_captures_failed_eval_state():
+    loop = build_eval_loop_contract(
+        loop_id="loop-memory-3",
+        objective="Evaluate failed memory.",
+        task_kind="code_action_review",
+        nodes=[
+            build_eval_critic_node(
+                findings=[{"finding_id": "finding-memory-3", "severity": "critical", "summary": "False claim."}]
+            ),
+            build_eval_evaluator_node(
+                metrics=[{"metric_id": "safety", "name": "Safety", "status": "failed", "score": 0.1}],
+                blockers=["false execution claim"],
+            ),
+        ],
+        stop_policy={"max_iterations": 3, "min_score": 0.8},
+    )
+
+    record = build_eval_memory_record(loop_contract=loop)
+
+    assert record["task_kind"] == "code_action_review"
+    assert record["status"] == "blocked"
+    assert record["passed"] is False
+    assert record["blocked"] is True
+    assert record["needs_refinement"] is True
+    assert record["findings"][0]["finding_id"] == "finding-memory-3"
+    assert record["blockers"] == ["false execution claim"]
+    assert record["persisted"] is False
+
+
+def test_summarize_eval_memory_record_returns_compact_summary():
+    record = build_eval_memory_record(
+        loop_contract=build_eval_loop_contract(
+            task_kind="response_intelligence",
+            nodes=[
+                build_eval_critic_node(findings=[{"finding_id": "f1"}]),
+                build_eval_refiner_node(proposals=[{"proposal_id": "p1"}]),
+                build_eval_evaluator_node(
+                    metrics=[{"metric_id": "grounding", "name": "Grounding", "score": 0.7}],
+                    evidence_refs=["state_context"],
+                ),
+            ],
+        )
+    )
+
+    summary = summarize_eval_memory_record(record)
+
+    assert "Eval Memory:" in summary
+    assert "task_kind=response_intelligence" in summary
+    assert "findings=1" in summary
+    assert "proposals=1" in summary
+    assert "evidence_refs=1" in summary
+    assert "persisted=False" in summary
