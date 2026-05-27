@@ -60,6 +60,7 @@ import CallSplitIcon from '@mui/icons-material/CallSplit';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import {
   fetchTools,
+  fetchMcpSettingsSnapshot,
   fetchBuiltinTools,
   fetchBuiltinPermissions,
   updateBuiltinPermissions,
@@ -471,13 +472,20 @@ const ToolSection: React.FC<ToolSectionProps> = ({
 const Tools: React.FC = () => {
   const c = useClaudeTokens();
   const dispatch = useAppDispatch();
-  const { items, builtinTools, builtinPermissions, loading } = useAppSelector((s) => s.tools);
+  const { items, builtinTools, builtinPermissions, loading, mcpSettingsSnapshot, mcpSettingsSnapshotLoading } = useAppSelector((s) => s.tools);
   const { servers: regServersRaw, total: regTotal, loading: regLoading, stats: regStats, detail: regDetail, detailLoading: regDetailLoading } = useAppSelector((s) => s.mcpRegistry);
   const devMode = useAppSelector((s) => s.settings.data.dev_mode);
   const outputItems = useAppSelector((s) => s.outputs.items);
   const outputs = useMemo(() => Object.values(outputItems), [outputItems]);
   const allTools = Object.values(items);
   const tools = allTools;
+  const mcpSettingsByToolId = useMemo(() => {
+    const map: Record<string, any> = {};
+    for (const item of mcpSettingsSnapshot?.tools || []) {
+      if (item.tool_id) map[item.tool_id] = item;
+    }
+    return map;
+  }, [mcpSettingsSnapshot]);
   const uninstalledIntegrations = useMemo(() => INTEGRATIONS.filter((ig) => !allTools.find((t) => t.name === ig.name)), [allTools]);
   const getIntegrationForTool = useCallback((tool: ToolDefinition) => INTEGRATIONS.find((ig) => ig.name === tool.name), []);
 
@@ -673,6 +681,7 @@ const Tools: React.FC = () => {
     dispatch(fetchTools());
     dispatch(fetchBuiltinTools());
     dispatch(fetchBuiltinPermissions());
+    dispatch(fetchMcpSettingsSnapshot());
     dispatch(fetchOutputs());
   }, [dispatch]);
 
@@ -1375,6 +1384,36 @@ const Tools: React.FC = () => {
         </Collapse>
       </Box>
 
+      {/* MCP Settings Snapshot */}
+      {mcpSettingsSnapshot && mcpSettingsSnapshot.tool_count > 0 && (
+        <Box sx={{ mb: 3 }}>
+          <Card sx={{ bgcolor: c.bg.surface, border: `1px solid ${c.border.subtle}`, borderRadius: 2, boxShadow: c.shadow.sm }}>
+            <CardContent sx={{ py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
+                  <ExtensionIcon sx={{ fontSize: 18, color: c.status.warning }} />
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography sx={{ color: c.text.primary, fontWeight: 650, fontSize: '0.9rem' }}>
+                      MCP Settings Snapshot
+                    </Typography>
+                    <Typography sx={{ color: c.text.muted, fontSize: '0.76rem' }}>
+                      Sanitized configuration only. Activation remains session-scoped through MCPActivate.
+                    </Typography>
+                  </Box>
+                </Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <Chip label={`${mcpSettingsSnapshot.tool_count} MCP`} size="small" sx={{ bgcolor: c.bg.secondary, color: c.text.muted, fontSize: '0.7rem', height: 20 }} />
+                  <Chip label={`${mcpSettingsSnapshot.enabled_count} enabled`} size="small" sx={{ bgcolor: `${c.status.success}12`, color: c.status.success, fontSize: '0.7rem', height: 20 }} />
+                  <Chip label={`${mcpSettingsSnapshot.configured_count} configured`} size="small" sx={{ bgcolor: `${c.status.info}12`, color: c.status.info, fontSize: '0.7rem', height: 20 }} />
+                  <Chip label={mcpSettingsSnapshot.secrets_persisted ? 'Secrets persisted' : 'No secrets exposed'} size="small" sx={{ bgcolor: mcpSettingsSnapshot.secrets_persisted ? c.status.errorBg : c.bg.secondary, color: mcpSettingsSnapshot.secrets_persisted ? c.status.error : c.text.ghost, fontSize: '0.7rem', height: 20 }} />
+                  {mcpSettingsSnapshotLoading && <CircularProgress size={14} sx={{ color: c.text.ghost }} />}
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        </Box>
+      )}
+
       {/* Custom Tool Sets */}
       <Box sx={{ mb: 2 }}>
         <Box onClick={() => setCustomSectionOpen((v) => !v)} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1, cursor: 'pointer', userSelect: 'none', '&:hover .section-arrow': { color: c.text.secondary } }}>
@@ -1596,6 +1635,7 @@ const Tools: React.FC = () => {
                 };
 
                 const isDisabled = tool.enabled === false;
+                const mcpSettings = mcpSettingsByToolId[tool.id];
 
                 return (
                   <Card key={tool.id} sx={{ order: tool.auth_status === 'connected' ? 0 : 1, bgcolor: c.bg.surface, border: `1px solid ${isExpanded ? c.accent.primary : c.border.subtle}`, borderRadius: 2, boxShadow: c.shadow.sm, '&:hover': { borderColor: isDisabled ? c.border.subtle : c.accent.primary, boxShadow: isDisabled ? undefined : '0 0 0 1px rgba(174,86,48,0.12)' }, transition: 'border-color 0.2s, box-shadow 0.2s' }}>
@@ -1775,10 +1815,10 @@ const Tools: React.FC = () => {
                               </Typography>
                               <Box sx={{ bgcolor: c.bg.page, borderRadius: 1.5, border: `1px solid ${c.border.subtle}`, px: 1.5, py: 1 }}>
                                 <Typography sx={{ color: c.text.ghost, fontSize: '0.68rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', mb: 0.5 }}>
-                                  MCP Config
+                                  Sanitized MCP Config
                                 </Typography>
                                 <Typography component="pre" sx={{ color: c.text.muted, fontSize: '0.75rem', fontFamily: c.font.mono, whiteSpace: 'pre-wrap', wordBreak: 'break-all', m: 0, lineHeight: 1.5 }}>
-                                  {JSON.stringify(tool.mcp_config, null, 2)}
+                                  {JSON.stringify(mcpSettings?.sanitized_mcp_config || {}, null, 2)}
                                 </Typography>
                               </Box>
                               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5 }}>
@@ -1797,6 +1837,22 @@ const Tools: React.FC = () => {
                                   </Box>
                                 )}
                               </Box>
+                              {mcpSettings && (
+                                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5 }}>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                    <Typography sx={{ color: c.text.ghost, fontSize: '0.72rem' }}>Snapshot:</Typography>
+                                    <Typography sx={{ color: c.text.muted, fontSize: '0.72rem', fontFamily: c.font.mono }}>{mcpSettings.server_name}</Typography>
+                                  </Box>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                    <Typography sx={{ color: c.text.ghost, fontSize: '0.72rem' }}>Transport:</Typography>
+                                    <Typography sx={{ color: c.text.muted, fontSize: '0.72rem', fontFamily: c.font.mono }}>{mcpSettings.transport}</Typography>
+                                  </Box>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                    <Typography sx={{ color: c.text.ghost, fontSize: '0.72rem' }}>Activation:</Typography>
+                                    <Typography sx={{ color: c.text.muted, fontSize: '0.72rem', fontFamily: c.font.mono }}>{mcpSettings.activation_scope}</Typography>
+                                  </Box>
+                                </Box>
+                              )}
                               {tool.credentials && Object.keys(tool.credentials).length > 0 && (
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
                                   <Typography sx={{ color: c.text.ghost, fontSize: '0.72rem' }}>Credentials:</Typography>
