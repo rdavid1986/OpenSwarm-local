@@ -1250,3 +1250,125 @@ def summarize_mcp_sandbox_policy_decision(decision: dict[str, Any] | None) -> st
         f"actions={len(_as_list(data.get('required_user_actions')))}; "
         "executed=False"
     )
+
+
+VALID_MCP_ACTIVATION_GUARD_DECISIONS = {"allow", "already_active", "requires_approval", "block"}
+
+
+def build_mcp_activation_guard_decision(
+    *,
+    server_name: str | None = None,
+    registry: dict[str, Any] | None = None,
+    inspection: dict[str, Any] | None = None,
+    sandbox_policy: dict[str, Any] | None = None,
+    active_mcps: list[Any] | None = None,
+    reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a side-effect-free MCP activation guard decision.
+
+    This does not activate MCP servers, mutate sessions, call tools, or persist
+    state. It only decides whether MCPActivate may continue through the existing
+    HITL/runtime activation path.
+    """
+
+    normalized_server = sanitize_mcp_server_name(server_name)
+    active_set = {sanitize_mcp_server_name(item) for item in _as_list(active_mcps)}
+    registry_data = _as_dict(registry)
+    inspection_data = _as_dict(inspection)
+    sandbox_data = _as_dict(sandbox_policy)
+    requested_reason = _as_text(reason)
+
+    reasons: list[str] = []
+    required_actions: list[dict[str, Any]] = []
+
+    if not normalized_server:
+        reasons.append("server_name_missing")
+
+    if normalized_server and normalized_server in active_set:
+        decision = "already_active"
+    else:
+        decision = "requires_approval"
+
+    if registry_data:
+        server_names = {
+            sanitize_mcp_server_name(item.get("server_name") or item.get("name"))
+            for item in _as_list(registry_data.get("servers"))
+            if isinstance(item, dict)
+        }
+        if normalized_server and server_names and normalized_server not in server_names:
+            reasons.append("server_not_in_registry")
+
+    if inspection_data:
+        inspection_status = _as_text(inspection_data.get("status"))
+        target_server_name = sanitize_mcp_server_name(inspection_data.get("target_server_name") or inspection_data.get("server_name"))
+        if target_server_name and normalized_server and target_server_name != normalized_server:
+            reasons.append("inspection_target_mismatch")
+        if inspection_status in {"blocked", "unknown"}:
+            reasons.append(f"inspection_{inspection_status}")
+        if inspection_status == "needs_user_action":
+            reasons.append("inspection_needs_user_action")
+        if isinstance(inspection_data.get("required_user_actions"), list):
+            required_actions.extend([
+                action for action in inspection_data.get("required_user_actions", [])
+                if isinstance(action, dict)
+            ])
+
+    if sandbox_data:
+        sandbox_decision = _as_text(sandbox_data.get("decision"))
+        if sandbox_decision == "block":
+            reasons.append("sandbox_block")
+        elif sandbox_decision == "requires_approval":
+            reasons.append("sandbox_requires_approval")
+        if isinstance(sandbox_data.get("required_user_actions"), list):
+            required_actions.extend([
+                action for action in sandbox_data.get("required_user_actions", [])
+                if isinstance(action, dict)
+            ])
+
+    if "server_name_missing" in reasons or "server_not_in_registry" in reasons or "inspection_target_mismatch" in reasons:
+        decision = "block"
+    elif "inspection_blocked" in reasons or "inspection_unknown" in reasons or "sandbox_block" in reasons:
+        decision = "block"
+    elif decision != "already_active":
+        decision = "requires_approval"
+
+    if decision == "requires_approval" and not any(action.get("action_type") == "activate_mcp" for action in required_actions):
+        required_actions.append(build_mcp_required_user_action(
+            action_type="activate_mcp",
+            target=f"pending-actions/mcp/{normalized_server or 'unknown'}/activate",
+            label=f"Activate {normalized_server or 'MCP'}",
+            reason="mcp_activation_requires_approval",
+            server_name=normalized_server,
+        ))
+
+    return {
+        "contract_kind": "mcp_activation_guard_decision",
+        "decision": decision,
+        "server_name": normalized_server or None,
+        "active_mcps": sorted(active_set),
+        "reason": requested_reason or None,
+        "reasons": sorted(set(reasons)),
+        "required_user_actions": required_actions,
+        "required_user_action_count": len(required_actions),
+        "registry_status": registry_data.get("status") if registry_data else None,
+        "inspection_status": inspection_data.get("status") if inspection_data else None,
+        "sandbox_decision": sandbox_data.get("decision") if sandbox_data else None,
+        "metadata": _as_dict(metadata),
+        "executed": False,
+        "execution_result": None,
+    }
+
+
+def summarize_mcp_activation_guard_decision(decision: dict[str, Any] | None) -> str:
+    """Return compact MCP activation guard summary."""
+
+    data = _as_dict(decision)
+    return (
+        "MCP Activation Guard: "
+        f"decision={data.get('decision') or 'empty'}; "
+        f"server={data.get('server_name') or 'none'}; "
+        f"reasons={len(_as_list(data.get('reasons')))}; "
+        f"actions={len(_as_list(data.get('required_user_actions')))}; "
+        "executed=False"
+    )

@@ -1,4 +1,5 @@
 from backend.apps.swarms.mcp_contract import (
+    build_mcp_activation_guard_decision,
     build_mcp_client_contract,
     build_mcp_contract_from_tool_definition,
     build_mcp_evidence_bundle,
@@ -22,6 +23,7 @@ from backend.apps.swarms.mcp_contract import (
     search_mcp_tool_registry,
     summarize_mcp_evidence_bundle,
     summarize_mcp_evidence_record,
+    summarize_mcp_activation_guard_decision,
     summarize_mcp_fallback_plan,
     summarize_mcp_host_contract,
     summarize_mcp_inspection,
@@ -848,4 +850,101 @@ def test_summarize_mcp_sandbox_policy_decision_is_compact_and_non_executing():
 
     assert "MCP Sandbox Policy:" in summary
     assert "decision=requires_approval" in summary
+    assert "executed=False" in summary
+
+
+def test_build_mcp_activation_guard_decision_allows_already_active_server():
+    registry = build_mcp_tool_registry(
+        tools=[{"name": "Unity", "mcp_config": {"type": "stdio"}, "auth_status": "connected"}],
+        active_mcps=["Unity"],
+    )
+
+    decision = build_mcp_activation_guard_decision(
+        server_name="Unity",
+        registry=registry,
+        active_mcps=["unity"],
+        reason="Use Unity Editor tools.",
+    )
+
+    assert decision["contract_kind"] == "mcp_activation_guard_decision"
+    assert decision["decision"] == "already_active"
+    assert decision["server_name"] == "unity"
+    assert decision["active_mcps"] == ["unity"]
+    assert decision["required_user_action_count"] == 0
+    assert decision["executed"] is False
+
+
+def test_build_mcp_activation_guard_decision_requires_approval_for_inactive_server():
+    registry = build_mcp_tool_registry(
+        tools=[{"name": "Unity", "mcp_config": {"type": "stdio"}, "auth_status": "connected"}],
+    )
+    inspection = inspect_mcp_tool_registry(registry, target_server_name="Unity")
+
+    decision = build_mcp_activation_guard_decision(
+        server_name="Unity",
+        registry=registry,
+        inspection=inspection,
+        active_mcps=[],
+        reason="Need scene tools.",
+    )
+
+    assert decision["decision"] == "requires_approval"
+    assert decision["server_name"] == "unity"
+    assert any(action["action_type"] == "activate_mcp" for action in decision["required_user_actions"])
+    assert decision["executed"] is False
+
+
+def test_build_mcp_activation_guard_decision_blocks_unknown_server():
+    registry = build_mcp_tool_registry(
+        tools=[{"name": "Gmail", "mcp_config": {"type": "stdio"}, "auth_status": "connected"}],
+    )
+
+    decision = build_mcp_activation_guard_decision(
+        server_name="Unity",
+        registry=registry,
+        active_mcps=[],
+    )
+
+    assert decision["decision"] == "block"
+    assert "server_not_in_registry" in decision["reasons"]
+    assert decision["executed"] is False
+
+
+def test_build_mcp_activation_guard_decision_blocks_sandbox_block():
+    registry = build_mcp_tool_registry(
+        tools=[{"name": "Unity", "mcp_config": {"type": "stdio"}, "auth_status": "connected"}],
+    )
+    inspection = inspect_mcp_tool_registry(registry, target_server_name="Unity")
+    sandbox = build_mcp_sandbox_policy_decision(
+        fallback_adapter=build_mcp_fallback_adapter_contract(
+            server_name="Unity",
+            fallback_type="cli",
+            command="powershell",
+        ),
+        allowed_commands=["unity"],
+    )
+
+    decision = build_mcp_activation_guard_decision(
+        server_name="Unity",
+        registry=registry,
+        inspection=inspection,
+        sandbox_policy=sandbox,
+        active_mcps=[],
+    )
+
+    assert decision["decision"] == "block"
+    assert "sandbox_block" in decision["reasons"]
+
+
+def test_summarize_mcp_activation_guard_decision_is_compact_and_non_executing():
+    decision = build_mcp_activation_guard_decision(
+        server_name="Unity",
+        active_mcps=[],
+    )
+
+    summary = summarize_mcp_activation_guard_decision(decision)
+
+    assert "MCP Activation Guard:" in summary
+    assert "decision=requires_approval" in summary
+    assert "server=unity" in summary
     assert "executed=False" in summary
