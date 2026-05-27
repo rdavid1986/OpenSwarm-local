@@ -645,6 +645,83 @@ def prepare_code_action_pending_action(
     )
 
 
+def build_code_action_review_response(pending_action: dict[str, Any] | None) -> dict[str, Any]:
+    """Build a grounded local review response for a pending code action.
+
+    This response is explanatory only. It does not execute, approve, mutate
+    state, write files, run commands, or claim evidence.
+    """
+
+    pending = _as_dict(pending_action)
+    code_action = normalize_code_action_contract(_as_dict(pending.get("code_action") or pending))
+    guard = _as_dict(pending.get("guard") or code_action.get("guard"))
+    affected_files = _as_list(code_action.get("affected_files"))
+    suggested_commands = _as_list(code_action.get("suggested_commands"))
+    expected_evidence = _as_list(pending.get("expected_evidence") or code_action.get("expected_evidence"))
+    status = _as_text(pending.get("status") or code_action.get("status")) or MISSING
+    guard_status = _as_text(guard.get("guard_status")) or MISSING
+    risk_level = _as_text(guard.get("risk_level") or code_action.get("risk_level")) or MISSING
+
+    file_lines = [
+        f"- {item.get('operation') or 'unknown'}: {item.get('path') or 'missing'}"
+        for item in affected_files
+        if isinstance(item, dict)
+    ]
+    command_lines = [
+        f"- {item.get('command') or 'missing'}"
+        for item in suggested_commands
+        if isinstance(item, dict)
+    ]
+    evidence_lines = [f"- {_as_text(item)}" for item in expected_evidence if _as_text(item)]
+    reason_lines = [
+        f"- {reason.get('code') or 'unknown'}: {reason.get('message') or ''}".strip()
+        for reason in _as_list(guard.get("reasons"))
+        if isinstance(reason, dict)
+    ]
+
+    title = _as_text(code_action.get("title")) or "Code action pendiente"
+    action_type = _as_text(code_action.get("action_type")) or MISSING
+
+    content = [
+        f"Pending code action: {title}",
+        "",
+        f"Tipo: {action_type}",
+        f"Estado: {status}",
+        f"Riesgo: {risk_level}",
+        f"Guard: {guard_status}",
+        "",
+        "Archivos afectados:",
+        *(file_lines or ["- ninguno declarado"]),
+        "",
+        "Comandos sugeridos:",
+        *(command_lines or ["- ninguno declarado"]),
+        "",
+        "Evidencia requerida antes de afirmar ejecución:",
+        *(evidence_lines or ["- diff", "- archivos modificados", "- validación"]),
+        "",
+        "Motivos del guard:",
+        *(reason_lines or ["- sin bloqueos registrados"]),
+        "",
+        "Estado real: no se ejecutó nada, no se escribieron archivos, no se corrieron comandos y no existe evidencia posterior de cambios.",
+    ]
+
+    return _bounded_value(
+        {
+            "status": "review_ready" if status == "pending_approval" else "blocked",
+            "pending_action_type": "code_action",
+            "assistant_content": "\n".join(content),
+            "code_action": code_action,
+            "guard": guard,
+            "requires_approval": bool(pending.get("requires_approval", code_action.get("requires_approval", True))),
+            "expected_evidence": expected_evidence,
+            "execution_allowed": False,
+            "execution_performed": False,
+            "executed": False,
+            "execution_result": None,
+        }
+    )
+
+
 def summarize_code_action_contract(action: dict[str, Any] | None) -> str:
     """Return compact summary for logs/UI/prompts."""
 

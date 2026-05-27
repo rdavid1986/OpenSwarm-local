@@ -4,6 +4,7 @@ from backend.apps.swarms.code_action import (
     build_code_action_contract,
     build_code_action_evidence_contract,
     build_code_action_pending_action,
+    build_code_action_review_response,
     evaluate_code_action_evidence,
     evaluate_code_action_guard,
     infer_code_action_risk,
@@ -445,3 +446,54 @@ def test_prepare_code_action_pending_action_reports_blocked_guard():
     assert prepared["safe_to_execute"] is False
     assert prepared["reason"] == "Code action blocked by guard."
     assert prepared["pending_action"]["guard"]["guard_status"] == "blocked"
+
+
+def test_build_code_action_review_response_explains_pending_action_without_execution():
+    action = build_code_action_contract(
+        action_id="act-review-1",
+        action_type="edit_file",
+        title="Edit code action module",
+        affected_files=[{"path": "backend/apps/swarms/code_action.py", "operation": "write"}],
+        suggested_commands=[{"command": "python -m pytest backend/tests/test_code_action.py -q"}],
+        expected_evidence=["diff summary", "pytest output"],
+    )
+    pending = build_code_action_pending_action(
+        action,
+        allowed_files=["backend/apps/swarms/code_action.py"],
+        granted_permissions=["filesystem_write"],
+    )
+
+    response = build_code_action_review_response(pending)
+
+    assert response["status"] == "review_ready"
+    assert response["pending_action_type"] == "code_action"
+    assert response["execution_allowed"] is False
+    assert response["execution_performed"] is False
+    assert response["executed"] is False
+    assert response["execution_result"] is None
+    assert "Pending code action: Edit code action module" in response["assistant_content"]
+    assert "Tipo: edit_file" in response["assistant_content"]
+    assert "Guard: pending_approval" in response["assistant_content"]
+    assert "backend/apps/swarms/code_action.py" in response["assistant_content"]
+    assert "diff summary" in response["assistant_content"]
+    assert "no se ejecutó nada" in response["assistant_content"]
+
+
+def test_build_code_action_review_response_explains_blocked_guard_reasons():
+    action = build_code_action_contract(
+        action_id="act-review-2",
+        action_type="run_command",
+        title="Dangerous command",
+        suggested_commands=[{"command": "git push --force"}],
+    )
+    pending = build_code_action_pending_action(action, granted_permissions=["command_execution"])
+
+    response = build_code_action_review_response(pending)
+
+    assert response["status"] == "blocked"
+    assert response["executed"] is False
+    assert "Dangerous command" in response["assistant_content"]
+    assert "Guard: blocked" in response["assistant_content"]
+    assert "dangerous_command" in response["assistant_content"]
+    assert "git push --force" in response["assistant_content"]
+    assert "no se ejecutó nada" in response["assistant_content"]
