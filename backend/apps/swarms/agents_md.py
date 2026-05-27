@@ -243,6 +243,132 @@ def parse_discovered_agents_md_files(discovery: dict[str, Any], root: str | Path
     }
 
 
+MAX_AGENTS_MD_CONTEXT_FILES = 8
+MAX_AGENTS_MD_CONTEXT_CHARS = 12_000
+
+
+def _normalize_scope_path(value: Any) -> str:
+    text = _as_text(value).replace("\\", "/").strip("/")
+    if text in {"", "."}:
+        return "."
+    return text
+
+
+def _scope_applies_to_target(scope_path: str, target_path: str | None) -> bool:
+    scope = _normalize_scope_path(scope_path)
+    target = _normalize_scope_path(target_path or ".")
+    if scope == ".":
+        return True
+    return target == scope or target.startswith(scope + "/")
+
+
+def rank_agents_md_for_target(parsed_items: list[Any], *, target_path: str | None = None) -> list[dict[str, Any]]:
+    """Rank parsed AGENTS.md files by scope relevance for a target path."""
+
+    ranked: list[dict[str, Any]] = []
+    for item in parsed_items:
+        if not isinstance(item, dict) or not item.get("ok"):
+            continue
+        scope_path = _normalize_scope_path(item.get("scope_path"))
+        if not _scope_applies_to_target(scope_path, target_path):
+            continue
+        ranked_item = dict(item)
+        ranked_item["scope_path"] = scope_path
+        ranked_item["applies_to_target"] = True
+        ranked_item["scope_depth"] = 0 if scope_path == "." else len(Path(scope_path).parts)
+        ranked.append(ranked_item)
+
+    return sorted(ranked, key=lambda item: (item["scope_depth"], item.get("path") or ""))
+
+
+def build_agents_md_context(
+    parsed_policy: dict[str, Any] | None,
+    *,
+    target_path: str | None = None,
+    max_files: int = MAX_AGENTS_MD_CONTEXT_FILES,
+    max_chars: int = MAX_AGENTS_MD_CONTEXT_CHARS,
+) -> dict[str, Any]:
+    """Build scoped AGENTS.md context without injecting it into a model prompt.
+
+    The returned payload is prompt-ready context metadata, but this helper does
+    not call models, mutate state, authorize actions, or merge instructions into
+    system prompts. Callers decide if and where this context is included.
+    """
+
+    parsed_items = parsed_policy.get("parsed") if isinstance(parsed_policy, dict) else []
+    ranked = rank_agents_md_for_target(
+        [item for item in parsed_items if isinstance(item, dict)],
+        target_path=target_path,
+    )
+
+    file_limit = max(int(max_files or 0), 0) or MAX_AGENTS_MD_CONTEXT_FILES
+    char_limit = max(int(max_chars or 0), 0) or MAX_AGENTS_MD_CONTEXT_CHARS
+    selected: list[dict[str, Any]] = []
+    used_chars = 0
+
+    for item in ranked[:file_limit]:
+        content = _as_text(item.get("content"))
+        remaining = max(char_limit - used_chars, 0)
+        if remaining <= 0:
+            break
+
+        selected_content = content[:remaining]
+        used_chars += len(selected_content)
+        selected.append(
+            {
+                "path": item.get("path"),
+                "scope_path": item.get("scope_path"),
+                "scope_depth": item.get("scope_depth"),
+                "applies_to_target": True,
+                "content": selected_content,
+                "sections": item.get("sections") or [],
+                "section_count": item.get("section_count") or 0,
+                "char_count": len(selected_content),
+                "truncated_for_context": len(selected_content) < len(content),
+            }
+        )
+
+    return {
+        "target_path": _normalize_scope_path(target_path or "."),
+        "context_kind": "agents_md",
+        "selected": selected,
+        "selected_count": len(selected),
+        "available_count": len(ranked),
+        "context_chars": used_chars,
+        "max_context_chars": char_limit,
+        "injection_ready": True,
+        "injected": False,
+        "reason": "agents_md_context_built",
+    }
+
+
+def build_agents_md_context_sections(agents_md_context: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Convert scoped AGENTS.md context into state_context-compatible sections."""
+
+    context = agents_md_context if isinstance(agents_md_context, dict) else {}
+    sections: list[dict[str, Any]] = []
+
+    for item in context.get("selected") or []:
+        if not isinstance(item, dict):
+            continue
+        sections.append(
+            {
+                "kind": "agents_md",
+                "source": item.get("path"),
+                "scope_path": item.get("scope_path"),
+                "content": item.get("content") or "",
+                "metadata": {
+                    "applies_to_target": item.get("applies_to_target") is True,
+                    "scope_depth": item.get("scope_depth"),
+                    "section_count": item.get("section_count") or 0,
+                    "truncated_for_context": item.get("truncated_for_context") is True,
+                },
+            }
+        )
+
+    return sections
+
+
 def discover_agents_md_files(
     repo_root: str | Path,
     *,

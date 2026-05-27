@@ -2,11 +2,14 @@ from pathlib import Path
 
 from backend.apps.swarms.agents_md import (
     MAX_AGENTS_MD_BYTES,
+    build_agents_md_context,
+    build_agents_md_context_sections,
     discover_agents_md_files,
     normalize_agents_md_content,
     normalize_agents_md_discovery_result,
     parse_agents_md_sections,
     parse_discovered_agents_md_files,
+    rank_agents_md_for_target,
     read_agents_md_file,
     should_skip_agents_md_discovery_dir,
 )
@@ -185,3 +188,72 @@ def test_parse_discovered_agents_md_files_parses_discovery_results(tmp_path: Pat
     assert parsed["count"] == 2
     assert parsed["injection_ready"] is False
     assert [item["sections"][0]["heading"] for item in parsed["parsed"]] == ["Root", "Backend"]
+
+
+def test_rank_agents_md_for_target_applies_root_and_nested_scopes(tmp_path: Path):
+    (tmp_path / "AGENTS.md").write_text("# Root\nRoot rules.", encoding="utf-8")
+    backend = tmp_path / "backend"
+    backend.mkdir()
+    (backend / "AGENTS.md").write_text("# Backend\nBackend rules.", encoding="utf-8")
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "AGENTS.md").write_text("# Frontend\nFrontend rules.", encoding="utf-8")
+
+    parsed = parse_discovered_agents_md_files(discover_agents_md_files(tmp_path), tmp_path)
+    ranked = rank_agents_md_for_target(parsed["parsed"], target_path="backend/apps/swarms/file.py")
+
+    assert [item["path"] for item in ranked] == ["AGENTS.md", "backend/AGENTS.md"]
+    assert [item["scope_path"] for item in ranked] == [".", "backend"]
+    assert all(item["applies_to_target"] is True for item in ranked)
+
+
+def test_build_agents_md_context_is_root_generic_and_does_not_inject(tmp_path: Path):
+    (tmp_path / "AGENTS.md").write_text("# Root\nGlobal rules.", encoding="utf-8")
+    workspace = tmp_path / "generated_app"
+    workspace.mkdir()
+    (workspace / "AGENTS.md").write_text("# App\nWorkspace rules.", encoding="utf-8")
+
+    parsed = parse_discovered_agents_md_files(discover_agents_md_files(tmp_path), tmp_path)
+    context = build_agents_md_context(parsed, target_path="generated_app/src/main.py")
+
+    assert context["target_path"] == "generated_app/src/main.py"
+    assert context["context_kind"] == "agents_md"
+    assert context["selected_count"] == 2
+    assert context["available_count"] == 2
+    assert context["injection_ready"] is True
+    assert context["injected"] is False
+    assert [item["path"] for item in context["selected"]] == ["AGENTS.md", "generated_app/AGENTS.md"]
+
+
+def test_build_agents_md_context_respects_context_char_limit(tmp_path: Path):
+    (tmp_path / "AGENTS.md").write_text("# Root\n" + ("x" * 100), encoding="utf-8")
+
+    parsed = parse_discovered_agents_md_files(discover_agents_md_files(tmp_path), tmp_path)
+    context = build_agents_md_context(parsed, target_path=".", max_chars=12)
+
+    assert context["selected_count"] == 1
+    assert context["context_chars"] == 12
+    assert context["selected"][0]["truncated_for_context"] is True
+
+
+def test_build_agents_md_context_sections_are_state_context_compatible(tmp_path: Path):
+    (tmp_path / "AGENTS.md").write_text("# Root\nGlobal rules.", encoding="utf-8")
+    parsed = parse_discovered_agents_md_files(discover_agents_md_files(tmp_path), tmp_path)
+    context = build_agents_md_context(parsed, target_path="backend/file.py")
+
+    sections = build_agents_md_context_sections(context)
+
+    assert sections == [
+        {
+            "kind": "agents_md",
+            "source": "AGENTS.md",
+            "scope_path": ".",
+            "content": "# Root\nGlobal rules.",
+            "metadata": {
+                "applies_to_target": True,
+                "scope_depth": 0,
+                "section_count": 1,
+                "truncated_for_context": False,
+            },
+        }
+    ]
