@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
@@ -29,6 +30,7 @@ import {
   startExperimentalImplementation,
 } from '@/shared/state/experimentalSwarmsSlice';
 import { renameDashboard } from '@/shared/state/dashboardsSlice';
+import { openSettingsModal } from '@/shared/state/settingsSlice';
 import { createCandidateOutputIteration, fetchOutputIterations, fetchOutputs, type OutputIterationRecord } from '@/shared/state/outputsSlice';
 import { useAppDispatch, useAppSelector } from '@/shared/hooks';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
@@ -399,6 +401,74 @@ function getSwarmMessageMetadata(message: any): {
   return { route, source, guard, reason, pendingAction, targetOutputId, availableActions };
 }
 
+type McpRequiredUserAction = {
+  actionType: string;
+  target: string;
+  label: string;
+  reason: string;
+  serverName: string;
+};
+
+function normalizeMcpRequiredUserAction(action: any): McpRequiredUserAction | null {
+  if (!action || typeof action !== 'object') return null;
+  const actionType = renderText(action.action_type ?? action.actionType ?? action.type, '').trim();
+  const target = renderText(action.target ?? action.href ?? action.route, '').trim();
+  const label = renderText(action.label ?? action.title ?? actionType, '').trim();
+  const reason = renderText(action.reason ?? action.description, '').trim();
+  const serverName = renderText(action.server_name ?? action.serverName ?? action.server, '').trim();
+  if (!actionType && !target && !label) return null;
+  return {
+    actionType,
+    target,
+    label: label || 'Open action',
+    reason,
+    serverName,
+  };
+}
+
+function collectMcpRequiredUserActionsFrom(value: any): McpRequiredUserAction[] {
+  if (!value || typeof value !== 'object') return [];
+  const rawActions = Array.isArray(value.required_user_actions)
+    ? value.required_user_actions
+    : Array.isArray(value.mcp_required_user_actions)
+      ? value.mcp_required_user_actions
+      : [];
+  return rawActions
+    .map(normalizeMcpRequiredUserAction)
+    .filter(Boolean) as McpRequiredUserAction[];
+}
+
+function getMcpRequiredUserActions(message: any): McpRequiredUserAction[] {
+  const payload = message?.payload || {};
+  const response = payload.response || {};
+  const riState = payload.ri_state || payload.message?.ri_state || response.ri_state || {};
+  const sources = [
+    payload,
+    response,
+    riState,
+    payload.mcp_inspection,
+    response.mcp_inspection,
+    payload.mcp_fallback_plan,
+    response.mcp_fallback_plan,
+    payload.mcp_sandbox_policy,
+    response.mcp_sandbox_policy,
+    payload.mcp_evidence_bundle,
+    response.mcp_evidence_bundle,
+  ];
+
+  const seen = new Set<string>();
+  const actions: McpRequiredUserAction[] = [];
+  for (const source of sources) {
+    for (const action of collectMcpRequiredUserActionsFrom(source)) {
+      const key = `${action.actionType}|${action.target}|${action.label}|${action.serverName}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      actions.push(action);
+    }
+  }
+  return actions;
+}
+
 function getContextClarification(message: any): {
   question: string;
   options: any[];
@@ -662,6 +732,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 }) => {
   const c = useClaudeTokens();
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const swarmState = useAppSelector((s) => s.experimentalSwarms);
   const dashboard = useAppSelector((s) => dashboardId ? s.dashboards.items[dashboardId] : undefined);
   const defaultModel = useAppSelector((s) => s.settings.data.default_model);
@@ -1164,6 +1235,25 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     dispatch(fetchExperimentalSwarm(activeSwarmId));
   }, [activeSwarmId, activeSwarmModel, dispatch, swarmState.actionLoading]);
 
+  const handleMcpRequiredUserAction = useCallback((action: McpRequiredUserAction) => {
+    const actionType = action.actionType.toLowerCase();
+    const target = action.target.toLowerCase();
+
+    if (
+      actionType === 'open_settings' ||
+      actionType === 'activate_mcp' ||
+      actionType === 'connect_account' ||
+      actionType === 'review_permissions' ||
+      target.startsWith('tools/') ||
+      target.includes('/mcp/')
+    ) {
+      navigate('/actions');
+      return;
+    }
+
+    dispatch(openSettingsModal('tools'));
+  }, [dispatch, navigate]);
+
   const handleStartImplementation = useCallback(async (action?: any) => {
     if (!activeSwarmId || swarmState.actionLoading || startImplementationInFlightRef.current) return;
     if (action?.enabled === false) return;
@@ -1615,6 +1705,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 const metadata = getSwarmMessageMetadata(message);
                 const contextClarification = !isUser ? getContextClarification(message) : { question: '', options: [], reason: '', creationType: '' };
                 const pendingRefinementAction = !isUser ? getPendingRefinementAction(message) : null;
+                const mcpRequiredUserActions = !isUser ? getMcpRequiredUserActions(message) : [];
                 const refinementExecutionTrace = !isUser ? getRefinementExecutionTrace(message) : null;
                 const projectIntake = getSwarmProjectIntake(message);
                 const intakeSkippedQuestions = Array.isArray(projectIntake.state?.skipped_questions)
@@ -1806,6 +1897,54 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                             </Button>
                           );
                         })}
+                      </Box>
+                    )}
+                    {!isUser && mcpRequiredUserActions.length > 0 && (
+                      <Box
+                        sx={{
+                          mt: 1,
+                          px: 1,
+                          py: 0.85,
+                          borderRadius: 1,
+                          bgcolor: `${c.status.warning}0A`,
+                          border: `1px solid ${c.status.warning}33`,
+                          maxWidth: '100%',
+                        }}
+                      >
+                        <Typography sx={{ color: c.status.warning, fontSize: '0.7rem', fontWeight: 650 }}>
+                          Acción requerida para MCP
+                        </Typography>
+                        <Typography sx={{ color: c.text.secondary, fontSize: '0.68rem', lineHeight: 1.35, mt: 0.25 }}>
+                          OpenSwarm necesita una acción manual antes de usar este MCP o su fallback.
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 0.75 }}>
+                          {mcpRequiredUserActions.map((action, actionIdx) => (
+                            <Button
+                              key={`${message.id || idx}-mcp-required-action-${actionIdx}`}
+                              size="small"
+                              variant="outlined"
+                              disabled={swarmState.actionLoading}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleMcpRequiredUserAction(action);
+                              }}
+                              sx={{
+                                minHeight: 28,
+                                px: 1,
+                                py: 0.25,
+                                fontSize: '0.72rem',
+                                textTransform: 'none',
+                                borderRadius: 0.75,
+                                color: c.status.warning,
+                                borderColor: `${c.status.warning}66`,
+                                bgcolor: `${c.status.warning}08`,
+                                '&:hover': { bgcolor: `${c.status.warning}14`, borderColor: c.status.warning },
+                              }}
+                            >
+                              {action.label}
+                            </Button>
+                          ))}
+                        </Box>
                       </Box>
                     )}
                     {!isUser && pendingRefinementAction && (
