@@ -3,6 +3,7 @@ from backend.apps.swarms.code_action import (
     apply_code_action_guard,
     build_code_action_contract,
     build_code_action_evidence_contract,
+    build_code_action_pending_action,
     evaluate_code_action_evidence,
     evaluate_code_action_guard,
     infer_code_action_risk,
@@ -10,6 +11,7 @@ from backend.apps.swarms.code_action import (
     normalize_code_action_command_evidence,
     normalize_code_action_contract,
     normalize_code_action_file,
+    prepare_code_action_pending_action,
     summarize_code_action_contract,
 )
 
@@ -353,3 +355,93 @@ def test_apply_code_action_evidence_marks_executed_only_when_evidence_gate_passe
     assert failed["status"] == "failed"
     assert failed["executed"] is False
     assert failed["execution_result"] is None
+
+
+def test_build_code_action_pending_action_prepares_reviewable_payload_without_execution():
+    action = build_code_action_contract(
+        action_id="act-1",
+        action_type="edit_file",
+        affected_files=[{"path": "backend/apps/swarms/code_action.py", "operation": "write"}],
+        expected_evidence=["diff summary", "pytest output"],
+    )
+
+    pending = build_code_action_pending_action(
+        action,
+        user_message="Apply the safe code change.",
+        allowed_files=["backend/apps/swarms/code_action.py"],
+        granted_permissions=["filesystem_write"],
+    )
+
+    assert pending["pending_action_type"] == "code_action"
+    assert pending["status"] == "pending_approval"
+    assert pending["next_action"] == "review_code_action"
+    assert pending["guard"]["guard_status"] == "pending_approval"
+    assert pending["code_action"]["status"] == "pending_approval"
+    assert pending["expected_evidence"] == ["diff summary", "pytest output"]
+    assert pending["execution_allowed"] is False
+    assert pending["execution_performed"] is False
+    assert pending["executed"] is False
+    assert pending["execution_result"] is None
+
+
+def test_build_code_action_pending_action_blocks_guarded_action_without_execution():
+    action = build_code_action_contract(
+        action_id="act-2",
+        action_type="run_command",
+        suggested_commands=[{"command": "git push --force"}],
+    )
+
+    pending = build_code_action_pending_action(
+        action,
+        granted_permissions=["command_execution"],
+    )
+
+    assert pending["pending_action_type"] == "code_action"
+    assert pending["status"] == "blocked"
+    assert pending["next_action"] == "explain_blocked_code_action"
+    assert pending["guard"]["guard_status"] == "blocked"
+    assert pending["code_action"]["status"] == "blocked"
+    assert pending["execution_allowed"] is False
+    assert pending["executed"] is False
+
+
+def test_prepare_code_action_pending_action_returns_safe_prepare_envelope():
+    action = build_code_action_contract(
+        action_id="act-3",
+        action_type="apply_patch",
+        affected_files=[{"path": "backend/apps/swarms/state_context.py", "operation": "patch"}],
+    )
+
+    prepared = prepare_code_action_pending_action(
+        action,
+        allowed_files=["backend/apps/swarms/state_context.py"],
+        granted_permissions=["filesystem_write"],
+    )
+
+    assert prepared["ok"] is True
+    assert prepared["status"] == "pending_approval"
+    assert prepared["pending_action_type"] == "code_action"
+    assert prepared["safe_to_prepare"] is True
+    assert prepared["safe_to_execute"] is False
+    assert prepared["pending_action"]["executed"] is False
+
+
+def test_prepare_code_action_pending_action_reports_blocked_guard():
+    action = build_code_action_contract(
+        action_id="act-4",
+        action_type="edit_file",
+        affected_files=[{"path": "../outside.py", "operation": "write"}],
+    )
+
+    prepared = prepare_code_action_pending_action(
+        action,
+        allowed_files=["backend"],
+        granted_permissions=["filesystem_write"],
+    )
+
+    assert prepared["ok"] is False
+    assert prepared["status"] == "blocked"
+    assert prepared["safe_to_prepare"] is False
+    assert prepared["safe_to_execute"] is False
+    assert prepared["reason"] == "Code action blocked by guard."
+    assert prepared["pending_action"]["guard"]["guard_status"] == "blocked"

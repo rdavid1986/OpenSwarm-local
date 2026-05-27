@@ -565,6 +565,86 @@ def apply_code_action_evidence(
     return _bounded_value(merged)
 
 
+def build_code_action_pending_action(
+    action: dict[str, Any] | None,
+    *,
+    pending_action_id: str | None = None,
+    user_message: str | None = None,
+    allowed_files: list[Any] | None = None,
+    forbidden_files: list[Any] | None = None,
+    granted_permissions: list[Any] | None = None,
+    source: str | None = None,
+) -> dict[str, Any]:
+    """Build a reviewable pending action from a code action contract.
+
+    This bridge does not execute tools, write files, run commands, approve the
+    action, or claim evidence. It only prepares a structured pending action that
+    another guarded runtime can review later.
+    """
+
+    guarded_action = apply_code_action_guard(
+        action,
+        allowed_files=allowed_files,
+        forbidden_files=forbidden_files,
+        granted_permissions=granted_permissions,
+    )
+    guard = _as_dict(guarded_action.get("guard"))
+    pending_status = "blocked" if guard.get("guard_status") == "blocked" else "pending_approval"
+
+    return _bounded_value(
+        {
+            "pending_action_id": _as_text(pending_action_id) or guarded_action.get("action_id"),
+            "pending_action_type": "code_action",
+            "status": pending_status,
+            "source": _as_text(source) or "code_action_pending_bridge",
+            "user_message": _as_text(user_message),
+            "code_action": guarded_action,
+            "guard": guard,
+            "requires_approval": bool(guarded_action.get("requires_approval", True)),
+            "expected_evidence": guarded_action.get("expected_evidence") or [],
+            "allowed_files": _bounded_value(_as_list(allowed_files)),
+            "forbidden_files": _bounded_value(_as_list(forbidden_files)),
+            "granted_permissions": _bounded_value(_as_list(granted_permissions)),
+            "execution_allowed": False,
+            "execution_performed": False,
+            "executed": False,
+            "execution_result": None,
+            "next_action": "review_code_action" if pending_status == "pending_approval" else "explain_blocked_code_action",
+        }
+    )
+
+
+def prepare_code_action_pending_action(
+    action: dict[str, Any] | None,
+    *,
+    user_message: str | None = None,
+    allowed_files: list[Any] | None = None,
+    forbidden_files: list[Any] | None = None,
+    granted_permissions: list[Any] | None = None,
+) -> dict[str, Any]:
+    """Prepare a pending code action payload for state_context or UI review."""
+
+    pending = build_code_action_pending_action(
+        action,
+        user_message=user_message,
+        allowed_files=allowed_files,
+        forbidden_files=forbidden_files,
+        granted_permissions=granted_permissions,
+    )
+
+    return _bounded_value(
+        {
+            "ok": pending.get("status") == "pending_approval",
+            "status": pending.get("status"),
+            "pending_action": pending,
+            "pending_action_type": "code_action",
+            "safe_to_prepare": pending.get("status") == "pending_approval",
+            "safe_to_execute": False,
+            "reason": "Code action prepared for review." if pending.get("status") == "pending_approval" else "Code action blocked by guard.",
+        }
+    )
+
+
 def summarize_code_action_contract(action: dict[str, Any] | None) -> str:
     """Return compact summary for logs/UI/prompts."""
 
