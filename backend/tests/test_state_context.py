@@ -167,3 +167,37 @@ def test_state_context_payload_supports_mini_agent_context_budget_fields():
     assert payload["tools_allowed"] == ["read_file", "edit_file"]
     assert payload["memory_scope"] == "project:ui"
     assert payload["freshness_refs"]["frontend/src/App.tsx"]["fresh"] is True
+
+
+def test_state_context_prompt_highlights_mini_agent_context_budget_sections():
+    payload = build_state_context_payload(
+        agent_id="agent-1",
+        mini_agent_id="mini-1",
+        task_id="task-1",
+        context_budget_used=1200,
+        context_budget_total=32000,
+        context_budget_source="configured",
+        context_sections=["swarm_goal", "task_contract"],
+        allowed_files=["frontend/src/App.tsx"],
+        relevant_files=["frontend/src/styles.css"],
+        forbidden_files=["backend/main.py"],
+        dependency_outputs=[{"task_id": "task-0"}],
+        tools_allowed=["read_file"],
+        memory_scope="project:ui",
+        freshness_refs={"frontend/src/App.tsx": {"fresh": True}},
+    )
+
+    prompt = build_state_context_prompt(payload)
+
+    assert "MiniAgent Context:" in prompt
+    assert "Context Budget:" in prompt
+    assert "MiniAgent Files / Tools:" in prompt
+    assert "agent_id: agent-1" in prompt
+    assert "mini_agent_id: mini-1" in prompt
+    assert "task_id: task-1" in prompt
+    assert "memory_scope: project:ui" in prompt
+    assert "used: 1200" in prompt
+    assert "total: 32000" in prompt
+    assert "source: configured" in prompt
+    assert "frontend/src/App.tsx" in prompt
+    assert "read_file" in prompt
