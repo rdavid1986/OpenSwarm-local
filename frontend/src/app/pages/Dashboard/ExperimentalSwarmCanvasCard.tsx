@@ -1172,7 +1172,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     setIsStartingImplementation(true);
     startImplementationPolling(activeSwarmId);
     try {
-      const implementationResult = await dispatch(startExperimentalImplementation({ swarmId: activeSwarmId })).unwrap();
+      const implementationResult = await dispatch(startExperimentalImplementation({ swarmId: activeSwarmId, model: activeSwarmModel })).unwrap();
       const outputId = implementationResult?.output_bridge?.output_id || implementationResult?.output_bridge?.metadata?.output_id || null;
       if (outputId) {
         setLastOutputBridgeOutputId(outputId);

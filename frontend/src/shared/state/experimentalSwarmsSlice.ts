@@ -101,11 +101,14 @@ export const fetchExperimentalSwarm = createAsyncThunk(
 
 export const runExperimentalDag = createAsyncThunk(
   'experimentalSwarms/runDag',
-  async ({ swarmId, workspacePath }: { swarmId: string; workspacePath?: string }) => {
+  async ({ swarmId, workspacePath, model }: { swarmId: string; workspacePath?: string; model?: string | null }) => {
+    const body: Record<string, string> = {};
+    if (workspacePath) body.workspace_path = workspacePath;
+    if (model) body.model = model;
     const res = await fetch(`${SWARMS_API}/${swarmId}/experimental/run-dag-dependencies`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workspace_path: workspacePath }),
+      body: JSON.stringify(body),
     });
     return await readJson(res);
   },
@@ -113,11 +116,14 @@ export const runExperimentalDag = createAsyncThunk(
 
 export const startExperimentalImplementation = createAsyncThunk(
   'experimentalSwarms/startImplementation',
-  async ({ swarmId, workspacePath }: { swarmId: string; workspacePath?: string }) => {
+  async ({ swarmId, workspacePath, model }: { swarmId: string; workspacePath?: string; model?: string | null }) => {
+    const body: Record<string, string> = {};
+    if (workspacePath) body.workspace_path = workspacePath;
+    if (model) body.model = model;
     const res = await fetch(`${SWARMS_API}/${swarmId}/experimental/start-implementation`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workspace_path: workspacePath }),
+      body: JSON.stringify(body),
     });
     return await readJson(res);
   },
