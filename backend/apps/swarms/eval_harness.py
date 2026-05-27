@@ -595,6 +595,128 @@ def build_default_eval_refiner_node(
     )
 
 
+def normalize_eval_final_decision(value: Any) -> dict[str, Any]:
+    """Normalize final evaluator decision without executing validation."""
+
+    raw = _as_dict(value)
+    status = _as_text(raw.get("status")) or "draft"
+    if status not in VALID_EVAL_STATUSES:
+        status = "draft"
+
+    return _bounded_value(
+        {
+            "decision_id": _as_text(raw.get("decision_id") or raw.get("id")) or None,
+            "status": status,
+            "passed": bool(raw.get("passed", False)),
+            "score": _bounded_score(raw.get("score")),
+            "summary": _as_text(raw.get("summary")) or None,
+            "needs_refinement": bool(raw.get("needs_refinement", False)),
+            "blocked": bool(raw.get("blocked", False)),
+            "blockers": [_as_text(item) for item in _as_list(raw.get("blockers")) if _as_text(item)],
+            "evidence_refs": [_as_text(item) for item in _as_list(raw.get("evidence_refs")) if _as_text(item)],
+            "metric_refs": [_as_text(item) for item in _as_list(raw.get("metric_refs")) if _as_text(item)],
+            "reason": _as_text(raw.get("reason")) or "final_decision_normalized",
+        }
+    )
+
+
+def build_eval_evaluator_node(
+    *,
+    node_id: str | None = None,
+    objective: str | None = None,
+    task_kind: str | None = None,
+    final_decision: dict[str, Any] | None = None,
+    metrics: list[Any] | None = None,
+    evidence_refs: list[Any] | None = None,
+    blockers: list[Any] | None = None,
+    needs_refinement: bool | None = None,
+    input_refs: list[Any] | None = None,
+    output_refs: list[Any] | None = None,
+    status: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build an eval evaluator node contract without executing validation."""
+
+    normalized_metrics = [normalize_eval_metric(item) for item in _as_list(metrics)]
+    blocker_values = [_as_text(item) for item in _as_list(blockers) if _as_text(item)]
+    metric_scores = [float(item.get("score") or 0.0) for item in normalized_metrics]
+    average_score = sum(metric_scores) / len(metric_scores) if metric_scores else 0.0
+
+    raw_decision = _as_dict(final_decision)
+    if not raw_decision:
+        raw_decision = {
+            "status": "blocked" if blocker_values else "draft",
+            "passed": bool(normalized_metrics) and average_score >= 0.8 and not blocker_values,
+            "score": average_score,
+            "needs_refinement": bool(needs_refinement) or average_score < 0.8 or bool(blocker_values),
+            "blocked": bool(blocker_values),
+            "blockers": blocker_values,
+            "evidence_refs": evidence_refs,
+            "metric_refs": [item.get("metric_id") for item in normalized_metrics if item.get("metric_id")],
+            "summary": "Evaluation decision prepared from normalized metrics.",
+        }
+    decision = normalize_eval_final_decision(raw_decision)
+
+    resolved_status = _as_text(status) or decision.get("status") or "ready"
+    if resolved_status not in VALID_EVAL_STATUSES:
+        resolved_status = "ready"
+
+    evaluator_metadata = _bounded_value(
+        {
+            "task_kind": _as_text(task_kind) or "generic",
+            "final_decision": decision,
+            "evidence_refs": [_as_text(item) for item in _as_list(evidence_refs) if _as_text(item)],
+            "blockers": blocker_values,
+            "needs_refinement": bool(decision.get("needs_refinement")),
+            "passed": bool(decision.get("passed")),
+            "metadata": _bounded_value(metadata or {}),
+        }
+    )
+
+    return normalize_eval_node(
+        {
+            "node_id": _as_text(node_id) or "evaluator",
+            "node_type": "evaluator",
+            "status": resolved_status,
+            "objective": _as_text(objective) or "Produce final pass/fail evaluation summary.",
+            "input_refs": input_refs,
+            "output_refs": output_refs,
+            "metrics": normalized_metrics,
+            "score": decision.get("score"),
+            "reason": "eval_evaluator_node_contract",
+            "requires_provider": False,
+            "metadata": evaluator_metadata,
+        }
+    )
+
+
+def build_default_eval_evaluator_node(
+    *,
+    objective: str | None = None,
+    task_kind: str | None = None,
+) -> dict[str, Any]:
+    """Build a default evaluator node for OpenSwarm evaluation loops."""
+
+    task = _as_text(task_kind) or "generic"
+    return build_eval_evaluator_node(
+        objective=objective or "Produce final pass/fail evaluation summary.",
+        task_kind=task,
+        final_decision={
+            "status": "draft",
+            "passed": False,
+            "score": 0.0,
+            "needs_refinement": False,
+            "blocked": False,
+            "summary": "Evaluator has not run.",
+            "reason": "default_eval_evaluator_node",
+        },
+        metrics=[],
+        evidence_refs=[],
+        blockers=[],
+        metadata={"evaluator_source": "not_run"},
+    )
+
+
 def build_eval_loop_contract(
     *,
     loop_id: str | None = None,
@@ -708,12 +830,10 @@ def build_default_eval_loop_contract(*, objective: str | None = None, task_kind:
                 objective="Propose improvements when evaluation fails and refinement is allowed.",
                 task_kind=task,
             ),
-            {
-                "node_id": "evaluator",
-                "node_type": "evaluator",
-                "objective": "Produce final pass/fail evaluation summary.",
-                "reason": "Default evaluation evaluator node.",
-            },
+            build_default_eval_evaluator_node(
+                objective="Produce final pass/fail evaluation summary.",
+                task_kind=task,
+            ),
         ],
         stop_policy={"max_iterations": 3, "min_score": 0.8},
         metadata={"task_kind": task},

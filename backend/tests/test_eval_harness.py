@@ -1,15 +1,18 @@
 from backend.apps.swarms.eval_harness import (
     build_default_eval_critic_node,
+    build_default_eval_evaluator_node,
     build_default_eval_generator_node,
     build_default_eval_loop_contract,
     build_default_eval_planner_node,
     build_default_eval_refiner_node,
     build_eval_critic_node,
+    build_eval_evaluator_node,
     build_eval_generator_node,
     build_eval_loop_contract,
     build_eval_planner_node,
     build_eval_refiner_node,
     normalize_eval_critic_finding,
+    normalize_eval_final_decision,
     normalize_eval_generator_candidate,
     normalize_eval_metric,
     normalize_eval_node,
@@ -524,3 +527,107 @@ def test_default_eval_loop_uses_rich_refiner_node_contract():
     assert refiner["metadata"]["proposals"] == []
     assert refiner["metadata"]["proposal_count"] == 0
     assert refiner["executed"] is False
+
+
+def test_normalize_eval_final_decision_preserves_pass_fail_fields():
+    decision = normalize_eval_final_decision(
+        {
+            "decision_id": "decision-1",
+            "status": "failed",
+            "passed": False,
+            "score": 1.4,
+            "summary": "Evaluation failed.",
+            "needs_refinement": True,
+            "blocked": False,
+            "blockers": ["missing evidence"],
+            "evidence_refs": ["state_context"],
+            "metric_refs": ["grounding"],
+        }
+    )
+
+    assert decision["decision_id"] == "decision-1"
+    assert decision["status"] == "failed"
+    assert decision["passed"] is False
+    assert decision["score"] == 1.0
+    assert decision["needs_refinement"] is True
+    assert decision["blocked"] is False
+    assert decision["blockers"] == ["missing evidence"]
+    assert decision["evidence_refs"] == ["state_context"]
+    assert decision["metric_refs"] == ["grounding"]
+
+
+def test_build_eval_evaluator_node_creates_non_executing_final_result_contract():
+    evaluator = build_eval_evaluator_node(
+        node_id="evaluator-1",
+        objective="Evaluate RI candidate.",
+        task_kind="response_intelligence",
+        metrics=[
+            {"metric_id": "grounding", "name": "Grounding", "status": "passed", "score": 0.9},
+            {"metric_id": "safety", "name": "Safety", "status": "passed", "score": 1.0},
+        ],
+        evidence_refs=["state_context", "ri_state"],
+        input_refs=["critic:finding-2", "proposal:proposal-2"],
+        output_refs=["decision:decision-1"],
+    )
+
+    assert evaluator["node_id"] == "evaluator-1"
+    assert evaluator["node_type"] == "evaluator"
+    assert evaluator["objective"] == "Evaluate RI candidate."
+    assert evaluator["input_refs"] == ["critic:finding-2", "proposal:proposal-2"]
+    assert evaluator["output_refs"] == ["decision:decision-1"]
+    assert evaluator["requires_provider"] is False
+    assert evaluator["executed"] is False
+    assert evaluator["execution_result"] is None
+    assert evaluator["metadata"]["task_kind"] == "response_intelligence"
+    assert evaluator["metadata"]["final_decision"]["passed"] is True
+    assert evaluator["metadata"]["final_decision"]["score"] == 0.95
+    assert evaluator["metadata"]["final_decision"]["needs_refinement"] is False
+    assert evaluator["metadata"]["evidence_refs"] == ["state_context", "ri_state"]
+    assert evaluator["score"] == 0.95
+
+
+def test_build_eval_evaluator_node_reports_blockers_and_refinement_need():
+    evaluator = build_eval_evaluator_node(
+        task_kind="code_action_review",
+        metrics=[{"metric_id": "grounding", "name": "Grounding", "status": "failed", "score": 0.2}],
+        blockers=["missing evidence"],
+    )
+
+    assert evaluator["node_type"] == "evaluator"
+    assert evaluator["metadata"]["final_decision"]["passed"] is False
+    assert evaluator["metadata"]["final_decision"]["blocked"] is True
+    assert evaluator["metadata"]["final_decision"]["needs_refinement"] is True
+    assert evaluator["metadata"]["final_decision"]["blockers"] == ["missing evidence"]
+    assert evaluator["score"] == 0.2
+    assert evaluator["executed"] is False
+
+
+def test_build_default_eval_evaluator_node_is_draft_and_non_executing():
+    evaluator = build_default_eval_evaluator_node(
+        objective="Evaluate code action review.",
+        task_kind="code_action_review",
+    )
+
+    assert evaluator["node_type"] == "evaluator"
+    assert evaluator["objective"] == "Evaluate code action review."
+    assert evaluator["metadata"]["task_kind"] == "code_action_review"
+    assert evaluator["metadata"]["final_decision"]["status"] == "draft"
+    assert evaluator["metadata"]["final_decision"]["passed"] is False
+    assert evaluator["metadata"]["metadata"]["evaluator_source"] == "not_run"
+    assert evaluator["executed"] is False
+    assert evaluator["execution_result"] is None
+
+
+def test_default_eval_loop_uses_rich_evaluator_node_contract():
+    contract = build_default_eval_loop_contract(
+        objective="Evaluate response intelligence.",
+        task_kind="response_intelligence",
+    )
+
+    evaluator = contract["nodes"][4]
+
+    assert evaluator["node_type"] == "evaluator"
+    assert evaluator["metadata"]["task_kind"] == "response_intelligence"
+    assert evaluator["metadata"]["final_decision"]["status"] == "draft"
+    assert evaluator["metadata"]["final_decision"]["passed"] is False
+    assert evaluator["executed"] is False
