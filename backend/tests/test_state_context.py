@@ -1,6 +1,7 @@
 import json
 
 from backend.apps.swarms.code_action import build_code_action_contract, build_code_action_pending_action
+from backend.apps.swarms.eval_harness import build_eval_evaluator_node, build_eval_loop_contract, build_eval_memory_record
 from backend.apps.swarms.state_context import (
     build_state_context_payload,
     build_state_context_prompt,
@@ -338,3 +339,98 @@ def test_state_context_prompt_includes_pending_code_action_context():
     assert "backend/apps/swarms/code_action.py" in prompt
     assert '"executed": false' in prompt
     assert '"execution_allowed": false' in prompt
+
+
+def test_state_context_payload_accepts_eval_harness_without_execution():
+    loop = build_eval_loop_contract(
+        loop_id="eval-loop-1",
+        objective="Evaluate RI response.",
+        task_kind="response_intelligence",
+        nodes=[
+            build_eval_evaluator_node(
+                metrics=[{"metric_id": "grounding", "name": "Grounding", "status": "passed", "score": 0.9}],
+                evidence_refs=["state_context"],
+            )
+        ],
+    )
+
+    payload = build_state_context_payload(
+        mode="swarm_card",
+        route="eval_review",
+        eval_harness=loop,
+    )
+
+    assert payload["eval_harness_status"] == "present"
+    assert payload["eval_harness"]["loop_id"] == "eval-loop-1"
+    assert payload["eval_harness"]["executed"] is False
+    assert payload["eval_harness"]["stop_decision"]["executed"] is False
+    assert payload["eval_memory_record"]["kind"] == "eval_memory_record"
+    assert payload["eval_memory_record"]["persisted"] is False
+    assert payload["eval_memory_record"]["executed"] is False
+    assert "Eval Memory:" in payload["eval_harness_summary"]
+
+
+def test_state_context_payload_accepts_eval_harness_from_available_context():
+    loop = build_eval_loop_contract(
+        loop_id="eval-loop-2",
+        task_kind="code_action_review",
+        nodes=[
+            build_eval_evaluator_node(
+                metrics=[{"metric_id": "safety", "name": "Safety", "status": "failed", "score": 0.2}],
+                blockers=["false execution claim"],
+            )
+        ],
+    )
+
+    payload = build_state_context_payload(
+        available_context={"eval_harness": loop},
+    )
+
+    assert payload["eval_harness_status"] == "present"
+    assert payload["eval_harness"]["loop_id"] == "eval-loop-2"
+    assert payload["eval_memory_record"]["status"] == "blocked"
+    assert payload["eval_memory_record"]["blockers"] == ["false execution claim"]
+
+
+def test_state_context_payload_accepts_eval_memory_record_without_rebuilding_loop():
+    loop = build_eval_loop_contract(
+        loop_id="eval-loop-3",
+        task_kind="response_intelligence",
+        nodes=[
+            build_eval_evaluator_node(
+                metrics=[{"metric_id": "grounding", "name": "Grounding", "status": "passed", "score": 1.0}],
+                evidence_refs=["state_context"],
+            )
+        ],
+    )
+    memory = build_eval_memory_record(loop_contract=loop, memory_id="eval-memory-3")
+
+    payload = build_state_context_payload(eval_memory_record=memory)
+
+    assert payload["eval_harness_status"] == "present"
+    assert payload["eval_harness"] is None
+    assert payload["eval_memory_record"]["memory_id"] == "eval-memory-3"
+    assert payload["eval_memory_record"]["persisted"] is False
+
+
+def test_state_context_prompt_includes_eval_harness_context():
+    loop = build_eval_loop_contract(
+        loop_id="eval-loop-4",
+        task_kind="response_intelligence",
+        nodes=[
+            build_eval_evaluator_node(
+                metrics=[{"metric_id": "grounding", "name": "Grounding", "status": "passed", "score": 1.0}],
+                evidence_refs=["state_context"],
+            )
+        ],
+    )
+    payload = build_state_context_payload(eval_harness=loop)
+
+    prompt = build_state_context_prompt(payload)
+
+    assert "Eval Harness:" in prompt
+    assert "status: present" in prompt
+    assert "Eval Memory:" in prompt
+    assert "eval-loop-4" in prompt
+    assert '"executed": false' in prompt
+    assert '"persisted": false' in prompt

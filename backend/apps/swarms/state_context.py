@@ -11,6 +11,7 @@ import json
 from typing import Any
 
 from backend.apps.swarms.code_action import normalize_code_action_contract, summarize_code_action_contract
+from backend.apps.swarms.eval_harness import build_eval_memory_record, build_eval_loop_contract, summarize_eval_memory_record
 from backend.apps.swarms.project_memory import (
     build_project_memory_manifest,
     extract_project_memory_refs,
@@ -230,6 +231,63 @@ def _pending_code_action_payload(
     }
 
 
+def _eval_harness_payload(
+    *,
+    eval_harness: dict[str, Any] | None,
+    eval_memory_record: dict[str, Any] | None,
+    available_context: dict[str, Any],
+) -> dict[str, Any]:
+    raw_eval = (
+        eval_harness
+        if isinstance(eval_harness, dict)
+        else available_context.get("eval_harness")
+        if isinstance(available_context.get("eval_harness"), dict)
+        else available_context.get("eval_loop")
+        if isinstance(available_context.get("eval_loop"), dict)
+        else None
+    )
+    raw_memory = (
+        eval_memory_record
+        if isinstance(eval_memory_record, dict)
+        else available_context.get("eval_memory_record")
+        if isinstance(available_context.get("eval_memory_record"), dict)
+        else None
+    )
+
+    if not raw_eval and not raw_memory:
+        return {
+            "status": EMPTY,
+            "summary": "Eval Harness: empty",
+            "loop": None,
+            "memory_record": None,
+        }
+
+    loop = build_eval_loop_contract(
+        loop_id=raw_eval.get("loop_id") if isinstance(raw_eval, dict) else None,
+        objective=raw_eval.get("objective") if isinstance(raw_eval, dict) else None,
+        task_kind=raw_eval.get("task_kind") if isinstance(raw_eval, dict) else None,
+        nodes=raw_eval.get("nodes") if isinstance(raw_eval, dict) else None,
+        stop_policy=raw_eval.get("stop_policy") if isinstance(raw_eval, dict) else None,
+        status=raw_eval.get("status") if isinstance(raw_eval, dict) else None,
+        metadata=raw_eval.get("metadata") if isinstance(raw_eval, dict) else None,
+    ) if raw_eval else None
+
+    memory = (
+        normalize_state_context_value(raw_memory)
+        if raw_memory
+        else build_eval_memory_record(loop_contract=loop) if loop else None
+    )
+
+    summary = summarize_eval_memory_record(memory) if memory else "Eval Harness: present"
+
+    return {
+        "status": "present",
+        "summary": summary,
+        "loop": normalize_state_context_value(loop),
+        "memory_record": normalize_state_context_value(memory),
+    }
+
+
 def build_state_context_payload(
     *,
     mode: str | None = None,
@@ -264,6 +322,8 @@ def build_state_context_payload(
     freshness_refs: dict[str, Any] | None = None,
     code_actions: list[Any] | None = None,
     pending_code_actions: list[Any] | None = None,
+    eval_harness: dict[str, Any] | None = None,
+    eval_memory_record: dict[str, Any] | None = None,
     available_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a normalized snapshot from caller-provided state only."""
@@ -292,6 +352,11 @@ def build_state_context_payload(
     )
     resolved_pending_code_actions = _pending_code_action_payload(
         pending_code_actions=pending_code_actions,
+        available_context=context,
+    )
+    resolved_eval_harness = _eval_harness_payload(
+        eval_harness=eval_harness,
+        eval_memory_record=eval_memory_record,
         available_context=context,
     )
 
@@ -341,6 +406,10 @@ def build_state_context_payload(
         "pending_code_action_summary": resolved_pending_code_actions["summary"],
         "pending_code_action_count": resolved_pending_code_actions["count"],
         "pending_code_actions": resolved_pending_code_actions["actions"],
+        "eval_harness_status": resolved_eval_harness["status"],
+        "eval_harness_summary": resolved_eval_harness["summary"],
+        "eval_harness": resolved_eval_harness["loop"],
+        "eval_memory_record": resolved_eval_harness["memory_record"],
         "available_context_summary": _available_context_summary(context),
     }
     return normalize_state_context_value(payload)
@@ -383,6 +452,11 @@ def build_state_context_prompt(context: dict[str, Any]) -> str:
             f"- count: {_as_dict(normalized).get('pending_code_action_count') or 0}",
             f"- summary: {_as_dict(normalized).get('pending_code_action_summary') or 'Pending Code Actions: empty'}",
             "- actions: " + json.dumps(_as_dict(normalized).get("pending_code_actions") or [], ensure_ascii=False, sort_keys=True),
+            "Eval Harness:",
+            f"- status: {_as_dict(normalized).get('eval_harness_status') or EMPTY}",
+            f"- summary: {_as_dict(normalized).get('eval_harness_summary') or 'Eval Harness: empty'}",
+            "- loop: " + json.dumps(_as_dict(normalized).get("eval_harness") or {}, ensure_ascii=False, sort_keys=True),
+            "- memory_record: " + json.dumps(_as_dict(normalized).get("eval_memory_record") or {}, ensure_ascii=False, sort_keys=True),
             "Project Memory:",
             f"- status: {_as_dict(normalized).get('project_memory_status') or EMPTY}",
             f"- summary: {_as_dict(normalized).get('project_memory_summary') or 'Project Memory: empty'}",
