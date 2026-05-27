@@ -542,6 +542,126 @@ def apply_model_context_requests_to_policy(
     return normalize_context_selection_value(merged)
 
 
+VALID_CONTEXT_QUALITY_STATUS = {
+    "sufficient",
+    "insufficient",
+    "too_large",
+    "stale",
+    "contradictory",
+    "missing_required_source",
+    "blocked_by_permissions",
+    "needs_user",
+    "needs_research",
+}
+
+
+def build_context_quality_gate(policy: dict[str, Any] | None) -> dict[str, Any]:
+    """Evaluate whether selected context is safe and sufficient for model use.
+
+    CTX-RET.7 is a read-only quality gate. It only inspects the normalized
+    policy and attached metadata. It does not fetch context, call models, mutate
+    state, execute tools, or authorize actions.
+    """
+
+    normalized = _as_dict(normalize_context_selection_value(policy or {}))
+    selected_sources = _as_list(normalized.get("selected_sources"))
+    excluded_sources = _as_list(normalized.get("excluded_sources"))
+    missing_sources = _as_list(normalized.get("required_sources_missing"))
+    model_context_requests = _as_list(normalized.get("model_context_requests"))
+    budget = _as_dict(normalized.get("context_budget"))
+
+    reasons: list[dict[str, Any]] = []
+    status = "sufficient"
+
+    def add_reason(reason_status: str, code: str, message: str, source: Any | None = None) -> None:
+        nonlocal status
+        if reason_status in VALID_CONTEXT_QUALITY_STATUS and status == "sufficient":
+            status = reason_status
+        reasons.append(
+            normalize_context_selection_value(
+                {
+                    "status": reason_status,
+                    "code": code,
+                    "message": message,
+                    "source": normalize_context_selection_value(source) if source is not None else None,
+                }
+            )
+        )
+
+    budget_status = _as_text(budget.get("context_budget_status") or normalized.get("context_budget_status"))
+    if budget_status == "over_budget":
+        add_reason("too_large", "context_budget_overflow", "Context exceeds the available model budget.", budget)
+    elif budget_status == "at_limit":
+        add_reason("too_large", "context_budget_at_limit", "Context is at the available model budget limit.", budget)
+
+    for source in selected_sources:
+        source_dict = _as_dict(source)
+        if _as_text(source_dict.get("freshness")).lower() in {"stale", "old"}:
+            add_reason("stale", "selected_context_stale", "Selected context is stale.", source_dict)
+        metadata = _as_dict(source_dict.get("metadata"))
+        if metadata.get("contradictory") is True:
+            add_reason("contradictory", "selected_context_contradictory", "Selected context is marked contradictory.", source_dict)
+
+    for source in excluded_sources:
+        source_dict = _as_dict(source)
+        metadata = _as_dict(source_dict.get("metadata"))
+        reason = _as_text(source_dict.get("reason"))
+        if metadata.get("forbidden") is True or reason in {"forbidden_file", "blocked_by_permissions"}:
+            add_reason("blocked_by_permissions", "context_blocked_by_permissions", "A relevant context source is blocked by permissions.", source_dict)
+
+    if missing_sources:
+        add_reason("missing_required_source", "required_context_missing", "Required context sources are missing.", missing_sources[:MAX_LIST_ITEMS])
+
+    if bool(normalized.get("backend_decision_required")) or model_context_requests:
+        add_reason("needs_user", "backend_context_review_required", "Model-requested context requires backend review before use.", model_context_requests[:MAX_LIST_ITEMS])
+
+    for request in model_context_requests:
+        request_dict = _as_dict(request)
+        if request_dict.get("source_kind") == "research_cache" or request_dict.get("metadata", {}).get("needs_research") is True:
+            add_reason("needs_research", "external_research_context_requested", "The context request requires research before use.", request_dict)
+
+    if not selected_sources and not missing_sources and not model_context_requests:
+        add_reason("insufficient", "no_selected_context", "No selected context is available.")
+
+    status_priority = [
+        "too_large",
+        "blocked_by_permissions",
+        "contradictory",
+        "stale",
+        "needs_research",
+        "missing_required_source",
+        "needs_user",
+        "insufficient",
+    ]
+    reason_statuses = {_as_text(reason.get("status")) for reason in reasons if isinstance(reason, dict)}
+    for candidate_status in status_priority:
+        if candidate_status in reason_statuses:
+            status = candidate_status
+            break
+
+    return normalize_context_selection_value(
+        {
+            "status": status,
+            "ok": status == "sufficient",
+            "reasons": reasons,
+            "selected_count": len(selected_sources),
+            "excluded_count": len(excluded_sources),
+            "missing_count": len(missing_sources),
+            "model_context_request_count": len(model_context_requests),
+            "context_budget_status": budget_status or MISSING,
+        }
+    )
+
+
+def apply_context_quality_gate(policy: dict[str, Any] | None) -> dict[str, Any]:
+    """Attach the CTX-RET.7 quality gate result to a normalized policy."""
+
+    normalized = _as_dict(normalize_context_selection_value(policy or {}))
+    merged = dict(normalized)
+    merged["context_quality_gate"] = build_context_quality_gate(normalized)
+    return normalize_context_selection_value(merged)
+
+
 def build_context_budget_summary(
     *,
     context_budget_total: int | None = None,

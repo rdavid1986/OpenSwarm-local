@@ -2,9 +2,11 @@ from backend.apps.swarms.context_selection import (
     apply_context_budget_exclusion_policy,
     apply_context_budget_to_policy,
     apply_context_inclusion_explanations,
+    apply_context_quality_gate,
     apply_model_context_requests_to_policy,
     build_context_budget_summary,
     build_context_inclusion_explanations,
+    build_context_quality_gate,
     build_context_selection_policy,
     build_model_context_request_policy,
     build_ranked_context_selection_policy,
@@ -612,3 +614,141 @@ def test_apply_model_context_requests_to_policy_marks_missing_sources_for_backen
     assert enriched["required_sources_missing"][0]["status"] == "missing"
     assert enriched["required_sources_missing"][0]["reason"] == "Need target file before modifying UI."
     assert enriched["required_sources_missing"][0]["metadata"]["backend_decision_required"] is True
+
+
+def test_context_quality_gate_marks_sufficient_context_ok():
+    policy = build_context_selection_policy(
+        selected_sources=[
+            {
+                "source_kind": "filesystem",
+                "source_id": "frontend/src/App.tsx",
+                "reason": "target_file",
+                "freshness": "fresh",
+                "confidence": 0.9,
+            }
+        ],
+    )
+
+    gate = build_context_quality_gate(policy)
+
+    assert gate["status"] == "sufficient"
+    assert gate["ok"] is True
+    assert gate["selected_count"] == 1
+    assert gate["reasons"] == []
+
+
+def test_context_quality_gate_detects_over_budget_context():
+    policy = build_context_selection_policy(
+        selected_sources=[
+            {"source_kind": "filesystem", "source_id": "large.py", "budget_cost": 4000},
+        ],
+        context_budget_total=3000,
+        context_budget_source="configured",
+    )
+    policy = apply_context_budget_to_policy(policy, reserved_response_budget=1000)
+
+    gate = build_context_quality_gate(policy)
+
+    assert gate["status"] == "too_large"
+    assert gate["ok"] is False
+    assert gate["reasons"][0]["code"] == "context_budget_overflow"
+
+
+def test_context_quality_gate_detects_missing_and_backend_review_context():
+    policy = build_context_selection_policy(
+        selected_sources=[
+            {"source_kind": "docs", "source_id": "README.md", "reason": "project_overview"},
+        ],
+        required_sources_missing=[
+            {
+                "source_kind": "filesystem",
+                "source_id": "frontend/src/App.tsx",
+                "reason": "required_target_file",
+            }
+        ],
+    )
+    policy = apply_model_context_requests_to_policy(
+        policy,
+        [
+            {
+                "source_kind": "filesystem",
+                "source_id": "frontend/src/styles.css",
+                "reason": "Need related styles before UI patch.",
+            }
+        ],
+    )
+
+    gate = build_context_quality_gate(policy)
+
+    assert gate["status"] == "missing_required_source"
+    assert gate["ok"] is False
+    assert any(reason["code"] == "required_context_missing" for reason in gate["reasons"])
+    assert any(reason["code"] == "backend_context_review_required" for reason in gate["reasons"])
+    assert gate["model_context_request_count"] == 1
+
+
+def test_context_quality_gate_detects_blocked_stale_and_contradictory_context():
+    policy = build_context_selection_policy(
+        selected_sources=[
+            {
+                "source_kind": "evidence",
+                "source_id": "old-evidence",
+                "freshness": "stale",
+                "metadata": {"contradictory": True},
+            }
+        ],
+        excluded_sources=[
+            {
+                "source_kind": "filesystem",
+                "source_id": "backend/secrets.py",
+                "reason": "forbidden_file",
+                "metadata": {"forbidden": True},
+            }
+        ],
+    )
+
+    gate = build_context_quality_gate(policy)
+
+    assert gate["status"] == "blocked_by_permissions"
+    assert gate["ok"] is False
+    assert any(reason["code"] == "selected_context_stale" for reason in gate["reasons"])
+    assert any(reason["code"] == "selected_context_contradictory" for reason in gate["reasons"])
+    assert any(reason["code"] == "context_blocked_by_permissions" for reason in gate["reasons"])
+
+
+def test_context_quality_gate_detects_research_request():
+    policy = build_context_selection_policy(
+        selected_sources=[
+            {"source_kind": "docs", "source_id": "README.md"},
+        ],
+    )
+    policy = apply_model_context_requests_to_policy(
+        policy,
+        [
+            {
+                "source_kind": "research_cache",
+                "source_id": "latest-sdk-docs",
+                "reason": "Need current external docs.",
+                "metadata": {"needs_research": True},
+            }
+        ],
+    )
+
+    gate = build_context_quality_gate(policy)
+
+    assert gate["status"] == "needs_research"
+    assert any(reason["code"] == "external_research_context_requested" for reason in gate["reasons"])
+
+
+def test_apply_context_quality_gate_attaches_result_without_mutating_sources():
+    policy = build_context_selection_policy(
+        selected_sources=[
+            {"source_kind": "filesystem", "source_id": "a.py", "freshness": "fresh"},
+        ],
+    )
+
+    enriched = apply_context_quality_gate(policy)
+
+    assert enriched["selected_sources"] == policy["selected_sources"]
+    assert enriched["context_quality_gate"]["status"] == "sufficient"
+    assert enriched["context_quality_gate"]["ok"] is True
