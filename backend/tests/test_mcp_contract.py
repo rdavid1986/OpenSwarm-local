@@ -1,6 +1,8 @@
 from backend.apps.swarms.mcp_contract import (
     build_mcp_client_contract,
     build_mcp_contract_from_tool_definition,
+    build_mcp_evidence_bundle,
+    build_mcp_evidence_record,
     build_mcp_fallback_adapter_contract,
     build_mcp_fallback_plan,
     build_mcp_host_contract,
@@ -16,6 +18,8 @@ from backend.apps.swarms.mcp_contract import (
     sanitize_mcp_server_name,
     score_mcp_server_for_budget,
     search_mcp_tool_registry,
+    summarize_mcp_evidence_bundle,
+    summarize_mcp_evidence_record,
     summarize_mcp_fallback_plan,
     summarize_mcp_host_contract,
     summarize_mcp_inspection,
@@ -631,3 +635,104 @@ def test_summarize_mcp_fallback_plan_is_compact_and_non_executing():
 def test_normalize_mcp_fallback_type_rejects_unknown_values():
     assert normalize_mcp_fallback_type("cli") == "cli"
     assert normalize_mcp_fallback_type("bad") == "none"
+
+
+def test_build_mcp_evidence_record_captures_inspection_fallback_and_budget():
+    registry = build_mcp_tool_registry(
+        tools=[
+            {"name": "Unity", "mcp_config": {"type": "stdio"}, "auth_status": "expired"},
+        ],
+    )
+    inspection = inspect_mcp_tool_registry(registry, target_server_name="Unity")
+    fallback = build_mcp_fallback_plan(
+        inspection=inspection,
+        fallback_adapters=[
+            build_mcp_fallback_adapter_contract(
+                server_name="Unity",
+                fallback_type="script",
+                script_path="tools/unity_cli_adapter.py",
+            )
+        ],
+        target_server_name="Unity",
+    )
+    budget = build_mcp_tool_definition_budget(registry, query="unity")
+
+    record = build_mcp_evidence_record(
+        evidence_id="mcp-evidence-1",
+        server_name="Unity",
+        registry=registry,
+        inspection=inspection,
+        fallback_plan=fallback,
+        definition_budget=budget,
+    )
+
+    assert record["contract_kind"] == "mcp_evidence_record"
+    assert record["evidence_id"] == "mcp-evidence-1"
+    assert record["server_name"] == "unity"
+    assert "inspection=needs_user_action" in record["status"]
+    assert "fallback=fallback_available" in record["status"]
+    assert record["registry_summary"].startswith("MCP Registry:")
+    assert record["inspection_summary"].startswith("MCP Inspection:")
+    assert record["fallback_summary"].startswith("MCP Fallback Plan:")
+    assert record["budget_summary"].startswith("MCP Tool Definition Budget:")
+    assert record["finding_count"] >= 1
+    assert record["required_user_action_count"] >= 1
+    assert record["fallback_available"] is True
+    assert record["selected_fallback"]["script_path"] == "tools/unity_cli_adapter.py"
+    assert record["executed"] is False
+
+
+def test_build_mcp_evidence_bundle_aggregates_records_without_execution():
+    ready_registry = build_mcp_tool_registry(
+        tools=[
+            {"name": "Unity", "mcp_config": {"type": "stdio"}, "auth_status": "connected"},
+        ],
+        active_mcps=["Unity"],
+    )
+    ready_inspection = inspect_mcp_tool_registry(ready_registry, target_server_name="Unity")
+    ready_record = build_mcp_evidence_record(
+        server_name="Unity",
+        registry=ready_registry,
+        inspection=ready_inspection,
+    )
+
+    blocked_registry = build_mcp_tool_registry(
+        tools=[
+            {"name": "Gmail", "mcp_config": {"type": "stdio"}, "auth_status": "expired"},
+        ],
+    )
+    blocked_inspection = inspect_mcp_tool_registry(blocked_registry, target_server_name="Gmail")
+    blocked_record = build_mcp_evidence_record(
+        server_name="Gmail",
+        registry=blocked_registry,
+        inspection=blocked_inspection,
+    )
+
+    bundle = build_mcp_evidence_bundle(records=[ready_record, blocked_record], source="test")
+
+    assert bundle["contract_kind"] == "mcp_evidence_bundle"
+    assert bundle["source"] == "test"
+    assert bundle["record_count"] == 2
+    assert bundle["ready_count"] == 1
+    assert bundle["finding_count"] >= 1
+    assert bundle["required_user_action_count"] >= 1
+    assert bundle["executed"] is False
+
+
+def test_summarize_mcp_evidence_record_and_bundle_are_compact():
+    record = build_mcp_evidence_record(
+        server_name="Unity",
+        inspection={"status": "ready", "ready": True, "findings": [], "required_user_actions": []},
+    )
+    bundle = build_mcp_evidence_bundle(records=[record])
+
+    record_summary = summarize_mcp_evidence_record(record)
+    bundle_summary = summarize_mcp_evidence_bundle(bundle)
+
+    assert "MCP Evidence:" in record_summary
+    assert "server=unity" in record_summary
+    assert "ready=True" in record_summary
+    assert "executed=False" in record_summary
+    assert "MCP Evidence Bundle:" in bundle_summary
+    assert "records=1" in bundle_summary
+    assert "executed=False" in bundle_summary

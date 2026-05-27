@@ -942,3 +942,131 @@ def summarize_mcp_fallback_plan(plan: dict[str, Any] | None) -> str:
         f"actions={len(_as_list(data.get('required_user_actions')))}; "
         "executed=False"
     )
+
+
+def build_mcp_evidence_record(
+    *,
+    evidence_id: str | None = None,
+    server_name: str | None = None,
+    registry: dict[str, Any] | None = None,
+    inspection: dict[str, Any] | None = None,
+    fallback_plan: dict[str, Any] | None = None,
+    definition_budget: dict[str, Any] | None = None,
+    source: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build structured MCP evidence without executing MCP or persisting state."""
+
+    registry_data = _as_dict(registry)
+    inspection_data = _as_dict(inspection)
+    fallback_data = _as_dict(fallback_plan)
+    budget_data = _as_dict(definition_budget)
+    normalized_server = sanitize_mcp_server_name(
+        server_name
+        or inspection_data.get("target_server_name")
+        or fallback_data.get("target_server_name")
+    )
+
+    findings = _as_list(inspection_data.get("findings"))
+    actions = [
+        *_as_list(inspection_data.get("required_user_actions")),
+        *_as_list(fallback_data.get("required_user_actions")),
+    ]
+
+    status_parts = []
+    if inspection_data.get("status"):
+        status_parts.append(f"inspection={inspection_data.get('status')}")
+    if fallback_data.get("status"):
+        status_parts.append(f"fallback={fallback_data.get('status')}")
+    if budget_data.get("contract_kind"):
+        status_parts.append(
+            f"budget_included={budget_data.get('included_count', 0)}"
+        )
+
+    return {
+        "contract_kind": "mcp_evidence_record",
+        "evidence_id": _as_text(evidence_id) or None,
+        "server_name": normalized_server or None,
+        "source": _as_text(source) or "mcp_contract",
+        "status": "; ".join(status_parts) if status_parts else "empty",
+        "registry_summary": summarize_mcp_tool_registry(registry_data) if registry_data else None,
+        "inspection_summary": summarize_mcp_inspection(inspection_data) if inspection_data else None,
+        "fallback_summary": summarize_mcp_fallback_plan(fallback_data) if fallback_data else None,
+        "budget_summary": summarize_mcp_tool_definition_budget(budget_data) if budget_data else None,
+        "finding_count": len(findings),
+        "required_user_action_count": len(actions),
+        "findings": findings,
+        "required_user_actions": actions,
+        "ready": bool(inspection_data.get("ready")),
+        "fallback_available": bool(fallback_data.get("fallback_available")),
+        "selected_fallback": _as_dict(fallback_data.get("selected_fallback")) or None,
+        "included_mcp_servers": _as_list(budget_data.get("included_servers")),
+        "deferred_mcp_servers": _as_list(budget_data.get("deferred_servers")),
+        "metadata": _as_dict(metadata),
+        "executed": False,
+        "execution_result": None,
+    }
+
+
+def build_mcp_evidence_bundle(
+    *,
+    records: list[Any] | None = None,
+    source: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Bundle MCP evidence records for transport into RI/State Context."""
+
+    normalized_records = [
+        _as_dict(item)
+        for item in _as_list(records)
+        if _as_dict(item)
+    ]
+    ready_count = sum(1 for item in normalized_records if item.get("ready"))
+    fallback_available_count = sum(1 for item in normalized_records if item.get("fallback_available"))
+    action_count = sum(int(item.get("required_user_action_count") or 0) for item in normalized_records)
+    finding_count = sum(int(item.get("finding_count") or 0) for item in normalized_records)
+
+    return {
+        "contract_kind": "mcp_evidence_bundle",
+        "source": _as_text(source) or "mcp_contract",
+        "record_count": len(normalized_records),
+        "ready_count": ready_count,
+        "fallback_available_count": fallback_available_count,
+        "finding_count": finding_count,
+        "required_user_action_count": action_count,
+        "records": normalized_records,
+        "metadata": _as_dict(metadata),
+        "executed": False,
+        "execution_result": None,
+    }
+
+
+def summarize_mcp_evidence_record(record: dict[str, Any] | None) -> str:
+    """Return compact MCP evidence record summary for prompts and traces."""
+
+    data = _as_dict(record)
+    return (
+        "MCP Evidence: "
+        f"server={data.get('server_name') or 'none'}; "
+        f"status={data.get('status') or 'empty'}; "
+        f"ready={bool(data.get('ready'))}; "
+        f"fallback_available={bool(data.get('fallback_available'))}; "
+        f"findings={data.get('finding_count', 0)}; "
+        f"actions={data.get('required_user_action_count', 0)}; "
+        "executed=False"
+    )
+
+
+def summarize_mcp_evidence_bundle(bundle: dict[str, Any] | None) -> str:
+    """Return compact MCP evidence bundle summary for prompts and traces."""
+
+    data = _as_dict(bundle)
+    return (
+        "MCP Evidence Bundle: "
+        f"records={data.get('record_count', 0)}; "
+        f"ready={data.get('ready_count', 0)}; "
+        f"fallback_available={data.get('fallback_available_count', 0)}; "
+        f"findings={data.get('finding_count', 0)}; "
+        f"actions={data.get('required_user_action_count', 0)}; "
+        "executed=False"
+    )
