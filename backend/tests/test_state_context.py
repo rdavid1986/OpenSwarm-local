@@ -1,5 +1,6 @@
 import json
 
+from backend.apps.swarms.code_action import build_code_action_contract
 from backend.apps.swarms.state_context import (
     build_state_context_payload,
     build_state_context_prompt,
@@ -201,3 +202,61 @@ def test_state_context_prompt_highlights_mini_agent_context_budget_sections():
     assert "source: configured" in prompt
     assert "frontend/src/App.tsx" in prompt
     assert "read_file" in prompt
+
+
+def test_state_context_payload_accepts_code_actions_without_execution():
+    action = build_code_action_contract(
+        action_id="act-1",
+        action_type="edit_file",
+        title="Edit state context",
+        affected_files=[{"path": "backend/apps/swarms/state_context.py", "operation": "write"}],
+        suggested_commands=[{"command": "python -m pytest backend/tests/test_state_context.py -q"}],
+    )
+
+    payload = build_state_context_payload(
+        mode="swarm_card",
+        route="code_action_review",
+        code_actions=[action],
+    )
+
+    assert payload["code_action_status"] == "present"
+    assert payload["code_action_count"] == 1
+    assert "type=edit_file" in payload["code_action_summary"]
+    assert payload["code_actions"][0]["action_id"] == "act-1"
+    assert payload["code_actions"][0]["executed"] is False
+    assert payload["code_actions"][0]["execution_result"] is None
+
+
+def test_state_context_payload_accepts_code_actions_from_available_context():
+    action = build_code_action_contract(
+        action_id="act-2",
+        action_type="run_command",
+        suggested_commands=[{"command": "git diff --stat"}],
+    )
+
+    payload = build_state_context_payload(
+        available_context={"code_actions": [action]},
+    )
+
+    assert payload["code_action_status"] == "present"
+    assert payload["code_action_count"] == 1
+    assert payload["code_actions"][0]["action_type"] == "run_command"
+    assert payload["code_actions"][0]["executed"] is False
+
+
+def test_state_context_prompt_includes_code_action_context():
+    action = build_code_action_contract(
+        action_id="act-3",
+        action_type="apply_patch",
+        affected_files=[{"path": "backend/apps/swarms/code_action.py", "operation": "patch"}],
+    )
+    payload = build_state_context_payload(code_actions=[action])
+
+    prompt = build_state_context_prompt(payload)
+
+    assert "Code Actions:" in prompt
+    assert "status: present" in prompt
+    assert "count: 1" in prompt
+    assert "type=apply_patch" in prompt
+    assert "backend/apps/swarms/code_action.py" in prompt
+    assert '"executed": false' in prompt

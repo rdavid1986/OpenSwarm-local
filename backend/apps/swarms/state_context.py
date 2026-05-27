@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from backend.apps.swarms.code_action import normalize_code_action_contract, summarize_code_action_contract
 from backend.apps.swarms.project_memory import (
     build_project_memory_manifest,
     extract_project_memory_refs,
@@ -150,6 +151,34 @@ def _project_memory_payload(
     }
 
 
+def _code_action_payload(
+    *,
+    code_actions: list[Any] | None,
+    available_context: dict[str, Any],
+) -> dict[str, Any]:
+    raw_actions = code_actions if code_actions is not None else available_context.get("code_actions")
+    normalized_actions = [
+        normalize_code_action_contract(item)
+        for item in (raw_actions if isinstance(raw_actions, list) else [])
+        if isinstance(item, dict)
+    ]
+
+    if not normalized_actions:
+        return {
+            "status": EMPTY,
+            "actions": [],
+            "summary": "Code Actions: empty",
+            "count": 0,
+        }
+
+    return {
+        "status": "present",
+        "actions": normalize_state_context_value(normalized_actions),
+        "summary": "; ".join(summarize_code_action_contract(action) for action in normalized_actions[:MAX_LIST_ITEMS]),
+        "count": len(normalized_actions),
+    }
+
+
 def build_state_context_payload(
     *,
     mode: str | None = None,
@@ -182,6 +211,7 @@ def build_state_context_payload(
     tools_allowed: list[Any] | None = None,
     memory_scope: str | None = None,
     freshness_refs: dict[str, Any] | None = None,
+    code_actions: list[Any] | None = None,
     available_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a normalized snapshot from caller-provided state only."""
@@ -202,6 +232,10 @@ def build_state_context_payload(
         project_memory_manifest=project_memory_manifest,
         project_memory_summary=project_memory_summary,
         project_memory_refs=project_memory_refs,
+        available_context=context,
+    )
+    resolved_code_actions = _code_action_payload(
+        code_actions=code_actions,
         available_context=context,
     )
 
@@ -243,6 +277,10 @@ def build_state_context_payload(
         "project_memory_summary": resolved_project_memory["summary"],
         "project_memory_refs": resolved_project_memory["refs"],
         "project_memory_manifest": resolved_project_memory["manifest"],
+        "code_action_status": resolved_code_actions["status"],
+        "code_action_summary": resolved_code_actions["summary"],
+        "code_action_count": resolved_code_actions["count"],
+        "code_actions": resolved_code_actions["actions"],
         "available_context_summary": _available_context_summary(context),
     }
     return normalize_state_context_value(payload)
@@ -275,6 +313,11 @@ def build_state_context_prompt(context: dict[str, Any]) -> str:
             "- dependency_outputs: " + json.dumps(_as_dict(normalized).get("dependency_outputs") or [], ensure_ascii=False, sort_keys=True),
             "- tools_allowed: " + json.dumps(_as_dict(normalized).get("tools_allowed") or [], ensure_ascii=False, sort_keys=True),
             "- freshness_refs: " + json.dumps(_as_dict(normalized).get("freshness_refs") or {}, ensure_ascii=False, sort_keys=True),
+            "Code Actions:",
+            f"- status: {_as_dict(normalized).get('code_action_status') or EMPTY}",
+            f"- count: {_as_dict(normalized).get('code_action_count') or 0}",
+            f"- summary: {_as_dict(normalized).get('code_action_summary') or 'Code Actions: empty'}",
+            "- actions: " + json.dumps(_as_dict(normalized).get("code_actions") or [], ensure_ascii=False, sort_keys=True),
             "Project Memory:",
             f"- status: {_as_dict(normalized).get('project_memory_status') or EMPTY}",
             f"- summary: {_as_dict(normalized).get('project_memory_summary') or 'Project Memory: empty'}",
