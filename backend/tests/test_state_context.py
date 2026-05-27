@@ -130,3 +130,40 @@ def test_normalize_state_context_value_is_json_safe_and_bounded():
     assert len(normalized["items"]) == 12
     assert normalized["nested"] == {"a": None, "b": 2}
     json.dumps(normalized)
+
+
+def test_state_context_payload_supports_mini_agent_context_budget_fields():
+    payload = build_state_context_payload(
+        mode="swarm_card",
+        route="mini_agent_runtime",
+        user_message="Crear componente visual",
+        agent_id="agent-1",
+        mini_agent_id="mini-1",
+        task_id="task-1",
+        context_budget_used=1200,
+        context_budget_total=32000,
+        context_budget_source="configured",
+        context_sections=["swarm_goal", "task_contract", "allowed_files"],
+        allowed_files=["frontend/src/App.tsx"],
+        relevant_files=["frontend/src/styles.css"],
+        forbidden_files=["backend/main.py"],
+        dependency_outputs=[{"task_id": "task-0", "summary": "Base UI creada"}],
+        tools_allowed=["read_file", "edit_file"],
+        memory_scope="project:ui",
+        freshness_refs={"frontend/src/App.tsx": {"hash": "abc123", "fresh": True}},
+    )
+
+    assert payload["agent_id"] == "agent-1"
+    assert payload["mini_agent_id"] == "mini-1"
+    assert payload["task_id"] == "task-1"
+    assert payload["context_budget_used"] == 1200
+    assert payload["context_budget_total"] == 32000
+    assert payload["context_budget_source"] == "configured"
+    assert payload["context_sections"] == ["swarm_goal", "task_contract", "allowed_files"]
+    assert payload["allowed_files"] == ["frontend/src/App.tsx"]
+    assert payload["relevant_files"] == ["frontend/src/styles.css"]
+    assert payload["forbidden_files"] == ["backend/main.py"]
+    assert payload["dependency_outputs"][0]["task_id"] == "task-0"
+    assert payload["tools_allowed"] == ["read_file", "edit_file"]
+    assert payload["memory_scope"] == "project:ui"
+    assert payload["freshness_refs"]["frontend/src/App.tsx"]["fresh"] is True

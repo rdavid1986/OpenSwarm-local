@@ -22,7 +22,7 @@ UNKNOWN = "unknown"
 EMPTY = "empty"
 MAX_TEXT = 600
 MAX_LIST_ITEMS = 12
-MAX_DICT_ITEMS = 24
+MAX_DICT_ITEMS = 64
 
 
 def _as_text(value: Any) -> str:
@@ -168,6 +168,20 @@ def build_state_context_payload(
     project_memory_manifest: dict[str, Any] | None = None,
     project_memory_summary: str | None = None,
     project_memory_refs: dict[str, Any] | None = None,
+    agent_id: str | None = None,
+    mini_agent_id: str | None = None,
+    task_id: str | None = None,
+    context_budget_used: int | None = None,
+    context_budget_total: int | None = None,
+    context_budget_source: str | None = None,
+    context_sections: list[Any] | None = None,
+    allowed_files: list[Any] | None = None,
+    relevant_files: list[Any] | None = None,
+    forbidden_files: list[Any] | None = None,
+    dependency_outputs: list[Any] | None = None,
+    tools_allowed: list[Any] | None = None,
+    memory_scope: str | None = None,
+    freshness_refs: dict[str, Any] | None = None,
     available_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a normalized snapshot from caller-provided state only."""
@@ -211,6 +225,20 @@ def build_state_context_payload(
         "provider_health_status": _first_text(provider.get("status"), context.get("provider_health_status")) or MISSING,
         "model_name": _first_text(model_name, provider.get("model"), context.get("model_name")) or MISSING,
         "guard_status": _first_text(guard_status, context.get("guard_status"), context.get("claim_guard_status")) or MISSING,
+        "agent_id": _first_text(agent_id, context.get("agent_id")),
+        "mini_agent_id": _first_text(mini_agent_id, context.get("mini_agent_id")),
+        "task_id": _first_text(task_id, context.get("task_id")),
+        "context_budget_used": _count_or_zero(context_budget_used if context_budget_used is not None else context.get("context_budget_used")),
+        "context_budget_total": _count_or_zero(context_budget_total if context_budget_total is not None else context.get("context_budget_total")),
+        "context_budget_source": _first_text(context_budget_source, context.get("context_budget_source")) or MISSING,
+        "context_sections": normalize_state_context_value(context_sections if context_sections is not None else context.get("context_sections") or []),
+        "allowed_files": normalize_state_context_value(allowed_files if allowed_files is not None else context.get("allowed_files") or []),
+        "relevant_files": normalize_state_context_value(relevant_files if relevant_files is not None else context.get("relevant_files") or []),
+        "forbidden_files": normalize_state_context_value(forbidden_files if forbidden_files is not None else context.get("forbidden_files") or []),
+        "dependency_outputs": normalize_state_context_value(dependency_outputs if dependency_outputs is not None else context.get("dependency_outputs") or []),
+        "tools_allowed": normalize_state_context_value(tools_allowed if tools_allowed is not None else context.get("tools_allowed") or []),
+        "memory_scope": _first_text(memory_scope, context.get("memory_scope")) or MISSING,
+        "freshness_refs": normalize_state_context_value(freshness_refs if freshness_refs is not None else context.get("freshness_refs") or {}),
         "project_memory_status": resolved_project_memory["status"],
         "project_memory_summary": resolved_project_memory["summary"],
         "project_memory_refs": resolved_project_memory["refs"],
