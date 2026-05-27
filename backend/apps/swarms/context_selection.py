@@ -221,3 +221,105 @@ def summarize_context_selection_policy(policy: dict[str, Any] | None) -> str:
         f"budget={budget_used}/{budget_total}; "
         f"source={normalized.get('context_budget_source') or MISSING}"
     )
+
+
+def _score_flag(value: Any, *, positive: float = 0.0, negative: float = 0.0) -> float:
+    if value is True:
+        return positive
+    if value is False:
+        return negative
+    return 0.0
+
+
+def score_context_source(value: Any) -> dict[str, Any]:
+    """Score a normalized context source without fetching external state."""
+
+    source = normalize_context_source(value)
+    metadata = _as_dict(source.get("metadata"))
+    refs = _as_dict(source.get("refs"))
+    status = _as_text(source.get("status"))
+    freshness = _as_text(source.get("freshness")).lower()
+    confidence_raw = source.get("confidence")
+    confidence = float(confidence_raw) if isinstance(confidence_raw, int | float) else 0.0
+    confidence = max(0.0, min(1.0, confidence))
+    budget_cost = _count_or_zero(source.get("budget_cost"))
+
+    score = 0.0
+    reasons: list[str] = []
+
+    if status == "selected":
+        score += 10.0
+        reasons.append("selected")
+    elif status == "excluded":
+        score -= 50.0
+        reasons.append("excluded")
+    elif status == "blocked":
+        score -= 100.0
+        reasons.append("blocked")
+    elif status == "missing":
+        score -= 25.0
+        reasons.append("missing")
+
+    if freshness in {"fresh", "current", "verified"}:
+        score += 15.0
+        reasons.append("fresh")
+    elif freshness in {"stale", "old", "unknown"}:
+        score -= 10.0
+        reasons.append("stale_or_unknown")
+
+    if confidence:
+        score += confidence * 20.0
+        reasons.append("confidence")
+
+    if metadata.get("directly_related") is True:
+        score += 25.0
+        reasons.append("directly_related")
+    if metadata.get("allowed") is True:
+        score += 15.0
+        reasons.append("allowed")
+    if metadata.get("forbidden") is True:
+        score -= 100.0
+        reasons.append("forbidden")
+    if metadata.get("has_evidence") is True or refs.get("evidence_refs"):
+        score += 20.0
+        reasons.append("has_evidence")
+    if metadata.get("dependency") is True:
+        score += 10.0
+        reasons.append("dependency")
+    if metadata.get("risk") in {"high", "danger", "destructive"}:
+        score -= 20.0
+        reasons.append("risk_penalty")
+
+    if budget_cost > 0:
+        score -= min(float(budget_cost) / 1000.0, 20.0)
+        reasons.append("budget_cost")
+
+    ranked = dict(source)
+    ranked["rank_score"] = round(score, 4)
+    ranked["rank_reasons"] = reasons
+    return normalize_context_selection_value(ranked)
+
+
+def rank_context_sources(sources: list[Any] | None) -> list[dict[str, Any]]:
+    """Return context sources ranked from most to least useful."""
+
+    ranked = [score_context_source(item) for item in _as_list(sources)]
+    return sorted(
+        ranked,
+        key=lambda item: (
+            float(_as_dict(item).get("rank_score") or 0.0),
+            _as_text(_as_dict(item).get("source_kind")),
+            _as_text(_as_dict(item).get("source_id")),
+        ),
+        reverse=True,
+    )
+
+
+def build_ranked_context_selection_policy(**kwargs: Any) -> dict[str, Any]:
+    """Build a policy and rank its selected sources."""
+
+    policy = build_context_selection_policy(**kwargs)
+    policy["selected_sources"] = rank_context_sources(policy.get("selected_sources"))
+    policy["excluded_sources"] = rank_context_sources(policy.get("excluded_sources"))
+    policy["required_sources_missing"] = rank_context_sources(policy.get("required_sources_missing"))
+    return normalize_context_selection_value(policy)

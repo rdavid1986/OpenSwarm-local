@@ -1,7 +1,10 @@
 from backend.apps.swarms.context_selection import (
     build_context_selection_policy,
+    build_ranked_context_selection_policy,
     normalize_context_selection_value,
     normalize_context_source,
+    rank_context_sources,
+    score_context_source,
     summarize_context_selection_policy,
 )
 
@@ -141,3 +144,105 @@ def test_normalize_context_selection_value_is_bounded():
     assert len(value["long"]) == 600
     assert len(value["items"]) == 24
     assert value["nested"] == {"a": None, "b": 2}
+
+
+def test_score_context_source_rewards_relevant_fresh_allowed_evidence():
+    scored = score_context_source(
+        {
+            "source_kind": "filesystem",
+            "source_id": "frontend/src/App.tsx",
+            "status": "selected",
+            "freshness": "fresh",
+            "confidence": 0.8,
+            "budget_cost": 500,
+            "refs": {"evidence_refs": ["evidence-1"]},
+            "metadata": {
+                "directly_related": True,
+                "allowed": True,
+                "has_evidence": True,
+            },
+        }
+    )
+
+    assert scored["rank_score"] > 80
+    assert "selected" in scored["rank_reasons"]
+    assert "fresh" in scored["rank_reasons"]
+    assert "directly_related" in scored["rank_reasons"]
+    assert "allowed" in scored["rank_reasons"]
+    assert "has_evidence" in scored["rank_reasons"]
+
+
+def test_score_context_source_penalizes_forbidden_blocked_or_stale_context():
+    scored = score_context_source(
+        {
+            "source_kind": "filesystem",
+            "source_id": "backend/main.py",
+            "status": "blocked",
+            "freshness": "stale",
+            "confidence": 0.9,
+            "metadata": {
+                "directly_related": True,
+                "forbidden": True,
+                "risk": "high",
+            },
+        }
+    )
+
+    assert scored["rank_score"] < -150
+    assert "blocked" in scored["rank_reasons"]
+    assert "forbidden" in scored["rank_reasons"]
+    assert "risk_penalty" in scored["rank_reasons"]
+
+
+def test_rank_context_sources_orders_best_context_first():
+    ranked = rank_context_sources(
+        [
+            {
+                "source_kind": "filesystem",
+                "source_id": "backend/main.py",
+                "status": "blocked",
+                "metadata": {"forbidden": True},
+            },
+            {
+                "source_kind": "filesystem",
+                "source_id": "frontend/src/App.tsx",
+                "status": "selected",
+                "freshness": "fresh",
+                "confidence": 0.8,
+                "metadata": {"directly_related": True, "allowed": True},
+            },
+            {
+                "source_kind": "docs",
+                "source_id": "README.md",
+                "status": "selected",
+                "confidence": 0.2,
+            },
+        ]
+    )
+
+    assert ranked[0]["source_id"] == "frontend/src/App.tsx"
+    assert ranked[-1]["source_id"] == "backend/main.py"
+
+
+def test_build_ranked_context_selection_policy_ranks_selected_sources():
+    policy = build_ranked_context_selection_policy(
+        scope="mini_agent",
+        task_kind="frontend_patch",
+        selected_sources=[
+            {
+                "source_kind": "docs",
+                "source_id": "README.md",
+                "confidence": 0.1,
+            },
+            {
+                "source_kind": "filesystem",
+                "source_id": "frontend/src/App.tsx",
+                "freshness": "fresh",
+                "confidence": 0.9,
+                "metadata": {"directly_related": True, "allowed": True},
+            },
+        ],
+    )
+
+    assert policy["selected_sources"][0]["source_id"] == "frontend/src/App.tsx"
+    assert "rank_score" in policy["selected_sources"][0]
