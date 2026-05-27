@@ -1,6 +1,6 @@
 import json
 
-from backend.apps.swarms.code_action import build_code_action_contract
+from backend.apps.swarms.code_action import build_code_action_contract, build_code_action_pending_action
 from backend.apps.swarms.state_context import (
     build_state_context_payload,
     build_state_context_prompt,
@@ -260,3 +260,81 @@ def test_state_context_prompt_includes_code_action_context():
     assert "type=apply_patch" in prompt
     assert "backend/apps/swarms/code_action.py" in prompt
     assert '"executed": false' in prompt
+
+
+def test_state_context_payload_accepts_pending_code_actions_without_execution():
+    action = build_code_action_contract(
+        action_id="act-pending-1",
+        action_type="edit_file",
+        affected_files=[{"path": "backend/apps/swarms/state_context.py", "operation": "write"}],
+    )
+    pending = build_code_action_pending_action(
+        action,
+        allowed_files=["backend/apps/swarms/state_context.py"],
+        granted_permissions=["filesystem_write"],
+    )
+
+    payload = build_state_context_payload(
+        mode="swarm_card",
+        route="pending_code_action_review",
+        pending_action_type="code_action",
+        pending_code_actions=[pending],
+    )
+
+    assert payload["pending_action_type"] == "code_action"
+    assert payload["has_pending_action"] is True
+    assert payload["pending_code_action_status"] == "present"
+    assert payload["pending_code_action_count"] == 1
+    assert "pending_status=pending_approval" in payload["pending_code_action_summary"]
+    assert payload["pending_code_actions"][0]["pending_action_type"] == "code_action"
+    assert payload["pending_code_actions"][0]["code_action"]["action_id"] == "act-pending-1"
+    assert payload["pending_code_actions"][0]["executed"] is False
+    assert payload["pending_code_actions"][0]["execution_allowed"] is False
+    assert payload["pending_code_actions"][0]["execution_result"] is None
+
+
+def test_state_context_payload_accepts_pending_code_actions_from_available_context():
+    action = build_code_action_contract(
+        action_id="act-pending-2",
+        action_type="run_command",
+        suggested_commands=[{"command": "git diff --stat"}],
+    )
+    pending = build_code_action_pending_action(action, granted_permissions=["command_execution"])
+
+    payload = build_state_context_payload(
+        available_context={
+            "pending_action": "code_action",
+            "pending_code_actions": [pending],
+        }
+    )
+
+    assert payload["pending_action_type"] == "code_action"
+    assert payload["pending_code_action_status"] == "present"
+    assert payload["pending_code_actions"][0]["code_action"]["action_type"] == "run_command"
+    assert payload["pending_code_actions"][0]["executed"] is False
+
+
+def test_state_context_prompt_includes_pending_code_action_context():
+    action = build_code_action_contract(
+        action_id="act-pending-3",
+        action_type="apply_patch",
+        affected_files=[{"path": "backend/apps/swarms/code_action.py", "operation": "patch"}],
+    )
+    pending = build_code_action_pending_action(
+        action,
+        allowed_files=["backend/apps/swarms/code_action.py"],
+        granted_permissions=["filesystem_write"],
+    )
+    payload = build_state_context_payload(
+        pending_action_type="code_action",
+        pending_code_actions=[pending],
+    )
+
+    prompt = build_state_context_prompt(payload)
+
+    assert "Pending Code Actions:" in prompt
+    assert "pending_status=pending_approval" in prompt
+    assert "act-pending-3" in prompt
+    assert "backend/apps/swarms/code_action.py" in prompt
+    assert '"executed": false' in prompt
+    assert '"execution_allowed": false' in prompt

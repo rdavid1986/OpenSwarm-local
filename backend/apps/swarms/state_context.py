@@ -179,6 +179,57 @@ def _code_action_payload(
     }
 
 
+def _pending_code_action_payload(
+    *,
+    pending_code_actions: list[Any] | None,
+    available_context: dict[str, Any],
+) -> dict[str, Any]:
+    raw_actions = (
+        pending_code_actions
+        if pending_code_actions is not None
+        else available_context.get("pending_code_actions")
+    )
+    normalized_pending: list[dict[str, Any]] = []
+
+    for item in raw_actions if isinstance(raw_actions, list) else []:
+        if not isinstance(item, dict):
+            continue
+        code_action = item.get("code_action") if isinstance(item.get("code_action"), dict) else item
+        normalized = dict(item)
+        normalized["pending_action_type"] = _first_text(
+            item.get("pending_action_type"),
+            item.get("type"),
+        ) or "code_action"
+        normalized["status"] = _first_text(item.get("status")) or MISSING
+        normalized["code_action"] = normalize_code_action_contract(code_action)
+        normalized["executed"] = False
+        normalized["execution_allowed"] = False
+        normalized["execution_performed"] = False
+        normalized["execution_result"] = None
+        normalized_pending.append(normalize_state_context_value(normalized))
+
+    if not normalized_pending:
+        return {
+            "status": EMPTY,
+            "actions": [],
+            "summary": "Pending Code Actions: empty",
+            "count": 0,
+        }
+
+    summaries = []
+    for item in normalized_pending[:MAX_LIST_ITEMS]:
+        code_action = item.get("code_action") if isinstance(item, dict) else {}
+        status = item.get("status") if isinstance(item, dict) else MISSING
+        summaries.append(f"pending_status={status}; {summarize_code_action_contract(code_action)}")
+
+    return {
+        "status": "present",
+        "actions": normalize_state_context_value(normalized_pending),
+        "summary": "; ".join(summaries),
+        "count": len(normalized_pending),
+    }
+
+
 def build_state_context_payload(
     *,
     mode: str | None = None,
@@ -212,6 +263,7 @@ def build_state_context_payload(
     memory_scope: str | None = None,
     freshness_refs: dict[str, Any] | None = None,
     code_actions: list[Any] | None = None,
+    pending_code_actions: list[Any] | None = None,
     available_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a normalized snapshot from caller-provided state only."""
@@ -236,6 +288,10 @@ def build_state_context_payload(
     )
     resolved_code_actions = _code_action_payload(
         code_actions=code_actions,
+        available_context=context,
+    )
+    resolved_pending_code_actions = _pending_code_action_payload(
+        pending_code_actions=pending_code_actions,
         available_context=context,
     )
 
@@ -281,6 +337,10 @@ def build_state_context_payload(
         "code_action_summary": resolved_code_actions["summary"],
         "code_action_count": resolved_code_actions["count"],
         "code_actions": resolved_code_actions["actions"],
+        "pending_code_action_status": resolved_pending_code_actions["status"],
+        "pending_code_action_summary": resolved_pending_code_actions["summary"],
+        "pending_code_action_count": resolved_pending_code_actions["count"],
+        "pending_code_actions": resolved_pending_code_actions["actions"],
         "available_context_summary": _available_context_summary(context),
     }
     return normalize_state_context_value(payload)
@@ -318,6 +378,11 @@ def build_state_context_prompt(context: dict[str, Any]) -> str:
             f"- count: {_as_dict(normalized).get('code_action_count') or 0}",
             f"- summary: {_as_dict(normalized).get('code_action_summary') or 'Code Actions: empty'}",
             "- actions: " + json.dumps(_as_dict(normalized).get("code_actions") or [], ensure_ascii=False, sort_keys=True),
+            "Pending Code Actions:",
+            f"- status: {_as_dict(normalized).get('pending_code_action_status') or EMPTY}",
+            f"- count: {_as_dict(normalized).get('pending_code_action_count') or 0}",
+            f"- summary: {_as_dict(normalized).get('pending_code_action_summary') or 'Pending Code Actions: empty'}",
+            "- actions: " + json.dumps(_as_dict(normalized).get("pending_code_actions") or [], ensure_ascii=False, sort_keys=True),
             "Project Memory:",
             f"- status: {_as_dict(normalized).get('project_memory_status') or EMPTY}",
             f"- summary: {_as_dict(normalized).get('project_memory_summary') or 'Project Memory: empty'}",
