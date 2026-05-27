@@ -2,13 +2,16 @@ from backend.apps.swarms.context_selection import (
     apply_context_budget_exclusion_policy,
     apply_context_budget_to_policy,
     apply_context_inclusion_explanations,
+    apply_model_context_requests_to_policy,
     build_context_budget_summary,
     build_context_inclusion_explanations,
     build_context_selection_policy,
+    build_model_context_request_policy,
     build_ranked_context_selection_policy,
     explain_context_source_inclusion,
     normalize_context_selection_value,
     normalize_context_source,
+    normalize_model_context_request,
     rank_context_sources,
     score_context_source,
     summarize_context_selection_policy,
@@ -507,3 +510,105 @@ def test_apply_context_inclusion_explanations_attaches_trace_without_mutating_so
     assert enriched["context_inclusion_explanations"]["selected_sources"][0]["source_id"] == "a.py"
     assert enriched["context_inclusion_explanations"]["excluded_sources"][0]["source_id"] == "old.md"
     assert enriched["context_inclusion_explanations"]["excluded_sources"][0]["freshness"] == "stale"
+
+
+def test_normalize_model_context_request_requires_backend_review_without_retrieval():
+    request = normalize_model_context_request(
+        {
+            "source_kind": "filesystem",
+            "source_id": "frontend/src/App.tsx",
+            "reason": "Need current implementation before patching.",
+            "priority": "high",
+            "risk": "medium",
+            "freshness_required": "current",
+            "budget_estimate": 1200,
+            "metadata": {"allowed_file_candidate": True},
+        }
+    )
+
+    assert request["source_kind"] == "filesystem"
+    assert request["source_id"] == "frontend/src/App.tsx"
+    assert request["requested_by"] == "model"
+    assert request["request_status"] == "pending_backend_review"
+    assert request["backend_decision_required"] is True
+    assert request["retrieval_allowed"] is False
+    assert request["priority"] == "high"
+    assert request["risk"] == "medium"
+    assert request["freshness_required"] == "current"
+    assert request["budget_estimate"] == 1200
+    assert request["metadata"]["allowed_file_candidate"] is True
+
+
+def test_normalize_model_context_request_clamps_unknown_source_and_status():
+    request = normalize_model_context_request(
+        {
+            "source_kind": "private_external_store",
+            "source_id": "secret",
+            "status": "auto_fetch",
+            "priority": "urgent",
+            "risk": "severe",
+        }
+    )
+
+    assert request["source_kind"] == "unknown"
+    assert request["request_status"] == "pending_backend_review"
+    assert request["priority"] == "normal"
+    assert request["risk"] == "unknown"
+    assert request["retrieval_allowed"] is False
+
+
+def test_build_model_context_request_policy_is_bounded_and_side_effect_free():
+    policy = build_model_context_request_policy(
+        [
+            {"source_kind": "filesystem", "source_id": f"file_{index}.py"}
+            for index in range(12)
+        ],
+        request_reason="needs_more_files",
+        max_requests=3,
+    )
+
+    assert policy["request_reason"] == "needs_more_files"
+    assert policy["request_count"] == 3
+    assert policy["retrieval_performed"] is False
+    assert policy["backend_decision_required"] is True
+    assert [item["source_id"] for item in policy["model_context_requests"]] == [
+        "file_0.py",
+        "file_1.py",
+        "file_2.py",
+    ]
+
+
+def test_apply_model_context_requests_to_policy_marks_missing_sources_for_backend_decision():
+    policy = build_context_selection_policy(
+        scope="mini_agent",
+        task_kind="frontend_patch",
+        selected_sources=[
+            {
+                "source_kind": "docs",
+                "source_id": "README.md",
+                "reason": "project_overview",
+            }
+        ],
+    )
+
+    enriched = apply_model_context_requests_to_policy(
+        policy,
+        [
+            {
+                "source_kind": "filesystem",
+                "source_id": "frontend/src/App.tsx",
+                "reason": "Need target file before modifying UI.",
+                "budget_estimate": 900,
+            }
+        ],
+    )
+
+    assert enriched["selected_sources"] == policy["selected_sources"]
+    assert enriched["backend_decision_required"] is True
+    assert enriched["model_context_request_policy"]["retrieval_performed"] is False
+    assert enriched["model_context_requests"][0]["source_id"] == "frontend/src/App.tsx"
+    assert enriched["model_context_requests"][0]["retrieval_allowed"] is False
+    assert enriched["required_sources_missing"][0]["source_id"] == "frontend/src/App.tsx"
+    assert enriched["required_sources_missing"][0]["status"] == "missing"
+    assert enriched["required_sources_missing"][0]["reason"] == "Need target file before modifying UI."
+    assert enriched["required_sources_missing"][0]["metadata"]["backend_decision_required"] is True

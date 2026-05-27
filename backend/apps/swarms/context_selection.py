@@ -413,6 +413,135 @@ def apply_context_inclusion_explanations(policy: dict[str, Any] | None) -> dict[
 
 
 
+VALID_MODEL_CONTEXT_REQUEST_STATUS = {
+    "pending_backend_review",
+    "approved",
+    "rejected",
+    "blocked",
+}
+
+
+def normalize_model_context_request(value: Any) -> dict[str, Any]:
+    """Normalize model-suggested missing context without retrieving it.
+
+    CTX-RET.6 allows a model-assisted flow to ask for context, but the backend
+    remains responsible for permission checks, retrieval, validation, and prompt
+    inclusion. This helper does not read files, call tools, call models, mutate
+    state, or authorize the request.
+    """
+
+    raw = _as_dict(value)
+    source_kind = _as_text(raw.get("source_kind") or raw.get("kind"))
+    if source_kind not in VALID_SOURCE_KINDS:
+        source_kind = UNKNOWN if source_kind else MISSING
+
+    source_id = _as_text(raw.get("source_id") or raw.get("id")) or None
+    reason = _as_text(raw.get("reason") or raw.get("request_reason")) or "model_requested_context"
+    requested_by = _as_text(raw.get("requested_by")) or "model"
+    request_status = _as_text(raw.get("request_status") or raw.get("status")) or "pending_backend_review"
+    if request_status not in VALID_MODEL_CONTEXT_REQUEST_STATUS:
+        request_status = "pending_backend_review"
+
+    priority = _as_text(raw.get("priority")) or "normal"
+    if priority not in {"low", "normal", "high", "critical"}:
+        priority = "normal"
+
+    risk = _as_text(raw.get("risk")) or UNKNOWN
+    if risk not in {"low", "medium", "high", UNKNOWN}:
+        risk = UNKNOWN
+
+    return normalize_context_selection_value(
+        {
+            "source_kind": source_kind,
+            "source_id": source_id,
+            "reason": reason,
+            "requested_by": requested_by,
+            "request_status": request_status,
+            "backend_decision_required": True,
+            "retrieval_allowed": False,
+            "priority": priority,
+            "risk": risk,
+            "freshness_required": raw.get("freshness_required"),
+            "budget_estimate": _count_or_zero(raw.get("budget_estimate") or raw.get("budget_cost")),
+            "refs": normalize_context_selection_value(raw.get("refs") or {}),
+            "metadata": normalize_context_selection_value(raw.get("metadata") or {}),
+        }
+    )
+
+
+def build_model_context_request_policy(
+    requests: list[Any] | None = None,
+    *,
+    request_reason: str | None = None,
+    max_requests: int | None = None,
+) -> dict[str, Any]:
+    """Build a bounded policy for model-requested context candidates."""
+
+    limit = _count_or_zero(max_requests) or 8
+    normalized_requests = [
+        normalize_model_context_request(item)
+        for item in _as_list(requests)[: min(limit, MAX_LIST_ITEMS)]
+    ]
+
+    return normalize_context_selection_value(
+        {
+            "request_reason": _as_text(request_reason) or "model_assisted_context_request",
+            "model_context_requests": normalized_requests,
+            "request_count": len(normalized_requests),
+            "retrieval_performed": False,
+            "backend_decision_required": bool(normalized_requests),
+        }
+    )
+
+
+def apply_model_context_requests_to_policy(
+    policy: dict[str, Any] | None,
+    requests: list[Any] | None = None,
+    *,
+    request_reason: str | None = None,
+    max_requests: int | None = None,
+) -> dict[str, Any]:
+    """Attach model-requested context candidates without retrieving them."""
+
+    normalized = _as_dict(normalize_context_selection_value(policy or {}))
+    request_policy = build_model_context_request_policy(
+        requests,
+        request_reason=request_reason,
+        max_requests=max_requests,
+    )
+
+    merged = dict(normalized)
+    existing_requests = _as_list(merged.get("model_context_requests"))
+    new_requests = _as_list(request_policy.get("model_context_requests"))
+    merged["model_context_requests"] = normalize_context_selection_value(
+        existing_requests + new_requests
+    )
+    merged["model_context_request_policy"] = request_policy
+    merged["backend_decision_required"] = bool(new_requests) or bool(merged.get("backend_decision_required"))
+
+    missing_sources = _as_list(merged.get("required_sources_missing"))
+    for request in new_requests:
+        missing_sources.append(
+            normalize_context_source(
+                {
+                    "source_kind": request.get("source_kind"),
+                    "source_id": request.get("source_id"),
+                    "status": "missing",
+                    "reason": request.get("reason") or "model_requested_context",
+                    "confidence": None,
+                    "budget_cost": request.get("budget_estimate"),
+                    "metadata": {
+                        "requested_by": request.get("requested_by"),
+                        "request_status": request.get("request_status"),
+                        "backend_decision_required": True,
+                    },
+                }
+            )
+        )
+    merged["required_sources_missing"] = missing_sources
+    return normalize_context_selection_value(merged)
+
+
 def build_context_budget_summary(
     *,
     context_budget_total: int | None = None,
