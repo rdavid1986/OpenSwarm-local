@@ -149,27 +149,27 @@ function formatTokenCount(n: number): string {
 }
 
 function sourceLabel(source?: string | null): string {
-  if (source === 'estimated') return 'Estimado';
-  if (source === 'measured') return 'Medido';
-  if (source === 'declared') return 'Declarado';
-  return 'Sin datos';
+  if (source === 'estimated') return 'Estimated';
+  if (source === 'measured') return 'Measured';
+  if (source === 'declared') return 'Declared';
+  return 'No data';
 }
 
 function formatBytes(bytes?: number | null): string {
-  if (!bytes || !Number.isFinite(bytes)) return 'Sin datos';
+  if (!bytes || !Number.isFinite(bytes)) return 'No data';
   const gib = bytes / (1024 ** 3);
   return `${gib.toFixed(gib >= 10 ? 1 : 2)} GiB`;
 }
 
 function formatDate(value?: string | null): string {
-  if (!value) return 'Sin datos';
+  if (!value) return 'No data';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
 }
 
 function shortDigest(value?: string | null): string {
-  if (!value) return 'Sin datos';
+  if (!value) return 'No data';
   return value.length > 18 ? `${value.slice(0, 12)}…${value.slice(-6)}` : value;
 }
 
@@ -355,6 +355,10 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
     return compareValues.map((v) => flatByValue.get(v)).filter(Boolean) as typeof allModelOptions.flat;
   }, [allModelOptions.flat, compareValues]);
 
+  const compareModelCount = Math.max(2, Math.min(4, compareOptions.length || 2));
+  const compareCardWidth = 350;
+  const compareDialogWidth = Math.min(1580, compareModelCount * compareCardWidth + 96);
+
   const showRecents = !modelSearch.trim()
     && !capFilters.reasoning && !capFilters.subscription && !capFilters.apiKey
     && ctxIdx === 0 && costIdx === 0
@@ -364,9 +368,11 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
   const [probeResult, setProbeResult] = useState<{ value: string; ok: boolean; error?: string; latency_ms?: number } | null>(null);
 
   const toggleCompareValue = useCallback((value: string) => {
-    setCompareValues((prev) => (
-      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]
-    ));
+    setCompareValues((prev) => {
+      if (prev.includes(value)) return prev.filter((v) => v !== value);
+      if (prev.length >= 4) return prev;
+      return [...prev, value];
+    });
   }, []);
 
   useEffect(() => {
@@ -535,7 +541,7 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
             </>
           )}
 
-          <span>Context</span>
+          <span>{opt.context_window_source === 'estimated' ? 'Estimated context' : 'Context'}</span>
           <span style={{ fontVariantNumeric: 'tabular-nums', color: c.text.secondary }}>
             {(opt.context_window ?? 0).toLocaleString()}
           </span>
@@ -615,22 +621,248 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
     );
   }, [c.text.primary, modelSearch]);
 
+  const compareMetricTiers = (m: any): [number, number, number] => (
+    Array.isArray(m.tiers) && m.tiers.length === 3
+      ? m.tiers
+      : [tierIntelligence(m), tierSpeed(m), tierCost(m)]
+  );
+
+  const compareContextScore = (m: any): number => {
+    const context = Number(m.context_window || 0);
+    if (context >= 1_000_000) return 5;
+    if (context >= 256_000) return 4;
+    if (context >= 128_000) return 3;
+    if (context >= 32_000) return 2;
+    if (context > 0) return 1;
+    return 0;
+  };
+
+  const compareCapabilityValue = (_m: any, _capability: 'tools' | 'multimodal' | 'image' | 'video') => {
+    return { label: 'No measured data' };
+  };
+
+  const renderCompareBars = (filled: number, palette: string[], label: string) => {
+    const TOTAL_CELLS = 20;
+    const filledCells = Math.max(0, Math.min(TOTAL_CELLS, Math.round((filled / 5) * TOTAL_CELLS)));
+
+    return (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 116 }}>
+        <Box sx={{ display: 'inline-flex', alignItems: 'center' }}>
+          {Array.from({ length: TOTAL_CELLS }, (_, i) => {
+            const on = i < filledCells;
+            const colorIdx = on
+              ? Math.min(
+                  palette.length - 1,
+                  Math.floor((i / Math.max(TOTAL_CELLS - 1, 1)) * (palette.length - 1)),
+                )
+              : 0;
+            const temperature = on ? 0.55 + ((i + 1) / TOTAL_CELLS) * 0.45 : 0.28;
+
+            return (
+              <Box
+                key={i}
+                sx={{
+                  width: 4,
+                  height: 4,
+                  ml: i > 0 && i % 4 === 0 ? '4px' : '1px',
+                  bgcolor: on ? palette[colorIdx] : c.border.subtle,
+                  opacity: temperature,
+                  boxShadow: on ? `0 0 ${2 + Math.round(((i + 1) / TOTAL_CELLS) * 4)}px ${palette[colorIdx]}55` : 'none',
+                }}
+              />
+            );
+          })}
+        </Box>
+        <Box component="span" sx={{ minWidth: 18, color: c.text.ghost, fontSize: '0.66rem', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+          {filledCells}
+        </Box>
+        <Box component="span" sx={{ color: c.text.tertiary, fontSize: '0.64rem', whiteSpace: 'nowrap' }}>
+          {label}
+        </Box>
+      </Box>
+    );
+  };
+
+  const renderCapabilityText = (value: { label: string }) => (
+    <Box
+      component="span"
+      sx={{
+        color: value.label === 'No measured data' || value.label === 'None' ? c.text.ghost : c.text.secondary,
+        fontSize: '0.68rem',
+        fontWeight: 700,
+        lineHeight: 1.15,
+      }}
+    >
+      {value.label}
+    </Box>
+  );
+
+  const renderModelComparisonHeader = (m: any) => {
+    const [intel, speed] = compareMetricTiers(m);
+    const contextValue = Number(m.context_window || 0);
+    const tools = compareCapabilityValue(m, 'tools');
+    const multimodal = compareCapabilityValue(m, 'multimodal');
+    const image = compareCapabilityValue(m, 'image');
+    const video = compareCapabilityValue(m, 'video');
+    const INTEL_PALETTE = ['#6D5BBE', '#8870D5', '#A78BFA', '#BFA3FF', '#D5BFFF'];
+    const SPEED_PALETTE = ['#2DBFAA', '#42D6BF', '#5EEAD4', '#7FF1DF', '#A3F7E9'];
+
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.45, minWidth: 230 }}>
+        <Box sx={{ color: c.text.primary, fontWeight: 800, fontSize: '0.78rem', lineHeight: 1.2 }}>
+          {m.label}
+        </Box>
+        <Box sx={{ display: 'grid', gridTemplateColumns: '92px 1fr', gap: 0.35, alignItems: 'center' }}>
+          <Box sx={{ color: c.text.tertiary, fontSize: '0.65rem', fontWeight: 700 }}>
+            {m.tiers_source === 'estimated' ? 'Estimated intelligence' : 'Intelligence'}
+          </Box>
+          {renderCompareBars(intel, INTEL_PALETTE, sourceLabel(m.tiers_source))}
+          <Box sx={{ color: c.text.tertiary, fontSize: '0.65rem', fontWeight: 700 }}>
+            {m.tiers_source === 'estimated' ? 'Estimated speed' : 'Speed'}
+          </Box>
+          {renderCompareBars(speed, SPEED_PALETTE, sourceLabel(m.tiers_source))}
+          <Box sx={{ color: c.text.tertiary, fontSize: '0.65rem', fontWeight: 700 }}>
+            {m.context_window_source === 'estimated' ? 'Estimated context' : 'Context'}
+          </Box>
+          <Box component="span" sx={{ color: c.text.secondary, fontSize: '0.68rem', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+            {contextValue > 0 ? contextValue.toLocaleString() : 'None'}
+          </Box>
+          <Box sx={{ color: c.text.tertiary, fontSize: '0.65rem', fontWeight: 700 }}>Tool use</Box>
+          {renderCapabilityText(tools)}
+          <Box sx={{ color: c.text.tertiary, fontSize: '0.65rem', fontWeight: 700 }}>Multimodal</Box>
+          {renderCapabilityText(multimodal)}
+          <Box sx={{ color: c.text.tertiary, fontSize: '0.65rem', fontWeight: 700 }}>Image generation</Box>
+          {renderCapabilityText(image)}
+          <Box sx={{ color: c.text.tertiary, fontSize: '0.65rem', fontWeight: 700 }}>Video generation</Box>
+          {renderCapabilityText(video)}
+        </Box>
+      </Box>
+    );
+  };
+
   const compareColumns = [
-    ['name', (m: any) => m.local_model_name || m.name || m.label],
-    ['provider', (m: any) => m.provider || 'Sin datos'],
-    ['family', (m: any) => m.family || 'Sin datos'],
-    ['parameters', (m: any) => m.parameter_size || 'Sin datos'],
-    ['quantization', (m: any) => m.quantization_level || 'Sin datos'],
-    ['format', (m: any) => m.format || 'Sin datos'],
-    ['size', (m: any) => formatBytes(m.size_bytes)],
+    ['model', (m: any) => m.local_model_name || m.name || m.label],
+    ['provider', (m: any) => m.provider || 'No data'],
+    ['family', (m: any) => m.family || 'No data'],
+    ['parameters', (m: any) => m.parameter_size || 'No data'],
+    ['quantization', (m: any) => m.quantization_level || 'No data'],
+    ['format', (m: any) => m.format || 'No data'],
+    ['size', (m: any) => formatBytes(m.size_bytes) || 'No data'],
     ['modified', (m: any) => formatDate(m.modified_at)],
-    ['cost', (m: any) => m.billing_kind === 'free' ? 'Free / Local' : (m.billing_kind || 'Sin datos')],
-    ['availability', (m: any) => m.availability === 'available' ? 'Disponible' : 'Sin datos'],
-    ['context/source', (m: any) => m.context_window ? `${Number(m.context_window).toLocaleString()} (${sourceLabel(m.context_window_source)})` : 'Sin datos'],
-    ['reasoning/source', (m: any) => `${m.reasoning ? 'Sí' : 'No'} (${sourceLabel(m.reasoning_source)})`],
-    ['runtime metrics', (m: any) => m.runtime_metrics ? 'Disponible' : 'Sin datos'],
-    ['eval results', (m: any) => m.eval_results ? 'Disponible' : 'Sin datos'],
+    ['cost', (m: any) => m.billing_kind === 'free' ? 'Free / Local' : (m.billing_kind || 'No data')],
+    ['availability', (m: any) => m.availability === 'available' ? 'Available' : 'No data'],
+    ['context/source', (m: any) => m.context_window ? `${Number(m.context_window).toLocaleString()} (${sourceLabel(m.context_window_source)})` : 'No data'],
+    ['reasoning/source', (m: any) => `${m.reasoning ? 'Yes' : 'No'} (${sourceLabel(m.reasoning_source)})`],
+    ['runtime metrics', (m: any) => m.runtime_metrics ? 'Available' : 'No data'],
+    ['eval results', (m: any) => m.eval_results ? 'Available' : 'No data'],
   ] as const;
+
+  const compareFieldLabel = (key: string): string => {
+    const labels: Record<string, string> = {
+      provider: 'Provider',
+      family: 'Family',
+      parameters: 'Parameters',
+      quantization: 'Quantization',
+      format: 'Format',
+      size: 'Disk size',
+      modified: 'Modified',
+      cost: 'Cost',
+      availability: 'Availability',
+      'context/source': 'Context source',
+      'reasoning/source': 'Reasoning',
+      'runtime metrics': 'Runtime metrics',
+      'eval results': 'Eval results',
+    };
+    return labels[key] || key;
+  };
+
+  const compareCardColumns = compareColumns.filter(([key]: any) => key !== 'model');
+
+  const renderModelComparisonCards = () => (
+    <Box
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(${compareOptions.length}, ${compareCardWidth}px)`,
+        gap: 1.5,
+        alignItems: 'stretch',
+        width: 'max-content',
+      }}
+    >
+      {compareOptions.map((opt: any) => (
+        <Box
+          key={opt.value}
+          sx={{
+            width: `${compareCardWidth}px`,
+            border: `1px solid ${c.border.subtle}`,
+            borderRadius: '16px',
+            bgcolor: 'rgba(255,255,255,0.02)',
+            overflow: 'hidden',
+            boxShadow: '0 10px 30px rgba(0,0,0,0.14)',
+          }}
+        >
+          <Box
+            sx={{
+              px: 1.5,
+              py: 1.35,
+              borderBottom: `1px solid ${c.border.subtle}`,
+              background: 'linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01))',
+            }}
+          >
+            {renderModelComparisonHeader(opt)}
+          </Box>
+
+          <Box sx={{ px: 1.5, py: 1.2, display: 'flex', flexDirection: 'column', gap: 1.15 }}>
+            <Box
+              sx={{
+                color: c.text.ghost,
+                fontSize: '0.64rem',
+                fontWeight: 800,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+              }}
+            >
+              Real metadata
+            </Box>
+
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: '120px 1fr',
+                columnGap: 1.15,
+                rowGap: 0.72,
+                alignItems: 'start',
+              }}
+            >
+              {compareCardColumns.map(([key, getValue]: any) => (
+                <React.Fragment key={`${opt.value}-${key}`}>
+                  <Box
+                    sx={{
+                      color: c.text.tertiary,
+                      fontSize: '0.68rem',
+                      fontWeight: 700,
+                      lineHeight: 1.25,
+                    }}
+                  >
+                    {compareFieldLabel(key)}
+                  </Box>
+                  <Box
+                    sx={{
+                      color: c.text.secondary,
+                      fontSize: '0.73rem',
+                      lineHeight: 1.3,
+                      wordBreak: 'break-word',
+                    }}
+                  >
+                    {getValue(opt)}
+                  </Box>
+                </React.Fragment>
+              ))}
+            </Box>
+          </Box>
+        </Box>
+      ))}
+    </Box>
+  );
 
   return (
     <>
@@ -710,7 +942,7 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
                 cursor: 'pointer',
               }}
             >
-              VS{compareValues.length ? ` ${compareValues.length}` : ''}
+              {compareMode ? `Model Compare ${compareValues.length}` : 'Model Compare'}
             </Box>
           </Box>
           {!modelSearch.trim() && recentSearches.length > 0 && (
@@ -855,9 +1087,11 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
                           color: compareValues.includes(opt.value) ? c.accent.primary : c.text.ghost,
                           fontSize: '0.62rem',
                           fontWeight: 800,
+                          minWidth: 42,
+                          textAlign: 'center',
                         }}
                       >
-                        VS
+                        {compareValues.includes(opt.value) ? 'Added' : 'Add'}
                       </Box>
                     )}
                   </MenuItem>
@@ -922,7 +1156,7 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
                             fontWeight: 800,
                           }}
                         >
-                          VS
+                          {compareValues.includes(opt.value) ? 'Added' : 'Add'}
                         </Box>
                       )}
                     </MenuItem>
@@ -931,6 +1165,9 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
               })}
             </Collapse>,
           ];
+
+
+
         }).flat()}
 
         <Box
@@ -952,78 +1189,95 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
           <Box component="span" sx={{ flexShrink: 0, pointerEvents: 'none' }}>
             Type to search · Esc to close
           </Box>
-          {compareMode && (
-            <Box
-              component="span"
-              onClick={() => compareOptions.length >= 2 && setCompareOpen(true)}
-              sx={{
-                cursor: compareOptions.length >= 2 ? 'pointer' : 'default',
-                color: compareOptions.length >= 2 ? c.accent.primary : c.text.ghost,
-                fontWeight: 800,
-                whiteSpace: 'nowrap',
-              }}
+
+          <Box sx={{ ml: 'auto', display: 'flex', alignItems: 'center', gap: 1.25 }}>
+            <Tooltip
+              title={`${pickerSummary.free} Free · ${pickerSummary.subscription} Subscription · ${pickerSummary.apiKey} API key · ${pickerSummary.reasoning} Reasoning · ${pickerSummary.longContext} 1M+ context`}
+              placement="top-end"
+              enterDelay={300}
+              slotProps={tooltipSlotProps}
             >
-              Compare {compareOptions.length || ''}
-            </Box>
-          )}
-          <Tooltip
-            title={`${pickerSummary.free} Free · ${pickerSummary.subscription} Subscription · ${pickerSummary.apiKey} API key · ${pickerSummary.reasoning} Reasoning · ${pickerSummary.longContext} 1M+ context`}
-            placement="top-end"
-            enterDelay={300}
-            slotProps={tooltipSlotProps}
-          >
-            <Box component="span" sx={{ cursor: 'help', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-              {pickerSummary.total} model{pickerSummary.total === 1 ? '' : 's'}
-            </Box>
-          </Tooltip>
+              <Box component="span" sx={{ cursor: 'help', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                {pickerSummary.total} model{pickerSummary.total === 1 ? '' : 's'}
+              </Box>
+            </Tooltip>
+
+            {compareMode && (
+              <Box
+                component="span"
+                onClick={() => compareOptions.length >= 2 && setCompareOpen(true)}
+                sx={{
+                  cursor: compareOptions.length >= 2 ? 'pointer' : 'default',
+                  color: compareOptions.length >= 2 ? c.accent.primary : c.text.ghost,
+                  fontWeight: 800,
+                  whiteSpace: 'nowrap',
+                  minWidth: 76,
+                  textAlign: 'right',
+                }}
+              >
+                Compare {compareOptions.length || 0}
+              </Box>
+            )}
+          </Box>
         </Box>
       </Menu>
 
       <Dialog
         open={compareOpen}
         onClose={() => setCompareOpen(false)}
-        maxWidth="lg"
-        fullWidth
-        PaperProps={{ sx: { bgcolor: c.bg.surface, color: c.text.primary, border: `1px solid ${c.border.subtle}` } }}
+        maxWidth={false}
+        PaperProps={{
+          sx: {
+            width: `min(${compareDialogWidth}px, 96vw)`,
+            maxWidth: '96vw',
+            bgcolor: c.bg.surface,
+            color: c.text.primary,
+            border: `1px solid ${c.border.subtle}`,
+          },
+        }}
       >
-        <DialogTitle sx={{ fontSize: '0.95rem', fontWeight: 800, borderBottom: `1px solid ${c.border.subtle}` }}>
+        <DialogTitle
+          sx={{
+            minHeight: 48,
+            px: 2,
+            py: 0,
+            display: 'flex',
+            alignItems: 'center',
+            fontSize: '0.95rem',
+            fontWeight: 800,
+            borderBottom: `1px solid ${c.border.subtle}`,
+          }}
+        >
           Model Comparison
         </DialogTitle>
         <DialogContent sx={{ p: 0 }}>
-          {compareOptions.length < 2 ? (
-            <Box sx={{ p: 2, color: c.text.muted, fontSize: '0.82rem' }}>
-              Seleccioná al menos dos modelos con VS para comparar.
-            </Box>
-          ) : (
-            <Box sx={{ overflow: 'auto' }}>
-              <Box component="table" sx={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem' }}>
-                <Box component="thead">
-                  <Box component="tr">
-                    <Box component="th" sx={{ textAlign: 'left', p: 1, borderBottom: `1px solid ${c.border.subtle}`, color: c.text.tertiary }}>field</Box>
-                    {compareOptions.map((opt: any) => (
-                      <Box component="th" key={opt.value} sx={{ textAlign: 'left', p: 1, borderBottom: `1px solid ${c.border.subtle}`, color: c.text.secondary, minWidth: 160 }}>
-                        {opt.label}
-                      </Box>
-                    ))}
-                  </Box>
-                </Box>
-                <Box component="tbody">
-                  {compareColumns.map(([label, read]) => (
-                    <Box component="tr" key={label}>
-                      <Box component="td" sx={{ p: 1, borderBottom: `1px solid ${c.border.subtle}`, color: c.text.tertiary, fontWeight: 700, whiteSpace: 'nowrap' }}>
-                        {label}
-                      </Box>
-                      {compareOptions.map((opt: any) => (
-                        <Box component="td" key={`${opt.value}-${label}`} sx={{ p: 1, borderBottom: `1px solid ${c.border.subtle}`, color: c.text.secondary, verticalAlign: 'top' }}>
-                          {read(opt)}
-                        </Box>
-                      ))}
-                    </Box>
-                  ))}
-                </Box>
+          <Box sx={{ p: 1.5 }}>
+            {compareOptions.length < 2 ? (
+              <Box sx={{ p: 2, color: c.text.muted, fontSize: '0.82rem' }}>
+                Select 2 to 4 models with Model Compare.
               </Box>
-            </Box>
-          )}
+            ) : (
+              <Box sx={{ overflowX: 'auto', overflowY: 'hidden', display: 'flex', justifyContent: 'center' }}>
+                {renderModelComparisonCards()}
+              </Box>
+            )}
+          </Box>
+          <Box
+            sx={{
+              minHeight: 48,
+              px: 2,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              borderTop: `1px solid ${c.border.subtle}`,
+              color: c.text.ghost,
+              fontSize: '0.72rem',
+              fontWeight: 600,
+            }}
+          >
+            <Box component="span">Model Comparison</Box>
+            <Box component="span">{compareOptions.length} selected</Box>
+          </Box>
         </DialogContent>
       </Dialog>
     </>
