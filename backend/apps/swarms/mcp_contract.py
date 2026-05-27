@@ -1372,3 +1372,189 @@ def summarize_mcp_activation_guard_decision(decision: dict[str, Any] | None) -> 
         f"actions={len(_as_list(data.get('required_user_actions')))}; "
         "executed=False"
     )
+
+
+SENSITIVE_MCP_CONFIG_KEYS = {
+    "authorization",
+    "api_key",
+    "api-key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "client_secret",
+    "secret",
+    "token",
+    "password",
+}
+
+
+def _redact_mcp_config_value(key: Any, value: Any) -> Any:
+    key_text = _as_text(key).lower()
+    if any(marker in key_text for marker in SENSITIVE_MCP_CONFIG_KEYS):
+        return "[redacted]"
+    if isinstance(value, dict):
+        return {
+            _as_text(child_key): _redact_mcp_config_value(child_key, child_value)
+            for child_key, child_value in value.items()
+            if _as_text(child_key)
+        }
+    if isinstance(value, list):
+        return [_redact_mcp_config_value(key, item) for item in value]
+    return value
+
+
+def sanitize_mcp_persisted_config(config: dict[str, Any] | None) -> dict[str, Any]:
+    """Return MCP config safe for persistence/UI snapshots.
+
+    Secrets are never returned. Env/header values are redacted; only env/header
+    keys remain useful for diagnostics.
+    """
+
+    raw = _as_dict(config)
+    if not raw:
+        return {}
+
+    sanitized: dict[str, Any] = {}
+    for key, value in raw.items():
+        key_text = _as_text(key)
+        if not key_text:
+            continue
+        lower_key = key_text.lower()
+        if lower_key in {"env", "headers"} and isinstance(value, dict):
+            sanitized[key_text] = {
+                _as_text(child_key): "[redacted]"
+                for child_key in value.keys()
+                if _as_text(child_key)
+            }
+            key_list_name = "header_keys" if lower_key == "headers" else f"{lower_key}_keys"
+            sanitized[key_list_name] = sorted(_as_text(child_key) for child_key in value.keys() if _as_text(child_key))
+            continue
+        sanitized[key_text] = _redact_mcp_config_value(key_text, value)
+    return sanitized
+
+
+def build_mcp_persisted_settings_snapshot(
+    *,
+    tool: Any,
+    sandbox_policy: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a sanitized persisted MCP settings snapshot from a tool record.
+
+    This is side-effect free. It does not save files, activate MCP servers,
+    mutate tools, call providers, or expose raw secrets.
+    """
+
+    if hasattr(tool, "model_dump"):
+        data = tool.model_dump(mode="json")
+    elif isinstance(tool, dict):
+        data = tool
+    else:
+        data = {
+            "id": getattr(tool, "id", None),
+            "name": getattr(tool, "name", None),
+            "description": getattr(tool, "description", None),
+            "command": getattr(tool, "command", None),
+            "mcp_config": getattr(tool, "mcp_config", None),
+            "auth_type": getattr(tool, "auth_type", None),
+            "auth_status": getattr(tool, "auth_status", None),
+            "tool_permissions": getattr(tool, "tool_permissions", None),
+            "connected_account_email": getattr(tool, "connected_account_email", None),
+            "enabled": getattr(tool, "enabled", None),
+        }
+
+    config = _as_dict(data.get("mcp_config"))
+    sanitized_config = sanitize_mcp_persisted_config(config)
+    sandbox_data = _as_dict(sandbox_policy)
+    permissions = normalize_mcp_tool_permissions(data.get("tool_permissions"))
+    visible_permissions = {
+        key: value
+        for key, value in permissions.items()
+        if key != "_tool_descriptions"
+    }
+
+    server_name = sanitize_mcp_server_name(data.get("name"))
+    transport = normalize_mcp_transport(config.get("type") or config.get("transport"))
+    command = _as_text(config.get("command") or data.get("command"))
+
+    return {
+        "contract_kind": "mcp_persisted_settings_snapshot",
+        "tool_id": _as_text(data.get("id")) or None,
+        "name": _as_text(data.get("name")) or None,
+        "server_name": server_name or None,
+        "description": _as_text(data.get("description")) or None,
+        "enabled": bool(data.get("enabled", True)),
+        "auth_type": _as_text(data.get("auth_type")) or "none",
+        "auth_status": normalize_mcp_auth_status(data.get("auth_status")),
+        "connected_account_email": _as_text(data.get("connected_account_email")) or None,
+        "transport": transport,
+        "command": command or None,
+        "args": _as_list(config.get("args")),
+        "url_configured": bool(config.get("url")),
+        "env_keys": sorted(_as_text(key) for key in _as_dict(config.get("env")).keys() if _as_text(key)),
+        "header_keys": sorted(_as_text(key) for key in _as_dict(config.get("headers")).keys() if _as_text(key)),
+        "sanitized_mcp_config": sanitized_config,
+        "tool_permissions": visible_permissions,
+        "permission_count": len(visible_permissions),
+        "sandbox_decision": sandbox_data.get("decision") if sandbox_data else None,
+        "sandbox_reasons": _as_list(sandbox_data.get("reasons")) if sandbox_data else [],
+        "metadata": _as_dict(metadata),
+        "secrets_persisted": False,
+        "activation_scope": "session_only",
+        "activation_gate": "active_mcps + MCPActivate + approval",
+        "executed": False,
+        "execution_result": None,
+    }
+
+
+def build_mcp_settings_store_snapshot(
+    *,
+    tools: list[Any] | None = None,
+    sandbox_policies: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build sanitized settings/config-store snapshot for MCP tools."""
+
+    policies = _as_dict(sandbox_policies)
+    snapshots = []
+    for tool in _as_list(tools):
+        data = tool.model_dump(mode="json") if hasattr(tool, "model_dump") else tool if isinstance(tool, dict) else {}
+        if not _as_dict(data.get("mcp_config")):
+            continue
+        server_name = sanitize_mcp_server_name(data.get("name"))
+        snapshots.append(build_mcp_persisted_settings_snapshot(
+            tool=tool,
+            sandbox_policy=policies.get(server_name) if isinstance(policies.get(server_name), dict) else None,
+        ))
+
+    configured = [item for item in snapshots if item.get("auth_status") in {"configured", "connected"}]
+    enabled = [item for item in snapshots if item.get("enabled")]
+
+    return {
+        "contract_kind": "mcp_settings_store_snapshot",
+        "tools": snapshots,
+        "tool_count": len(snapshots),
+        "enabled_count": len(enabled),
+        "configured_count": len(configured),
+        "metadata": _as_dict(metadata),
+        "secrets_persisted": False,
+        "activation_scope": "session_only",
+        "activation_gate": "active_mcps + MCPActivate + approval",
+        "executed": False,
+        "execution_result": None,
+    }
+
+
+def summarize_mcp_settings_store_snapshot(snapshot: dict[str, Any] | None) -> str:
+    """Return compact MCP settings snapshot summary."""
+
+    data = _as_dict(snapshot)
+    return (
+        "MCP Settings Store: "
+        f"tools={data.get('tool_count') or 0}; "
+        f"enabled={data.get('enabled_count') or 0}; "
+        f"configured={data.get('configured_count') or 0}; "
+        f"secrets_persisted={bool(data.get('secrets_persisted'))}; "
+        f"activation_scope={data.get('activation_scope') or 'session_only'}; "
+        "executed=False"
+    )

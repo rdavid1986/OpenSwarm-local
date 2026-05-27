@@ -7,8 +7,10 @@ from backend.apps.swarms.mcp_contract import (
     build_mcp_fallback_adapter_contract,
     build_mcp_fallback_plan,
     build_mcp_host_contract,
+    build_mcp_persisted_settings_snapshot,
     build_mcp_required_user_action,
     build_mcp_sandbox_policy_decision,
+    build_mcp_settings_store_snapshot,
     build_mcp_server_contract,
     build_mcp_tool_definition_budget,
     classify_mcp_sandbox_risk,
@@ -18,6 +20,7 @@ from backend.apps.swarms.mcp_contract import (
     inspect_mcp_server_contract,
     inspect_mcp_tool_registry,
     normalize_mcp_fallback_type,
+    sanitize_mcp_persisted_config,
     sanitize_mcp_server_name,
     score_mcp_server_for_budget,
     search_mcp_tool_registry,
@@ -28,6 +31,7 @@ from backend.apps.swarms.mcp_contract import (
     summarize_mcp_host_contract,
     summarize_mcp_inspection,
     summarize_mcp_sandbox_policy_decision,
+    summarize_mcp_settings_store_snapshot,
     summarize_mcp_tool_definition_budget,
     summarize_mcp_tool_registry,
 )
@@ -947,4 +951,94 @@ def test_summarize_mcp_activation_guard_decision_is_compact_and_non_executing():
     assert "MCP Activation Guard:" in summary
     assert "decision=requires_approval" in summary
     assert "server=unity" in summary
+    assert "executed=False" in summary
+
+
+def test_sanitize_mcp_persisted_config_redacts_secret_values():
+    sanitized = sanitize_mcp_persisted_config({
+        "type": "stdio",
+        "command": "python",
+        "args": ["-m", "unity_mcp"],
+        "env": {"UNITY_TOKEN": "secret-token", "SAFE_FLAG": "1"},
+        "headers": {"Authorization": "Bearer abc", "X-Trace": "trace"},
+        "nested": {"client_secret": "secret", "safe": "value"},
+    })
+
+    assert sanitized["type"] == "stdio"
+    assert sanitized["command"] == "python"
+    assert sanitized["env"]["UNITY_TOKEN"] == "[redacted]"
+    assert sanitized["env"]["SAFE_FLAG"] == "[redacted]"
+    assert sanitized["env_keys"] == ["SAFE_FLAG", "UNITY_TOKEN"]
+    assert sanitized["headers"]["Authorization"] == "[redacted]"
+    assert sanitized["header_keys"] == ["Authorization", "X-Trace"]
+    assert sanitized["nested"]["client_secret"] == "[redacted]"
+    assert sanitized["nested"]["safe"] == "value"
+
+
+def test_build_mcp_persisted_settings_snapshot_never_exposes_credentials_or_tokens():
+    snapshot = build_mcp_persisted_settings_snapshot(
+        tool={
+            "id": "tool-unity",
+            "name": "Unity",
+            "description": "Unity Editor MCP",
+            "mcp_config": {
+                "type": "stdio",
+                "command": "python",
+                "args": ["-m", "unity_mcp"],
+                "env": {"UNITY_TOKEN": "secret-token"},
+            },
+            "credentials": {"api_key": "secret"},
+            "oauth_tokens": {"access_token": "secret"},
+            "auth_type": "none",
+            "auth_status": "configured",
+            "tool_permissions": {"create_scene": "ask", "delete_scene": "deny"},
+            "connected_account_email": "dev@example.com",
+            "enabled": True,
+        }
+    )
+
+    dumped = str(snapshot)
+
+    assert snapshot["contract_kind"] == "mcp_persisted_settings_snapshot"
+    assert snapshot["server_name"] == "unity"
+    assert snapshot["auth_status"] == "configured"
+    assert snapshot["env_keys"] == ["UNITY_TOKEN"]
+    assert snapshot["secrets_persisted"] is False
+    assert snapshot["activation_scope"] == "session_only"
+    assert "secret-token" not in dumped
+    assert "access_token" not in dumped
+    assert "api_key" not in dumped
+
+
+def test_build_mcp_settings_store_snapshot_filters_non_mcp_tools_and_counts_safe_state():
+    snapshot = build_mcp_settings_store_snapshot(
+        tools=[
+            {"id": "builtin", "name": "Read", "mcp_config": {}, "enabled": True},
+            {"id": "unity", "name": "Unity", "mcp_config": {"type": "stdio", "command": "python"}, "auth_status": "configured", "enabled": True},
+            {"id": "gmail", "name": "Gmail", "mcp_config": {"type": "stdio", "command": "node"}, "auth_status": "connected", "enabled": False},
+        ],
+    )
+
+    assert snapshot["contract_kind"] == "mcp_settings_store_snapshot"
+    assert snapshot["tool_count"] == 2
+    assert snapshot["enabled_count"] == 1
+    assert snapshot["configured_count"] == 2
+    assert snapshot["secrets_persisted"] is False
+    assert [item["server_name"] for item in snapshot["tools"]] == ["unity", "gmail"]
+
+
+def test_summarize_mcp_settings_store_snapshot_is_compact_and_non_executing():
+    snapshot = build_mcp_settings_store_snapshot(
+        tools=[
+            {"id": "unity", "name": "Unity", "mcp_config": {"type": "stdio"}, "auth_status": "configured", "enabled": True},
+        ],
+    )
+
+    summary = summarize_mcp_settings_store_snapshot(snapshot)
+
+    assert "MCP Settings Store:" in summary
+    assert "tools=1" in summary
+    assert "enabled=1" in summary
+    assert "configured=1" in summary
+    assert "secrets_persisted=False" in summary
     assert "executed=False" in summary
