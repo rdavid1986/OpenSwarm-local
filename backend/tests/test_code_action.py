@@ -1,9 +1,13 @@
 from backend.apps.swarms.code_action import (
+    apply_code_action_evidence,
     apply_code_action_guard,
     build_code_action_contract,
+    build_code_action_evidence_contract,
+    evaluate_code_action_evidence,
     evaluate_code_action_guard,
     infer_code_action_risk,
     normalize_code_action_command,
+    normalize_code_action_command_evidence,
     normalize_code_action_contract,
     normalize_code_action_file,
     summarize_code_action_contract,
@@ -245,3 +249,107 @@ def test_normalize_code_action_contract_accepts_existing_contract_fields():
     assert normalized["affected_files"][0]["path"] == "backend/app.py"
     assert normalized["executed"] is False
     assert normalized["execution_result"] is None
+
+
+def test_normalize_code_action_command_evidence_marks_passed_failed_or_unknown():
+    passed = normalize_code_action_command_evidence({"command": "pytest", "exit_code": 0})
+    failed = normalize_code_action_command_evidence({"command": "pytest", "exit_code": 1, "stderr": "failed"})
+    unknown = normalize_code_action_command_evidence({"command": "pytest"})
+
+    assert passed["status"] == "passed"
+    assert failed["status"] == "failed"
+    assert failed["has_output"] is True
+    assert unknown["status"] == "unknown"
+
+
+def test_build_code_action_evidence_contract_marks_missing_without_evidence():
+    action = build_code_action_contract(action_type="edit_file")
+
+    evidence = build_code_action_evidence_contract(action)
+
+    assert evidence["status"] == "missing"
+    assert evidence["ok"] is False
+    assert evidence["has_diff"] is False
+    assert evidence["has_changed_files"] is False
+    assert evidence["has_validation"] is False
+    assert evidence["execution_claim_allowed"] is False
+
+
+def test_build_code_action_evidence_contract_marks_passed_with_diff_files_and_validation():
+    action = build_code_action_contract(action_id="act-1", action_type="apply_patch")
+
+    evidence = build_code_action_evidence_contract(
+        action,
+        diff_summary={"changed": ["backend/apps/swarms/code_action.py"]},
+        files_changed=["backend/apps/swarms/code_action.py"],
+        validation_commands=[
+            {
+                "command": "python -m pytest backend/tests/test_code_action.py -q",
+                "exit_code": 0,
+                "stdout": "14 passed",
+            }
+        ],
+        evidence_refs=["pytest:test_code_action"],
+    )
+
+    assert evidence["action_id"] == "act-1"
+    assert evidence["status"] == "passed"
+    assert evidence["ok"] is True
+    assert evidence["has_diff"] is True
+    assert evidence["has_changed_files"] is True
+    assert evidence["has_validation"] is True
+    assert evidence["execution_claim_allowed"] is True
+
+
+def test_evaluate_code_action_evidence_blocks_claim_without_diff_or_validation():
+    action = build_code_action_contract(action_type="edit_file")
+    evidence = build_code_action_evidence_contract(
+        action,
+        files_changed=["backend/app.py"],
+    )
+
+    gate = evaluate_code_action_evidence(evidence)
+
+    assert gate["status"] == "failed"
+    assert gate["ok"] is False
+    assert gate["execution_claim_allowed"] is False
+    codes = {reason["code"] for reason in gate["reasons"]}
+    assert "diff_missing" in codes
+    assert "validation_missing" in codes
+
+
+def test_evaluate_code_action_evidence_detects_failed_validation_command():
+    action = build_code_action_contract(action_type="edit_file")
+    evidence = build_code_action_evidence_contract(
+        action,
+        diff_summary={"changed": ["backend/app.py"]},
+        files_changed=["backend/app.py"],
+        validation_commands=[{"command": "pytest", "exit_code": 1, "stderr": "failed"}],
+    )
+
+    gate = evaluate_code_action_evidence(evidence)
+
+    assert gate["status"] == "failed"
+    assert any(reason["code"] == "validation_failed" for reason in gate["reasons"])
+
+
+def test_apply_code_action_evidence_marks_executed_only_when_evidence_gate_passes():
+    action = build_code_action_contract(action_id="act-1", action_type="apply_patch")
+    applied = apply_code_action_evidence(
+        action,
+        {
+            "diff_summary": {"changed": ["backend/app.py"]},
+            "files_changed": ["backend/app.py"],
+            "validation_commands": [{"command": "pytest", "exit_code": 0}],
+        },
+    )
+
+    assert applied["status"] == "executed"
+    assert applied["executed"] is True
+    assert applied["execution_result"]["status"] == "passed"
+
+    failed = apply_code_action_evidence(action, {"files_changed": ["backend/app.py"]})
+
+    assert failed["status"] == "failed"
+    assert failed["executed"] is False
+    assert failed["execution_result"] is None

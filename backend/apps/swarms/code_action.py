@@ -404,6 +404,167 @@ def apply_code_action_guard(
     return _bounded_value(merged)
 
 
+VALID_CODE_ACTION_EVIDENCE_STATUS = {
+    "missing",
+    "partial",
+    "failed",
+    "passed",
+    "unknown",
+}
+
+
+def normalize_code_action_command_evidence(value: Any) -> dict[str, Any]:
+    """Normalize command execution evidence without executing commands."""
+
+    raw = _as_dict(value)
+    exit_code_raw = raw.get("exit_code")
+    try:
+        exit_code = int(exit_code_raw)
+    except Exception:
+        exit_code = None
+
+    stdout = _as_text(raw.get("stdout"), max_chars=2000)
+    stderr = _as_text(raw.get("stderr"), max_chars=2000)
+
+    if exit_code == 0:
+        status = "passed"
+    elif exit_code is None:
+        status = "unknown"
+    else:
+        status = "failed"
+
+    return _bounded_value(
+        {
+            "command": _as_text(raw.get("command"), max_chars=1000) or None,
+            "cwd": _as_text(raw.get("cwd")) or ".",
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "status": status,
+            "has_output": bool(stdout or stderr),
+        }
+    )
+
+
+def build_code_action_evidence_contract(
+    action: dict[str, Any] | None,
+    *,
+    diff_summary: dict[str, Any] | None = None,
+    files_changed: list[Any] | None = None,
+    validation_commands: list[Any] | None = None,
+    errors: list[Any] | None = None,
+    evidence_refs: list[Any] | None = None,
+    status: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build post-action evidence contract without claiming execution."""
+
+    normalized_action = normalize_code_action_contract(_as_dict(action))
+    normalized_commands = [normalize_code_action_command_evidence(item) for item in _as_list(validation_commands)]
+    normalized_errors = [_bounded_value(item) for item in _as_list(errors)]
+    normalized_files_changed = [_as_text(item) for item in _as_list(files_changed) if _as_text(item)]
+    normalized_diff = _bounded_value(diff_summary or {})
+
+    has_diff = bool(normalized_diff)
+    has_changed_files = bool(normalized_files_changed)
+    has_validation = bool(normalized_commands)
+    has_failed_command = any(command.get("status") == "failed" for command in normalized_commands)
+    has_errors = bool(normalized_errors)
+
+    resolved_status = _as_text(status)
+    if resolved_status not in VALID_CODE_ACTION_EVIDENCE_STATUS:
+        if has_errors or has_failed_command:
+            resolved_status = "failed"
+        elif has_diff and has_changed_files and has_validation:
+            resolved_status = "passed"
+        elif has_diff or has_changed_files or has_validation or evidence_refs:
+            resolved_status = "partial"
+        else:
+            resolved_status = "missing"
+
+    return _bounded_value(
+        {
+            "action_id": normalized_action.get("action_id"),
+            "action_type": normalized_action.get("action_type"),
+            "status": resolved_status,
+            "ok": resolved_status == "passed",
+            "diff_summary": normalized_diff,
+            "files_changed": normalized_files_changed,
+            "validation_commands": normalized_commands,
+            "errors": normalized_errors,
+            "evidence_refs": _bounded_value(_as_list(evidence_refs)),
+            "has_diff": has_diff,
+            "has_changed_files": has_changed_files,
+            "has_validation": has_validation,
+            "execution_claim_allowed": resolved_status == "passed",
+            "metadata": _bounded_value(metadata or {}),
+        }
+    )
+
+
+def evaluate_code_action_evidence(
+    evidence: dict[str, Any] | None,
+    *,
+    require_diff: bool = True,
+    require_changed_files: bool = True,
+    require_validation: bool = True,
+) -> dict[str, Any]:
+    """Evaluate whether code action evidence is sufficient."""
+
+    normalized = _as_dict(evidence or {})
+    reasons: list[dict[str, Any]] = []
+
+    def add_reason(code: str, message: str, severity: str = "medium") -> None:
+        reasons.append({"code": code, "message": message, "severity": severity})
+
+    if require_diff and not normalized.get("has_diff"):
+        add_reason("diff_missing", "Code action evidence is missing a diff summary.", "high")
+
+    if require_changed_files and not normalized.get("has_changed_files"):
+        add_reason("changed_files_missing", "Code action evidence is missing changed files.", "high")
+
+    if require_validation and not normalized.get("has_validation"):
+        add_reason("validation_missing", "Code action evidence is missing validation command evidence.", "medium")
+
+    for command in _as_list(normalized.get("validation_commands")):
+        command_dict = _as_dict(command)
+        if command_dict.get("status") == "failed":
+            add_reason("validation_failed", "A validation command failed.", "high")
+
+    if _as_list(normalized.get("errors")):
+        add_reason("execution_errors_present", "Code action evidence contains errors.", "high")
+
+    status = "passed" if not reasons else "failed"
+    return _bounded_value(
+        {
+            "status": status,
+            "ok": status == "passed",
+            "reasons": reasons,
+            "reason_count": len(reasons),
+            "execution_claim_allowed": status == "passed",
+        }
+    )
+
+
+def apply_code_action_evidence(
+    action: dict[str, Any] | None,
+    evidence: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Attach evidence to a code action without executing anything."""
+
+    normalized = normalize_code_action_contract(_as_dict(action))
+    evidence_contract = build_code_action_evidence_contract(normalized, **_as_dict(evidence))
+    evidence_gate = evaluate_code_action_evidence(evidence_contract)
+
+    merged = dict(normalized)
+    merged["evidence"] = evidence_contract
+    merged["evidence_gate"] = evidence_gate
+    merged["executed"] = evidence_gate["ok"]
+    merged["status"] = "executed" if evidence_gate["ok"] else "failed"
+    merged["execution_result"] = evidence_contract if evidence_gate["ok"] else None
+    return _bounded_value(merged)
+
+
 def summarize_code_action_contract(action: dict[str, Any] | None) -> str:
     """Return compact summary for logs/UI/prompts."""
 
