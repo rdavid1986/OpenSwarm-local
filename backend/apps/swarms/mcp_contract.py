@@ -797,3 +797,148 @@ def summarize_mcp_tool_definition_budget(budget: dict[str, Any] | None) -> str:
         f"{data.get('max_definition_cost', 0)}; "
         "executed=False"
     )
+
+
+VALID_MCP_FALLBACK_TYPES = {"cli", "script", "manual", "none"}
+VALID_MCP_FALLBACK_STATES = {"available", "requires_user_action", "blocked", "unavailable"}
+
+
+def normalize_mcp_fallback_type(value: Any) -> str:
+    """Normalize fallback adapter type without running it."""
+
+    fallback_type = _as_text(value).lower()
+    return fallback_type if fallback_type in VALID_MCP_FALLBACK_TYPES else "none"
+
+
+def build_mcp_fallback_adapter_contract(
+    *,
+    server_name: str | None = None,
+    fallback_type: str | None = None,
+    command: str | None = None,
+    args: list[Any] | None = None,
+    script_path: str | None = None,
+    reason: str | None = None,
+    requires_user_approval: bool = True,
+    requires_manual_setup: bool = False,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Describe a CLI/script/manual fallback without executing it."""
+
+    normalized_type = normalize_mcp_fallback_type(fallback_type)
+    normalized_server = sanitize_mcp_server_name(server_name)
+    clean_args = [_as_text(item) for item in _as_list(args) if _as_text(item)]
+    clean_command = _as_text(command)
+    clean_script = _as_text(script_path)
+
+    if normalized_type == "none":
+        state = "unavailable"
+    elif requires_manual_setup:
+        state = "requires_user_action"
+    elif normalized_type in {"cli", "script"} and (clean_command or clean_script):
+        state = "available"
+    elif normalized_type == "manual":
+        state = "requires_user_action"
+    else:
+        state = "blocked"
+
+    actions: list[dict[str, Any]] = []
+    if state == "requires_user_action":
+        actions.append(build_mcp_required_user_action(
+            action_type="open_settings",
+            target=f"tools/mcp/{normalized_server}/fallback",
+            label=f"Configure {normalized_server.replace('-', ' ').title()} fallback",
+            reason="mcp_fallback_requires_manual_setup",
+            server_name=normalized_server,
+        ))
+
+    return {
+        "contract_kind": "mcp_fallback_adapter",
+        "server_name": normalized_server or None,
+        "fallback_type": normalized_type,
+        "state": state,
+        "command": clean_command or None,
+        "args": clean_args,
+        "script_path": clean_script or None,
+        "reason": _as_text(reason) or None,
+        "requires_user_approval": bool(requires_user_approval),
+        "requires_manual_setup": bool(requires_manual_setup),
+        "required_user_actions": actions,
+        "metadata": _as_dict(metadata),
+        "executed": False,
+        "execution_result": None,
+    }
+
+
+def build_mcp_fallback_plan(
+    *,
+    inspection: dict[str, Any] | None = None,
+    fallback_adapters: list[Any] | None = None,
+    target_server_name: str | None = None,
+    allow_cli_fallback: bool = True,
+) -> dict[str, Any]:
+    """Plan MCP fallback options from inspection state without executing them."""
+
+    inspect_data = _as_dict(inspection)
+    target = sanitize_mcp_server_name(target_server_name or inspect_data.get("target_server_name"))
+    adapters = [
+        item if _as_dict(item).get("contract_kind") == "mcp_fallback_adapter"
+        else build_mcp_fallback_adapter_contract(**_as_dict(item))
+        for item in _as_list(fallback_adapters)
+        if _as_dict(item)
+    ]
+
+    if target:
+        adapters = [item for item in adapters if _as_dict(item).get("server_name") == target]
+
+    viable = [
+        item for item in adapters
+        if _as_dict(item).get("state") == "available"
+        and (allow_cli_fallback or _as_dict(item).get("fallback_type") != "cli")
+    ]
+    user_action_adapters = [item for item in adapters if _as_dict(item).get("state") == "requires_user_action"]
+    blocked = [item for item in adapters if _as_dict(item).get("state") in {"blocked", "unavailable"}]
+
+    required_actions = []
+    for adapter in user_action_adapters:
+        required_actions.extend(_as_list(_as_dict(adapter).get("required_user_actions")))
+
+    if inspect_data.get("ready"):
+        status = "not_needed"
+    elif viable:
+        status = "fallback_available"
+    elif required_actions:
+        status = "requires_user_action"
+    else:
+        status = "blocked"
+
+    return {
+        "contract_kind": "mcp_fallback_plan",
+        "target_server_name": target or None,
+        "status": status,
+        "fallback_available": bool(viable),
+        "selected_fallback": viable[0] if viable else None,
+        "fallback_adapters": adapters,
+        "viable_count": len(viable),
+        "requires_user_action_count": len(user_action_adapters),
+        "blocked_count": len(blocked),
+        "required_user_actions": required_actions,
+        "allow_cli_fallback": bool(allow_cli_fallback),
+        "executed": False,
+        "execution_result": None,
+    }
+
+
+def summarize_mcp_fallback_plan(plan: dict[str, Any] | None) -> str:
+    """Return compact fallback summary for prompts, UI, and audit traces."""
+
+    data = _as_dict(plan)
+    selected = _as_dict(data.get("selected_fallback"))
+    return (
+        "MCP Fallback Plan: "
+        f"status={data.get('status') or 'empty'}; "
+        f"target={data.get('target_server_name') or 'none'}; "
+        f"available={bool(data.get('fallback_available'))}; "
+        f"selected={selected.get('fallback_type') or 'none'}; "
+        f"actions={len(_as_list(data.get('required_user_actions')))}; "
+        "executed=False"
+    )

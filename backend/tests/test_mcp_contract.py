@@ -1,6 +1,8 @@
 from backend.apps.swarms.mcp_contract import (
     build_mcp_client_contract,
     build_mcp_contract_from_tool_definition,
+    build_mcp_fallback_adapter_contract,
+    build_mcp_fallback_plan,
     build_mcp_host_contract,
     build_mcp_required_user_action,
     build_mcp_server_contract,
@@ -10,9 +12,11 @@ from backend.apps.swarms.mcp_contract import (
     filter_mcp_registry_servers,
     inspect_mcp_server_contract,
     inspect_mcp_tool_registry,
+    normalize_mcp_fallback_type,
     sanitize_mcp_server_name,
     score_mcp_server_for_budget,
     search_mcp_tool_registry,
+    summarize_mcp_fallback_plan,
     summarize_mcp_host_contract,
     summarize_mcp_inspection,
     summarize_mcp_tool_definition_budget,
@@ -507,3 +511,123 @@ def test_summarize_mcp_tool_definition_budget_is_compact_and_non_executing():
     assert "included=1" in summary
     assert "used=" in summary
     assert "executed=False" in summary
+
+
+def test_build_mcp_fallback_adapter_contract_describes_cli_without_execution():
+    adapter = build_mcp_fallback_adapter_contract(
+        server_name="Unity",
+        fallback_type="cli",
+        command="unity",
+        args=["-batchmode", "-projectPath", "."],
+        reason="unity_mcp_not_available",
+    )
+
+    assert adapter["contract_kind"] == "mcp_fallback_adapter"
+    assert adapter["server_name"] == "unity"
+    assert adapter["fallback_type"] == "cli"
+    assert adapter["state"] == "available"
+    assert adapter["command"] == "unity"
+    assert adapter["args"] == ["-batchmode", "-projectPath", "."]
+    assert adapter["requires_user_approval"] is True
+    assert adapter["executed"] is False
+
+
+def test_build_mcp_fallback_adapter_contract_creates_setup_action_when_required():
+    adapter = build_mcp_fallback_adapter_contract(
+        server_name="Unity",
+        fallback_type="script",
+        script_path="tools/unity_bridge.py",
+        requires_manual_setup=True,
+    )
+
+    assert adapter["state"] == "requires_user_action"
+    assert adapter["required_user_actions"][0]["action_type"] == "open_settings"
+    assert adapter["required_user_actions"][0]["target"] == "tools/mcp/unity/fallback"
+    assert adapter["required_user_actions"][0]["label"] == "Configure Unity fallback"
+
+
+def test_build_mcp_fallback_plan_selects_available_adapter_for_blocked_mcp():
+    registry = build_mcp_tool_registry(
+        tools=[
+            {"name": "Unity", "mcp_config": {"type": "stdio"}, "auth_status": "expired"},
+        ],
+    )
+    inspection = inspect_mcp_tool_registry(registry, target_server_name="Unity")
+    adapter = build_mcp_fallback_adapter_contract(
+        server_name="Unity",
+        fallback_type="script",
+        script_path="tools/unity_cli_adapter.py",
+        reason="mcp_auth_expired",
+    )
+
+    plan = build_mcp_fallback_plan(
+        inspection=inspection,
+        fallback_adapters=[adapter],
+        target_server_name="Unity",
+    )
+
+    assert plan["contract_kind"] == "mcp_fallback_plan"
+    assert plan["status"] == "fallback_available"
+    assert plan["fallback_available"] is True
+    assert plan["selected_fallback"]["script_path"] == "tools/unity_cli_adapter.py"
+    assert plan["executed"] is False
+
+
+def test_build_mcp_fallback_plan_reports_not_needed_when_mcp_ready():
+    registry = build_mcp_tool_registry(
+        tools=[
+            {"name": "Unity", "mcp_config": {"type": "stdio"}, "auth_status": "connected"},
+        ],
+        active_mcps=["Unity"],
+    )
+    inspection = inspect_mcp_tool_registry(registry, target_server_name="Unity")
+
+    plan = build_mcp_fallback_plan(
+        inspection=inspection,
+        fallback_adapters=[
+            build_mcp_fallback_adapter_contract(server_name="Unity", fallback_type="cli", command="unity")
+        ],
+        target_server_name="Unity",
+    )
+
+    assert plan["status"] == "not_needed"
+    assert plan["fallback_available"] is True
+    assert plan["executed"] is False
+
+
+def test_build_mcp_fallback_plan_respects_cli_fallback_disabled():
+    inspection = inspect_mcp_tool_registry(build_mcp_tool_registry(tools=[]), target_server_name="Unity")
+    adapter = build_mcp_fallback_adapter_contract(server_name="Unity", fallback_type="cli", command="unity")
+
+    plan = build_mcp_fallback_plan(
+        inspection=inspection,
+        fallback_adapters=[adapter],
+        target_server_name="Unity",
+        allow_cli_fallback=False,
+    )
+
+    assert plan["status"] == "blocked"
+    assert plan["fallback_available"] is False
+    assert plan["viable_count"] == 0
+
+
+def test_summarize_mcp_fallback_plan_is_compact_and_non_executing():
+    adapter = build_mcp_fallback_adapter_contract(server_name="Unity", fallback_type="cli", command="unity")
+    plan = build_mcp_fallback_plan(
+        inspection={"ready": False, "target_server_name": "unity"},
+        fallback_adapters=[adapter],
+        target_server_name="Unity",
+    )
+
+    summary = summarize_mcp_fallback_plan(plan)
+
+    assert "MCP Fallback Plan:" in summary
+    assert "status=fallback_available" in summary
+    assert "target=unity" in summary
+    assert "selected=cli" in summary
+    assert "executed=False" in summary
+
+
+def test_normalize_mcp_fallback_type_rejects_unknown_values():
+    assert normalize_mcp_fallback_type("cli") == "cli"
+    assert normalize_mcp_fallback_type("bad") == "none"
