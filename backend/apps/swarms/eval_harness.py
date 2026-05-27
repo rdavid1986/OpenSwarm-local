@@ -267,6 +267,104 @@ def build_default_eval_planner_node(
     )
 
 
+def normalize_eval_generator_candidate(value: Any) -> dict[str, Any]:
+    """Normalize one generated or provided candidate without generating it."""
+
+    raw = _as_dict(value)
+    status = _as_text(raw.get("status")) or "draft"
+    if status not in VALID_EVAL_STATUSES:
+        status = "draft"
+
+    return _bounded_value(
+        {
+            "candidate_id": _as_text(raw.get("candidate_id") or raw.get("id")) or None,
+            "kind": _as_text(raw.get("kind") or raw.get("type")) or "candidate",
+            "status": status,
+            "summary": _as_text(raw.get("summary")) or None,
+            "content_ref": _as_text(raw.get("content_ref")) or None,
+            "artifact_refs": [_as_text(item) for item in _as_list(raw.get("artifact_refs")) if _as_text(item)],
+            "evidence_refs": [_as_text(item) for item in _as_list(raw.get("evidence_refs")) if _as_text(item)],
+            "source_refs": [_as_text(item) for item in _as_list(raw.get("source_refs")) if _as_text(item)],
+            "claims": [_as_text(item) for item in _as_list(raw.get("claims")) if _as_text(item)],
+            "metadata": _bounded_value(raw.get("metadata") or {}),
+            "generated": False,
+            "executed": False,
+            "execution_result": None,
+        }
+    )
+
+
+def build_eval_generator_node(
+    *,
+    node_id: str | None = None,
+    objective: str | None = None,
+    task_kind: str | None = None,
+    candidates: list[Any] | None = None,
+    input_refs: list[Any] | None = None,
+    output_refs: list[Any] | None = None,
+    claims: list[Any] | None = None,
+    artifact_refs: list[Any] | None = None,
+    evidence_refs: list[Any] | None = None,
+    source_refs: list[Any] | None = None,
+    status: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build an eval generator node contract without generating output."""
+
+    normalized_candidates = [normalize_eval_generator_candidate(item) for item in _as_list(candidates)]
+    resolved_status = _as_text(status) or "ready"
+    if resolved_status not in VALID_EVAL_STATUSES:
+        resolved_status = "ready"
+
+    generator_metadata = _bounded_value(
+        {
+            "task_kind": _as_text(task_kind) or "generic",
+            "candidates": normalized_candidates,
+            "claims": [_as_text(item) for item in _as_list(claims) if _as_text(item)],
+            "artifact_refs": [_as_text(item) for item in _as_list(artifact_refs) if _as_text(item)],
+            "evidence_refs": [_as_text(item) for item in _as_list(evidence_refs) if _as_text(item)],
+            "source_refs": [_as_text(item) for item in _as_list(source_refs) if _as_text(item)],
+            "metadata": _bounded_value(metadata or {}),
+        }
+    )
+
+    return normalize_eval_node(
+        {
+            "node_id": _as_text(node_id) or "generator",
+            "node_type": "generator",
+            "status": resolved_status,
+            "objective": _as_text(objective) or "Represent candidate output for evaluation.",
+            "input_refs": input_refs,
+            "output_refs": output_refs,
+            "metrics": [],
+            "score": 0.0,
+            "reason": "eval_generator_node_contract",
+            "requires_provider": False,
+            "metadata": generator_metadata,
+        }
+    )
+
+
+def build_default_eval_generator_node(
+    *,
+    objective: str | None = None,
+    task_kind: str | None = None,
+) -> dict[str, Any]:
+    """Build a default non-generating generator node for OpenSwarm eval loops."""
+
+    task = _as_text(task_kind) or "generic"
+    return build_eval_generator_node(
+        objective=objective or "Represent candidate output for evaluation.",
+        task_kind=task,
+        candidates=[],
+        claims=[],
+        artifact_refs=[],
+        evidence_refs=[],
+        source_refs=[],
+        metadata={"candidate_source": "not_provided"},
+    )
+
+
 def build_eval_loop_contract(
     *,
     loop_id: str | None = None,
@@ -368,12 +466,10 @@ def build_default_eval_loop_contract(*, objective: str | None = None, task_kind:
                 objective="Plan evaluation criteria and required checks.",
                 task_kind=task,
             ),
-            {
-                "node_id": "generator",
-                "node_type": "generator",
-                "objective": "Generate or receive candidate output for evaluation.",
-                "reason": "Default evaluation generator node.",
-            },
+            build_default_eval_generator_node(
+                objective="Generate or receive candidate output for evaluation.",
+                task_kind=task,
+            ),
             {
                 "node_id": "critic",
                 "node_type": "critic",
