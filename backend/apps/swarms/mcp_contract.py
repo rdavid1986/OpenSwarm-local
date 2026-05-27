@@ -434,3 +434,223 @@ def summarize_mcp_tool_registry(registry: dict[str, Any] | None) -> str:
         f"candidates={data.get('candidate_count', 0)}; "
         "executed=False"
     )
+
+
+def build_mcp_required_user_action(
+    *,
+    action_type: str,
+    target: str,
+    label: str,
+    reason: str,
+    server_name: str | None = None,
+    required: bool = True,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build structured UI action metadata for user-resolvable MCP blockers."""
+
+    return {
+        "action_type": _as_text(action_type) or "open_settings",
+        "target": _as_text(target),
+        "label": _as_text(label),
+        "reason": _as_text(reason),
+        "server_name": sanitize_mcp_server_name(server_name),
+        "required": bool(required),
+        "metadata": _as_dict(metadata),
+        "executed": False,
+        "execution_result": None,
+    }
+
+
+def inspect_mcp_server_contract(server: dict[str, Any] | None) -> dict[str, Any]:
+    """Inspect one MCP server contract without activating or probing it."""
+
+    data = _as_dict(server)
+    server_name = _as_text(data.get("server_name")) or sanitize_mcp_server_name(data.get("name"))
+    findings: list[dict[str, Any]] = []
+    actions: list[dict[str, Any]] = []
+
+    if not data:
+        findings.append({
+            "severity": "error",
+            "code": "mcp_server_missing",
+            "message": "MCP server contract is missing.",
+        })
+        return {
+            "contract_kind": "mcp_server_inspection",
+            "server_name": None,
+            "status": "blocked",
+            "ready": False,
+            "findings": findings,
+            "required_user_actions": actions,
+            "executed": False,
+            "execution_result": None,
+        }
+
+    gate_state = _as_text(data.get("gate_state")) or "unknown"
+    auth_status = _as_text(data.get("auth_status")) or "unknown"
+
+    if not data.get("enabled", True):
+        findings.append({
+            "severity": "error",
+            "code": "mcp_server_disabled",
+            "message": "MCP server is disabled.",
+        })
+        actions.append(build_mcp_required_user_action(
+            action_type="open_settings",
+            target=f"tools/mcp/{server_name}",
+            label=f"Enable {data.get('name') or server_name}",
+            reason="mcp_server_disabled",
+            server_name=server_name,
+        ))
+
+    if auth_status in {"expired", "error", "unknown"}:
+        findings.append({
+            "severity": "error",
+            "code": "mcp_auth_not_ready",
+            "message": f"MCP auth status is {auth_status}.",
+        })
+        actions.append(build_mcp_required_user_action(
+            action_type="connect_account",
+            target=f"tools/mcp/{server_name}/auth",
+            label=f"Connect {data.get('name') or server_name}",
+            reason="mcp_auth_not_ready",
+            server_name=server_name,
+        ))
+
+    if data.get("allowed_by_client") is False:
+        findings.append({
+            "severity": "warning",
+            "code": "mcp_not_allowed_by_client",
+            "message": "MCP server is not included in the current client allowed_tools.",
+        })
+        actions.append(build_mcp_required_user_action(
+            action_type="review_permissions",
+            target=f"tools/mcp/{server_name}/permissions",
+            label=f"Review permissions for {data.get('name') or server_name}",
+            reason="mcp_not_allowed_by_client",
+            server_name=server_name,
+        ))
+
+    if gate_state == "inactive":
+        findings.append({
+            "severity": "info",
+            "code": "mcp_activation_required",
+            "message": "MCP server must be activated before its tools are callable.",
+        })
+        actions.append(build_mcp_required_user_action(
+            action_type="activate_mcp",
+            target=f"pending-actions/mcp/{server_name}/activate",
+            label=f"Activate {data.get('name') or server_name}",
+            reason="mcp_activation_required",
+            server_name=server_name,
+        ))
+
+    if gate_state == "blocked":
+        findings.append({
+            "severity": "error",
+            "code": "mcp_server_blocked",
+            "message": "MCP server is blocked and cannot be activated until configuration is fixed.",
+        })
+        actions.append(build_mcp_required_user_action(
+            action_type="open_settings",
+            target=f"tools/mcp/{server_name}",
+            label=f"Configure {data.get('name') or server_name}",
+            reason="mcp_server_blocked",
+            server_name=server_name,
+        ))
+
+    if gate_state == "unavailable":
+        findings.append({
+            "severity": "error",
+            "code": "mcp_server_unavailable",
+            "message": "MCP server is unavailable.",
+        })
+
+    ready = bool(data.get("callable_now")) and not any(item.get("severity") == "error" for item in findings)
+    status = "ready" if ready else "needs_user_action" if actions else "blocked" if findings else "unknown"
+
+    return {
+        "contract_kind": "mcp_server_inspection",
+        "server_name": server_name,
+        "status": status,
+        "ready": ready,
+        "gate_state": gate_state,
+        "auth_status": auth_status,
+        "findings": findings,
+        "required_user_actions": actions,
+        "executed": False,
+        "execution_result": None,
+    }
+
+
+def inspect_mcp_tool_registry(
+    registry: dict[str, Any] | None,
+    *,
+    target_server_name: str | None = None,
+) -> dict[str, Any]:
+    """Inspect a registry view and produce actionable MCP readiness metadata."""
+
+    data = _as_dict(registry)
+    target = sanitize_mcp_server_name(target_server_name)
+    servers = [_as_dict(item) for item in _as_list(data.get("servers")) if _as_dict(item)]
+    if target:
+        servers = [item for item in servers if item.get("server_name") == target]
+
+    inspections = [inspect_mcp_server_contract(server) for server in servers]
+    findings = [finding for item in inspections for finding in _as_list(item.get("findings"))]
+    actions = [action for item in inspections for action in _as_list(item.get("required_user_actions"))]
+
+    ready_count = sum(1 for item in inspections if item.get("ready"))
+    blocked_count = sum(1 for item in inspections if item.get("status") == "blocked")
+    needs_action_count = sum(1 for item in inspections if item.get("status") == "needs_user_action")
+
+    if target and not inspections:
+        findings.append({
+            "severity": "error",
+            "code": "mcp_target_not_installed",
+            "message": f"MCP server '{target}' is not installed.",
+        })
+        actions.append(build_mcp_required_user_action(
+            action_type="open_settings",
+            target=f"tools/mcp/{target}",
+            label=f"Configure {target.replace('-', ' ').title()} MCP",
+            reason="mcp_target_not_installed",
+            server_name=target,
+        ))
+
+    status = (
+        "ready" if inspections and ready_count == len(inspections)
+        else "needs_user_action" if actions
+        else "blocked" if findings
+        else "empty"
+    )
+
+    return {
+        "contract_kind": "mcp_registry_inspection",
+        "target_server_name": target or None,
+        "status": status,
+        "ready": status == "ready",
+        "inspection_count": len(inspections),
+        "ready_count": ready_count,
+        "needs_action_count": needs_action_count,
+        "blocked_count": blocked_count,
+        "findings": findings,
+        "required_user_actions": actions,
+        "executed": False,
+        "execution_result": None,
+    }
+
+
+def summarize_mcp_inspection(inspection: dict[str, Any] | None) -> str:
+    """Return compact MCP inspection summary for prompts and UI traces."""
+
+    data = _as_dict(inspection)
+    return (
+        "MCP Inspection: "
+        f"status={data.get('status') or 'empty'}; "
+        f"ready={bool(data.get('ready'))}; "
+        f"inspected={data.get('inspection_count', 0)}; "
+        f"actions={len(_as_list(data.get('required_user_actions')))}; "
+        f"findings={len(_as_list(data.get('findings')))}; "
+        "executed=False"
+    )

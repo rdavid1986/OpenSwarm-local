@@ -2,12 +2,16 @@ from backend.apps.swarms.mcp_contract import (
     build_mcp_client_contract,
     build_mcp_contract_from_tool_definition,
     build_mcp_host_contract,
+    build_mcp_required_user_action,
     build_mcp_server_contract,
     build_mcp_tool_registry,
     filter_mcp_registry_servers,
+    inspect_mcp_server_contract,
+    inspect_mcp_tool_registry,
     sanitize_mcp_server_name,
     search_mcp_tool_registry,
     summarize_mcp_host_contract,
+    summarize_mcp_inspection,
     summarize_mcp_tool_registry,
 )
 
@@ -308,4 +312,96 @@ def test_summarize_mcp_tool_registry_is_compact_and_non_executing():
     assert "active=1" in summary
     assert "inactive=1" in summary
     assert "candidates=1" in summary
+    assert "executed=False" in summary
+
+
+def test_build_mcp_required_user_action_is_structured_for_deep_links():
+    action = build_mcp_required_user_action(
+        action_type="open_settings",
+        target="tools/mcp/unity",
+        label="Configure Unity MCP",
+        reason="unity_mcp_not_configured",
+        server_name="Unity MCP",
+    )
+
+    assert action["action_type"] == "open_settings"
+    assert action["target"] == "tools/mcp/unity"
+    assert action["label"] == "Configure Unity MCP"
+    assert action["reason"] == "unity_mcp_not_configured"
+    assert action["server_name"] == "unity-mcp"
+    assert action["required"] is True
+    assert action["executed"] is False
+
+
+def test_inspect_mcp_server_contract_reports_activation_action():
+    server = build_mcp_server_contract(
+        name="Unity",
+        mcp_config={"type": "stdio", "command": "unity-mcp"},
+        enabled=True,
+        auth_status="connected",
+        active=False,
+    )
+
+    inspection = inspect_mcp_server_contract(server)
+
+    assert inspection["contract_kind"] == "mcp_server_inspection"
+    assert inspection["status"] == "needs_user_action"
+    assert inspection["ready"] is False
+    assert inspection["findings"][0]["code"] == "mcp_activation_required"
+    assert inspection["required_user_actions"][0]["action_type"] == "activate_mcp"
+    assert inspection["required_user_actions"][0]["target"] == "pending-actions/mcp/unity/activate"
+    assert inspection["executed"] is False
+
+
+def test_inspect_mcp_server_contract_reports_settings_action_for_blocked_auth():
+    server = build_mcp_server_contract(
+        name="Gmail",
+        mcp_config={"type": "stdio", "command": "gmail-mcp"},
+        enabled=True,
+        auth_status="expired",
+        active=False,
+    )
+
+    inspection = inspect_mcp_server_contract(server)
+
+    assert inspection["status"] == "needs_user_action"
+    assert any(finding["code"] == "mcp_auth_not_ready" for finding in inspection["findings"])
+    assert any(action["action_type"] == "connect_account" for action in inspection["required_user_actions"])
+    assert any(action["target"] == "tools/mcp/gmail/auth" for action in inspection["required_user_actions"])
+
+
+def test_inspect_mcp_tool_registry_reports_missing_target_with_configure_action():
+    registry = build_mcp_tool_registry(tools=[])
+
+    inspection = inspect_mcp_tool_registry(registry, target_server_name="Unity")
+
+    assert inspection["status"] == "needs_user_action"
+    assert inspection["ready"] is False
+    assert inspection["findings"][0]["code"] == "mcp_target_not_installed"
+    assert inspection["required_user_actions"][0]["action_type"] == "open_settings"
+    assert inspection["required_user_actions"][0]["target"] == "tools/mcp/unity"
+    assert inspection["required_user_actions"][0]["label"] == "Configure Unity MCP"
+    assert inspection["executed"] is False
+
+
+def test_inspect_mcp_tool_registry_summarizes_ready_and_blocked_servers():
+    registry = build_mcp_tool_registry(
+        tools=[
+            {"name": "Unity", "mcp_config": {"type": "stdio"}, "auth_status": "connected"},
+            {"name": "Gmail", "mcp_config": {"type": "stdio"}, "auth_status": "expired"},
+        ],
+        active_mcps=["Unity"],
+    )
+
+    inspection = inspect_mcp_tool_registry(registry)
+    summary = summarize_mcp_inspection(inspection)
+
+    assert inspection["status"] == "needs_user_action"
+    assert inspection["ready"] is False
+    assert inspection["inspection_count"] == 2
+    assert inspection["ready_count"] == 1
+    assert inspection["needs_action_count"] == 1
+    assert any(action["server_name"] == "gmail" for action in inspection["required_user_actions"])
+    assert "MCP Inspection:" in summary
+    assert "actions=2" in summary
     assert "executed=False" in summary
