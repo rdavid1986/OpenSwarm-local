@@ -79,6 +79,170 @@ def normalize_agents_md_discovery_result(path: Path, root: Path) -> dict[str, An
     }
 
 
+MAX_AGENTS_MD_BYTES = 64_000
+MAX_AGENTS_MD_CHARS = 32_000
+MAX_AGENTS_MD_LINES = 800
+MAX_AGENTS_MD_SECTIONS = 32
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except Exception:
+        return False
+
+
+def normalize_agents_md_content(content: str, *, max_chars: int = MAX_AGENTS_MD_CHARS) -> dict[str, Any]:
+    """Normalize AGENTS.md text without interpreting it as executable state."""
+
+    bounded = _as_text(content)[: max(int(max_chars or 0), 0) or MAX_AGENTS_MD_CHARS]
+    raw_lines = bounded.splitlines()[:MAX_AGENTS_MD_LINES]
+    normalized_lines = [line.rstrip() for line in raw_lines]
+    normalized_content = "\n".join(normalized_lines).strip()
+
+    return {
+        "content": normalized_content,
+        "line_count": len(normalized_lines),
+        "char_count": len(normalized_content),
+        "truncated": len(content) > len(normalized_content) or len(content.splitlines()) > len(normalized_lines),
+    }
+
+
+def parse_agents_md_sections(content: str) -> list[dict[str, Any]]:
+    """Parse simple Markdown sections from AGENTS.md content."""
+
+    normalized = normalize_agents_md_content(content)
+    sections: list[dict[str, Any]] = []
+    current_heading = "root"
+    current_level = 0
+    current_lines: list[str] = []
+
+    def flush_section() -> None:
+        nonlocal current_lines
+        body = "\n".join(current_lines).strip()
+        if not body and current_heading != "root":
+            body = ""
+        if body or current_heading != "root":
+            sections.append(
+                {
+                    "heading": current_heading,
+                    "level": current_level,
+                    "content": body,
+                    "line_count": len([line for line in current_lines if line.strip()]),
+                }
+            )
+        current_lines = []
+
+    for line in normalized["content"].splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            marker = stripped.split(" ", 1)[0]
+            if marker and set(marker) == {"#"} and 1 <= len(marker) <= 6:
+                flush_section()
+                current_heading = stripped[len(marker) :].strip() or "untitled"
+                current_level = len(marker)
+                continue
+        current_lines.append(line)
+
+    flush_section()
+    return sections[:MAX_AGENTS_MD_SECTIONS]
+
+
+def read_agents_md_file(path: str | Path, root: str | Path) -> dict[str, Any]:
+    """Read and parse one AGENTS.md file safely.
+
+    This parser is bounded and local-only. It does not inject instructions into
+    prompts, execute content, call models, or mutate repository state.
+    """
+
+    resolved_root = _as_path(root).resolve()
+    resolved_path = _as_path(path).resolve()
+    base = normalize_agents_md_discovery_result(resolved_path, resolved_root)
+
+    if not _is_relative_to(resolved_path, resolved_root):
+        return {
+            **base,
+            "ok": False,
+            "reason": "outside_repo_root",
+            "content_loaded": False,
+            "parser_applied": False,
+            "injection_ready": False,
+        }
+
+    if resolved_path.name not in AGENTS_MD_FILENAMES:
+        return {
+            **base,
+            "ok": False,
+            "reason": "not_agents_md_file",
+            "content_loaded": False,
+            "parser_applied": False,
+            "injection_ready": False,
+        }
+
+    if not resolved_path.exists() or not resolved_path.is_file():
+        return {
+            **base,
+            "ok": False,
+            "reason": "file_missing",
+            "content_loaded": False,
+            "parser_applied": False,
+            "injection_ready": False,
+        }
+
+    size_bytes = resolved_path.stat().st_size
+    if size_bytes > MAX_AGENTS_MD_BYTES:
+        return {
+            **base,
+            "ok": False,
+            "reason": "file_too_large",
+            "size_bytes": size_bytes,
+            "content_loaded": False,
+            "parser_applied": False,
+            "injection_ready": False,
+        }
+
+    content = resolved_path.read_text(encoding="utf-8", errors="replace")
+    normalized = normalize_agents_md_content(content)
+    sections = parse_agents_md_sections(normalized["content"])
+
+    return {
+        **base,
+        "ok": True,
+        "reason": "parsed",
+        "size_bytes": size_bytes,
+        "content_loaded": True,
+        "parser_applied": True,
+        "injection_ready": False,
+        "content": normalized["content"],
+        "line_count": normalized["line_count"],
+        "char_count": normalized["char_count"],
+        "truncated": normalized["truncated"],
+        "sections": sections,
+        "section_count": len(sections),
+    }
+
+
+def parse_discovered_agents_md_files(discovery: dict[str, Any], root: str | Path) -> dict[str, Any]:
+    """Parse files returned by discover_agents_md_files without prompt injection."""
+
+    discovered = discovery.get("found") if isinstance(discovery, dict) else []
+    parsed = [
+        read_agents_md_file(_as_path(root) / _as_text(item.get("path")), root)
+        for item in discovered
+        if isinstance(item, dict)
+    ]
+
+    return {
+        "repo_root": _as_path(root).resolve().as_posix(),
+        "parsed": parsed,
+        "count": len(parsed),
+        "ok": all(item.get("ok") for item in parsed) if parsed else True,
+        "reason": "parse_complete",
+        "injection_ready": False,
+    }
+
+
 def discover_agents_md_files(
     repo_root: str | Path,
     *,
