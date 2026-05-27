@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Collapse from '@mui/material/Collapse';
+import Dialog from '@mui/material/Dialog';
+import DialogContent from '@mui/material/DialogContent';
+import DialogTitle from '@mui/material/DialogTitle';
 import InputBase from '@mui/material/InputBase';
 import ListItemText from '@mui/material/ListItemText';
 import Menu from '@mui/material/Menu';
@@ -25,10 +28,10 @@ interface Props {
 }
 
 const FALLBACK_MODELS = [
-  { value: 'ollama/qwen2.5-coder:14b', label: 'Ollama Qwen 2.5 Coder 14B', context_window: 128_000, reasoning: true, billing_kind: 'free', is_free: true },
-  { value: 'ollama/qwen2.5-coder:32b', label: 'Ollama Qwen 2.5 Coder 32B', context_window: 128_000, reasoning: true, billing_kind: 'free', is_free: true },
-  { value: 'ollama/qwen3.6:latest', label: 'Ollama Qwen 3.6', context_window: 128_000, reasoning: true, billing_kind: 'free', is_free: true },
-  { value: 'ollama/codellama:34b', label: 'Ollama CodeLlama 34B', context_window: 16_000, reasoning: false, billing_kind: 'free', is_free: true },
+  { value: 'ollama/qwen2.5-coder:14b', label: 'Ollama Qwen 2.5 Coder 14B', context_window: 128_000, reasoning: true, billing_kind: 'free', is_free: true, context_window_source: 'estimated', reasoning_source: 'estimated', tiers_source: 'estimated', metadata_source: 'fallback (sin /api/tags)' },
+  { value: 'ollama/qwen2.5-coder:32b', label: 'Ollama Qwen 2.5 Coder 32B', context_window: 128_000, reasoning: true, billing_kind: 'free', is_free: true, context_window_source: 'estimated', reasoning_source: 'estimated', tiers_source: 'estimated', metadata_source: 'fallback (sin /api/tags)' },
+  { value: 'ollama/qwen3.6:latest', label: 'Ollama Qwen 3.6', context_window: 128_000, reasoning: true, billing_kind: 'free', is_free: true, context_window_source: 'estimated', reasoning_source: 'estimated', tiers_source: 'estimated', metadata_source: 'fallback (sin /api/tags)' },
+  { value: 'ollama/codellama:34b', label: 'Ollama CodeLlama 34B', context_window: 16_000, reasoning: false, billing_kind: 'free', is_free: true, context_window_source: 'estimated', reasoning_source: 'estimated', tiers_source: 'estimated', metadata_source: 'fallback (sin /api/tags)' },
 ];
 
 const PROVIDER_COLORS: Record<string, string> = {
@@ -145,6 +148,40 @@ function formatTokenCount(n: number): string {
   return String(n);
 }
 
+function sourceLabel(source?: string | null): string {
+  if (source === 'estimated') return 'Estimado';
+  if (source === 'measured') return 'Medido';
+  if (source === 'declared') return 'Declarado';
+  return 'Sin datos';
+}
+
+function formatBytes(bytes?: number | null): string {
+  if (!bytes || !Number.isFinite(bytes)) return 'Sin datos';
+  const gib = bytes / (1024 ** 3);
+  return `${gib.toFixed(gib >= 10 ? 1 : 2)} GiB`;
+}
+
+function formatDate(value?: string | null): string {
+  if (!value) return 'Sin datos';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function shortDigest(value?: string | null): string {
+  if (!value) return 'Sin datos';
+  return value.length > 18 ? `${value.slice(0, 12)}…${value.slice(-6)}` : value;
+}
+
+function metadataCompleteness(opt: any): number {
+  const fields = ['local_model_name', 'family', 'families', 'parameter_size', 'quantization_level', 'format', 'size_bytes', 'modified_at', 'digest'];
+  const present = fields.filter((key) => {
+    const value = opt[key];
+    return Array.isArray(value) ? value.length > 0 : value !== undefined && value !== null && value !== '';
+  }).length;
+  return Math.round((present / fields.length) * 5);
+}
+
 const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, compact = false, onProviderChange }) => {
   const c = useClaudeTokens();
   const modelsByProvider = useAppSelector((state) => state.models.byProvider);
@@ -164,6 +201,9 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(
     () => readLS<Record<string, boolean>>(LS_COLLAPSED_GROUPS, {}),
   );
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareValues, setCompareValues] = useState<string[]>([]);
+  const [compareOpen, setCompareOpen] = useState(false);
 
   useEffect(() => {
     if (modelAnchor) {
@@ -186,12 +226,33 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
         label: m.label,
         context_window: m.context_window ?? 200_000,
         reasoning: !!m.reasoning,
+        context_window_source: m.context_window_source ?? 'unknown',
+        reasoning_source: m.reasoning_source ?? 'unknown',
+        tiers_source: m.tiers_source ?? 'unknown',
         input_cost_per_1m: m.input_cost_per_1m ?? 0,
         output_cost_per_1m: m.output_cost_per_1m ?? 0,
         is_free: !!m.is_free,
         max_completion_tokens: m.max_completion_tokens ?? null,
         tiers: Array.isArray(m.tiers) && m.tiers.length === 3 ? m.tiers : undefined,
         billing_kind: m.billing_kind,
+        metadata_source: m.metadata_source,
+        name: m.name,
+        model: m.model,
+        local_model_name: m.local_model_name,
+        modified_at: m.modified_at,
+        size_bytes: m.size_bytes,
+        digest: m.digest,
+        format: m.format,
+        family: m.family,
+        families: m.families,
+        parameter_size: m.parameter_size,
+        quantization_level: m.quantization_level,
+        local_metadata: m.local_metadata,
+        model_metadata: m.model_metadata,
+        availability: m.availability,
+        availability_source: m.availability_source,
+        runtime_metrics: m.runtime_metrics,
+        eval_results: m.eval_results,
       }));
       grouped[prov] = sortModelsForPicker(enriched);
       for (const m of enriched) flat.push({ ...m, provider: prov });
@@ -289,6 +350,11 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
     return recentModels.map((v) => flatByValue.get(v)).filter(Boolean) as typeof allModelOptions.flat;
   }, [allModelOptions.flat, recentModels]);
 
+  const compareOptions = useMemo(() => {
+    const flatByValue = new Map(allModelOptions.flat.map((m) => [m.value, m]));
+    return compareValues.map((v) => flatByValue.get(v)).filter(Boolean) as typeof allModelOptions.flat;
+  }, [allModelOptions.flat, compareValues]);
+
   const showRecents = !modelSearch.trim()
     && !capFilters.reasoning && !capFilters.subscription && !capFilters.apiKey
     && ctxIdx === 0 && costIdx === 0
@@ -296,6 +362,12 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
 
   const selectedLabel = allModelOptions.flat.find((m) => m.value === model)?.label || model;
   const [probeResult, setProbeResult] = useState<{ value: string; ok: boolean; error?: string; latency_ms?: number } | null>(null);
+
+  const toggleCompareValue = useCallback((value: string) => {
+    setCompareValues((prev) => (
+      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]
+    ));
+  }, []);
 
   useEffect(() => {
     if (!model) return;
@@ -329,41 +401,79 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
       opt.billing_kind || (opt.is_free ? 'free' : 'paid');
 
     const Bars = ({ filled, palette }: { filled: number; palette: string[] }) => {
-      const TOTAL_CELLS = 15;
-      const filledCells = Math.round((filled / 5) * TOTAL_CELLS);
+      const TOTAL_CELLS = 20;
+      const filledCells = Math.max(0, Math.min(TOTAL_CELLS, Math.round((filled / 5) * TOTAL_CELLS)));
 
       return (
-        <Box sx={{ display: 'inline-flex', gap: '1px', alignItems: 'center' }}>
-          {Array.from({ length: TOTAL_CELLS }, (_, i) => {
-            const on = i < filledCells;
-            const colorIdx = on
-              ? Math.min(
-                  palette.length - 1,
-                  Math.floor((i / Math.max(filledCells - 1, 1)) * (palette.length - 1)),
-                )
-              : 0;
+        <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75 }}>
+          <Box sx={{ display: 'inline-flex', alignItems: 'center' }}>
+            {Array.from({ length: TOTAL_CELLS }, (_, i) => {
+              const on = i < filledCells;
+              const colorIdx = on
+                ? Math.min(
+                    palette.length - 1,
+                    Math.floor((i / Math.max(TOTAL_CELLS - 1, 1)) * (palette.length - 1)),
+                  )
+                : 0;
+              const temperature = on ? 0.55 + ((i + 1) / TOTAL_CELLS) * 0.45 : 0.28;
 
-            return (
-              <Box
-                key={i}
-                sx={{
-                  width: 5,
-                  height: 5,
-                  bgcolor: on ? palette[colorIdx] : c.border.subtle,
-                  opacity: on ? 1 : 0.3,
-                  transformOrigin: 'center',
-                  animation: on
-                    ? `pixelPop 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) ${i * 0.018}s both`
-                    : 'none',
-                  '@keyframes pixelPop': {
-                    '0%': { transform: 'scale(0)', opacity: 0 },
-                    '60%': { transform: 'scale(1.2)', opacity: 1 },
-                    '100%': { transform: 'scale(1)', opacity: 1 },
-                  },
-                }}
-              />
-            );
-          })}
+              return (
+                <Box
+                  key={i}
+                  sx={{
+                    width: 5,
+                    height: 5,
+                    ml: i > 0 && i % 4 === 0 ? '4px' : '1px',
+                    bgcolor: on ? palette[colorIdx] : c.border.subtle,
+                    opacity: temperature,
+                    boxShadow: on
+                      ? `0 0 ${2 + Math.round(((i + 1) / TOTAL_CELLS) * 5)}px ${palette[colorIdx]}66`
+                      : 'none',
+                    transformOrigin: 'center',
+                    animation: on
+                      ? `pixelPop 0.58s cubic-bezier(0.22, 1, 0.36, 1) ${i * 0.045}s both, barHeatSweep 2.35s linear ${i * 0.075}s infinite`
+                      : 'none',
+                    '@keyframes pixelPop': {
+                      '0%': { transform: 'scale(0)', opacity: 0 },
+                      '60%': { transform: 'scale(1.2)', opacity: 1 },
+                      '100%': { transform: 'scale(1)', opacity: temperature },
+                    },
+                    '@keyframes barHeatSweep': {
+                      '0%': {
+                        filter: 'brightness(1)',
+                        transform: 'scale(1)',
+                      },
+                      '10%': {
+                        filter: 'brightness(1.65)',
+                        transform: 'scale(1.16)',
+                      },
+                      '20%': {
+                        filter: 'brightness(1.08)',
+                        transform: 'scale(1)',
+                      },
+                      '100%': {
+                        filter: 'brightness(1)',
+                        transform: 'scale(1)',
+                      },
+                    },
+                  }}
+                />
+              );
+            })}
+          </Box>
+          <Box
+            component="span"
+            sx={{
+              minWidth: 18,
+              color: c.text.ghost,
+              fontSize: '0.68rem',
+              fontVariantNumeric: 'tabular-nums',
+              fontWeight: 700,
+              lineHeight: 1,
+            }}
+          >
+            {filledCells}
+          </Box>
         </Box>
       );
     };
@@ -505,6 +615,23 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
     );
   }, [c.text.primary, modelSearch]);
 
+  const compareColumns = [
+    ['name', (m: any) => m.local_model_name || m.name || m.label],
+    ['provider', (m: any) => m.provider || 'Sin datos'],
+    ['family', (m: any) => m.family || 'Sin datos'],
+    ['parameters', (m: any) => m.parameter_size || 'Sin datos'],
+    ['quantization', (m: any) => m.quantization_level || 'Sin datos'],
+    ['format', (m: any) => m.format || 'Sin datos'],
+    ['size', (m: any) => formatBytes(m.size_bytes)],
+    ['modified', (m: any) => formatDate(m.modified_at)],
+    ['cost', (m: any) => m.billing_kind === 'free' ? 'Free / Local' : (m.billing_kind || 'Sin datos')],
+    ['availability', (m: any) => m.availability === 'available' ? 'Disponible' : 'Sin datos'],
+    ['context/source', (m: any) => m.context_window ? `${Number(m.context_window).toLocaleString()} (${sourceLabel(m.context_window_source)})` : 'Sin datos'],
+    ['reasoning/source', (m: any) => `${m.reasoning ? 'Sí' : 'No'} (${sourceLabel(m.reasoning_source)})`],
+    ['runtime metrics', (m: any) => m.runtime_metrics ? 'Disponible' : 'Sin datos'],
+    ['eval results', (m: any) => m.eval_results ? 'Disponible' : 'Sin datos'],
+  ] as const;
+
   return (
     <>
       <Box
@@ -548,7 +675,15 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
             },
           },
         }}
-        MenuListProps={{ autoFocusItem: false }}
+        MenuListProps={{
+          autoFocusItem: false,
+          onKeyDown: (e: React.KeyboardEvent) => {
+            if (compareMode && e.key === 'Enter' && compareOptions.length >= 2) {
+              e.preventDefault();
+              setCompareOpen(true);
+            }
+          },
+        }}
         disableAutoFocusItem
       >
         <Box onClick={(e) => e.stopPropagation()} sx={{ position: 'sticky', top: 0, zIndex: 2, bgcolor: c.bg.surface, borderBottom: `1px solid ${c.border.subtle}` }}>
@@ -561,6 +696,22 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
               placeholder="Search models..."
               sx={{ flex: 1, fontSize: '0.82rem', color: c.text.primary }}
             />
+            <Box
+              onClick={() => setCompareMode((prev) => !prev)}
+              sx={{
+                px: 0.75,
+                py: 0.25,
+                borderRadius: 999,
+                border: `1px solid ${compareMode ? c.accent.primary : c.border.subtle}`,
+                bgcolor: compareMode ? `${c.accent.primary}16` : 'transparent',
+                color: compareMode ? c.accent.primary : c.text.tertiary,
+                fontSize: '0.66rem',
+                fontWeight: 800,
+                cursor: 'pointer',
+              }}
+            >
+              VS{compareValues.length ? ` ${compareValues.length}` : ''}
+            </Box>
           </Box>
           {!modelSearch.trim() && recentSearches.length > 0 && (
             <Box sx={{ display: 'flex', gap: 0.5, px: 1.25, pb: 0.75, flexWrap: 'wrap' }}>
@@ -692,6 +843,23 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
                 <Tooltip key={`recent-${opt.value}`} title={buildModelTooltip(opt)} placement="right" enterDelay={300} slotProps={tooltipSlotProps}>
                   <MenuItem selected={model === opt.value} onClick={() => chooseModel(opt.value, opt.provider)}>
                     <ListItemText primary={opt.label} slotProps={{ primary: { sx: { fontSize: '0.8rem', color: model === opt.value ? c.text.primary : c.text.muted } } }} />
+                    {compareMode && (
+                      <Box
+                        onClick={(e) => { e.stopPropagation(); toggleCompareValue(opt.value); }}
+                        sx={{
+                          ml: 1,
+                          px: 0.65,
+                          py: 0.15,
+                          borderRadius: 999,
+                          border: `1px solid ${compareValues.includes(opt.value) ? c.accent.primary : c.border.subtle}`,
+                          color: compareValues.includes(opt.value) ? c.accent.primary : c.text.ghost,
+                          fontSize: '0.62rem',
+                          fontWeight: 800,
+                        }}
+                      >
+                        VS
+                      </Box>
+                    )}
                   </MenuItem>
                 </Tooltip>
               ))}
@@ -739,6 +907,24 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
                   <Tooltip key={opt.value} title={buildModelTooltip(opt)} placement="right" enterDelay={300} slotProps={tooltipSlotProps}>
                     <MenuItem selected={model === opt.value} onClick={() => chooseModel(opt.value, prov)}>
                       <ListItemText primary={highlightMatch(displayLabel)} slotProps={{ primary: { sx: { fontSize: '0.8rem', color: model === opt.value ? c.text.primary : c.text.muted } } }} />
+                      {compareMode && (
+                        <Box
+                          onClick={(e) => { e.stopPropagation(); toggleCompareValue(opt.value); }}
+                          sx={{
+                            ml: 1,
+                            px: 0.65,
+                            py: 0.15,
+                            borderRadius: 999,
+                            border: `1px solid ${compareValues.includes(opt.value) ? c.accent.primary : c.border.subtle}`,
+                            bgcolor: compareValues.includes(opt.value) ? `${c.accent.primary}14` : 'transparent',
+                            color: compareValues.includes(opt.value) ? c.accent.primary : c.text.ghost,
+                            fontSize: '0.62rem',
+                            fontWeight: 800,
+                          }}
+                        >
+                          VS
+                        </Box>
+                      )}
                     </MenuItem>
                   </Tooltip>
                 );
@@ -766,6 +952,20 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
           <Box component="span" sx={{ flexShrink: 0, pointerEvents: 'none' }}>
             Type to search · Esc to close
           </Box>
+          {compareMode && (
+            <Box
+              component="span"
+              onClick={() => compareOptions.length >= 2 && setCompareOpen(true)}
+              sx={{
+                cursor: compareOptions.length >= 2 ? 'pointer' : 'default',
+                color: compareOptions.length >= 2 ? c.accent.primary : c.text.ghost,
+                fontWeight: 800,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Compare {compareOptions.length || ''}
+            </Box>
+          )}
           <Tooltip
             title={`${pickerSummary.free} Free · ${pickerSummary.subscription} Subscription · ${pickerSummary.apiKey} API key · ${pickerSummary.reasoning} Reasoning · ${pickerSummary.longContext} 1M+ context`}
             placement="top-end"
@@ -778,6 +978,54 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
           </Tooltip>
         </Box>
       </Menu>
+
+      <Dialog
+        open={compareOpen}
+        onClose={() => setCompareOpen(false)}
+        maxWidth="lg"
+        fullWidth
+        PaperProps={{ sx: { bgcolor: c.bg.surface, color: c.text.primary, border: `1px solid ${c.border.subtle}` } }}
+      >
+        <DialogTitle sx={{ fontSize: '0.95rem', fontWeight: 800, borderBottom: `1px solid ${c.border.subtle}` }}>
+          Model Comparison
+        </DialogTitle>
+        <DialogContent sx={{ p: 0 }}>
+          {compareOptions.length < 2 ? (
+            <Box sx={{ p: 2, color: c.text.muted, fontSize: '0.82rem' }}>
+              Seleccioná al menos dos modelos con VS para comparar.
+            </Box>
+          ) : (
+            <Box sx={{ overflow: 'auto' }}>
+              <Box component="table" sx={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem' }}>
+                <Box component="thead">
+                  <Box component="tr">
+                    <Box component="th" sx={{ textAlign: 'left', p: 1, borderBottom: `1px solid ${c.border.subtle}`, color: c.text.tertiary }}>field</Box>
+                    {compareOptions.map((opt: any) => (
+                      <Box component="th" key={opt.value} sx={{ textAlign: 'left', p: 1, borderBottom: `1px solid ${c.border.subtle}`, color: c.text.secondary, minWidth: 160 }}>
+                        {opt.label}
+                      </Box>
+                    ))}
+                  </Box>
+                </Box>
+                <Box component="tbody">
+                  {compareColumns.map(([label, read]) => (
+                    <Box component="tr" key={label}>
+                      <Box component="td" sx={{ p: 1, borderBottom: `1px solid ${c.border.subtle}`, color: c.text.tertiary, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                        {label}
+                      </Box>
+                      {compareOptions.map((opt: any) => (
+                        <Box component="td" key={`${opt.value}-${label}`} sx={{ p: 1, borderBottom: `1px solid ${c.border.subtle}`, color: c.text.secondary, verticalAlign: 'top' }}>
+                          {read(opt)}
+                        </Box>
+                      ))}
+                    </Box>
+                  ))}
+                </Box>
+              </Box>
+            </Box>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 };

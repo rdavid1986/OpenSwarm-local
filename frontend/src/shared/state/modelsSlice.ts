@@ -9,6 +9,9 @@ export interface ModelOption {
   version?: string;
   context_window: number;
   reasoning?: boolean;
+  context_window_source?: 'estimated' | 'measured' | 'declared' | 'unknown';
+  reasoning_source?: 'estimated' | 'measured' | 'declared' | 'unknown';
+  tiers_source?: 'estimated' | 'measured' | 'declared' | 'unknown';
   // Optional picker-UX fields from list_models.
   input_cost_per_1m?: number;
   output_cost_per_1m?: number;
@@ -16,6 +19,25 @@ export interface ModelOption {
   max_completion_tokens?: number | null;
   tiers?: [number, number, number];  // (intelligence, speed, cost), 1-5.
   billing_kind?: 'paid' | 'subscription' | 'free' | 'api_key';
+  provider?: string;
+  metadata_source?: string;
+  name?: string | null;
+  model?: string | null;
+  local_model_name?: string | null;
+  modified_at?: string | null;
+  size_bytes?: number | null;
+  digest?: string | null;
+  format?: string | null;
+  family?: string | null;
+  families?: string[] | null;
+  parameter_size?: string | null;
+  quantization_level?: string | null;
+  local_metadata?: Record<string, any> | null;
+  model_metadata?: Record<string, any> | null;
+  availability?: 'available' | 'unknown' | string;
+  availability_source?: string | null;
+  runtime_metrics?: Record<string, any> | null;
+  eval_results?: Record<string, any> | null;
 }
 
 interface ModelsState {

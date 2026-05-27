@@ -687,6 +687,25 @@ async def list_models():
             return [2, 4, 1]
         return [2, 3, 1]
 
+    def _ollama_metadata(item: dict) -> dict:
+        details = item.get("details") if isinstance(item.get("details"), dict) else {}
+        name = str(item.get("name") or item.get("model") or "").strip()
+        return {
+            "source": "ollama_api_tags",
+            "name": name or None,
+            "model": item.get("model") or name or None,
+            "modified_at": item.get("modified_at"),
+            "size": item.get("size"),
+            "digest": item.get("digest"),
+            "details": {
+                "format": details.get("format"),
+                "family": details.get("family"),
+                "families": details.get("families"),
+                "parameter_size": details.get("parameter_size"),
+                "quantization_level": details.get("quantization_level"),
+            },
+        }
+
     async def _fetch_ollama_models() -> list[dict]:
         import httpx
         base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
@@ -705,16 +724,44 @@ async def list_models():
             if not name or name in seen:
                 continue
             seen.add(name)
+            metadata = _ollama_metadata(item)
+            details = metadata["details"]
             models.append({
                 "value": f"ollama/{name}",
                 "label": _ollama_label(name),
+                "provider": "Ollama Local",
+                # Compatibility fields for existing UI filters. These are
+                # heuristics until OpenSwarm measures/declares them elsewhere.
                 "context_window": _ollama_context_window(name),
                 "reasoning": _ollama_reasoning(name),
+                "context_window_source": "estimated",
+                "reasoning_source": "estimated",
+                "tiers_source": "estimated",
                 "input_cost_per_1m": 0.0,
                 "output_cost_per_1m": 0.0,
                 "is_free": True,
                 "billing_kind": "free",
                 "tiers": _ollama_tiers(name),
+                # Real local metadata from Ollama /api/tags, flattened for
+                # picker ergonomics and preserved as a structured object.
+                "local_metadata": metadata,
+                "model_metadata": metadata,
+                "metadata_source": "Ollama /api/tags",
+                "name": metadata.get("name"),
+                "model": metadata.get("model"),
+                "local_model_name": name,
+                "modified_at": metadata.get("modified_at"),
+                "size_bytes": metadata.get("size"),
+                "digest": metadata.get("digest"),
+                "format": details.get("format"),
+                "family": details.get("family"),
+                "families": details.get("families"),
+                "parameter_size": details.get("parameter_size"),
+                "quantization_level": details.get("quantization_level"),
+                "availability": "available",
+                "availability_source": "Ollama /api/tags",
+                "runtime_metrics": None,
+                "eval_results": None,
             })
         return models
 
