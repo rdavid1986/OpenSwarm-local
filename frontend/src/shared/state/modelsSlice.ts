@@ -9,7 +9,15 @@ export interface ModelOption {
   version?: string;
   context_window: number;
   reasoning?: boolean;
-  context_window_source?: 'estimated' | 'measured' | 'declared' | 'unknown';
+  context_window_source?: 'estimated' | 'measured' | 'declared' | 'configured' | 'loaded' | 'unknown';
+  estimated_context_window?: number | null;
+  estimated_context_source?: string | null;
+  configured_context_window?: number | null;
+  configured_context_source?: string | null;
+  declared_context_window?: number | null;
+  declared_context_source?: string | null;
+  loaded_context_window?: number | null;
+  loaded_context_source?: string | null;
   reasoning_source?: 'estimated' | 'measured' | 'declared' | 'unknown';
   tiers_source?: 'estimated' | 'measured' | 'declared' | 'unknown';
   // Optional picker-UX fields from list_models.
