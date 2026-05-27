@@ -315,6 +315,99 @@ def rank_context_sources(sources: list[Any] | None) -> list[dict[str, Any]]:
     )
 
 
+
+def build_context_budget_summary(
+    *,
+    context_budget_total: int | None = None,
+    context_budget_used: int | None = None,
+    selected_sources: list[Any] | None = None,
+    reserved_response_budget: int | None = None,
+    reserved_tool_budget: int | None = None,
+    reserved_evidence_budget: int | None = None,
+    context_budget_source: str | None = None,
+    overflow_strategy: str | None = None,
+) -> dict[str, Any]:
+    """Build a side-effect-free context budget summary.
+
+    The helper only summarizes caller-provided context candidates. It does not
+    fetch files, estimate tokens from content, call models, mutate SwarmState or
+    decide permissions.
+    """
+
+    total = _count_or_zero(context_budget_total)
+    explicit_used = _count_or_zero(context_budget_used)
+    source_cost = sum(
+        _count_or_zero(_as_dict(normalize_context_source(item)).get("budget_cost"))
+        for item in _as_list(selected_sources)
+    )
+    used = explicit_used or source_cost
+
+    reserved_response = _count_or_zero(reserved_response_budget)
+    reserved_tool = _count_or_zero(reserved_tool_budget)
+    reserved_evidence = _count_or_zero(reserved_evidence_budget)
+    reserved_total = reserved_response + reserved_tool + reserved_evidence
+
+    available_for_context = max(total - reserved_total, 0) if total else 0
+    remaining = max(available_for_context - used, 0) if available_for_context else 0
+    overflow_amount = max(used - available_for_context, 0) if available_for_context else 0
+
+    if not total:
+        status = "unknown_budget"
+    elif overflow_amount > 0:
+        status = "over_budget"
+    elif available_for_context and used >= available_for_context:
+        status = "at_limit"
+    else:
+        status = "within_budget"
+
+    return normalize_context_selection_value(
+        {
+            "context_budget_total": total,
+            "context_budget_used": used,
+            "context_budget_remaining": remaining,
+            "context_budget_available_for_context": available_for_context,
+            "context_budget_reserved_total": reserved_total,
+            "reserved_response_budget": reserved_response,
+            "reserved_tool_budget": reserved_tool,
+            "reserved_evidence_budget": reserved_evidence,
+            "context_budget_source": _as_text(context_budget_source) or MISSING,
+            "context_budget_status": status,
+            "overflow_amount": overflow_amount,
+            "overflow_strategy": _as_text(overflow_strategy) or "exclude_lowest_ranked_sources",
+        }
+    )
+
+
+def apply_context_budget_to_policy(
+    policy: dict[str, Any] | None,
+    *,
+    reserved_response_budget: int | None = None,
+    reserved_tool_budget: int | None = None,
+    reserved_evidence_budget: int | None = None,
+    overflow_strategy: str | None = None,
+) -> dict[str, Any]:
+    """Attach a computed context budget summary to a normalized policy."""
+
+    normalized = _as_dict(normalize_context_selection_value(policy or {}))
+    budget = build_context_budget_summary(
+        context_budget_total=normalized.get("context_budget_total"),
+        context_budget_used=normalized.get("context_budget_used"),
+        selected_sources=_as_list(normalized.get("selected_sources")),
+        reserved_response_budget=reserved_response_budget,
+        reserved_tool_budget=reserved_tool_budget,
+        reserved_evidence_budget=reserved_evidence_budget,
+        context_budget_source=_as_text(normalized.get("context_budget_source")) or None,
+        overflow_strategy=overflow_strategy,
+    )
+
+    merged = dict(normalized)
+    merged["context_budget"] = budget
+    merged["context_budget_used"] = budget["context_budget_used"]
+    merged["context_budget_total"] = budget["context_budget_total"]
+    merged["context_budget_source"] = budget["context_budget_source"]
+    return normalize_context_selection_value(merged)
+
+
 def build_ranked_context_selection_policy(**kwargs: Any) -> dict[str, Any]:
     """Build a policy and rank its selected sources."""
 

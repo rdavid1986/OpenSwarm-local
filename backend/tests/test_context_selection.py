@@ -1,4 +1,6 @@
 from backend.apps.swarms.context_selection import (
+    apply_context_budget_to_policy,
+    build_context_budget_summary,
     build_context_selection_policy,
     build_ranked_context_selection_policy,
     normalize_context_selection_value,
@@ -246,3 +248,67 @@ def test_build_ranked_context_selection_policy_ranks_selected_sources():
 
     assert policy["selected_sources"][0]["source_id"] == "frontend/src/App.tsx"
     assert "rank_score" in policy["selected_sources"][0]
+
+def test_context_budget_summary_calculates_reserved_remaining_and_status():
+    summary = build_context_budget_summary(
+        context_budget_total=32000,
+        selected_sources=[
+            {"source_kind": "filesystem", "source_id": "a.py", "budget_cost": 1200},
+            {"source_kind": "evidence", "source_id": "e1", "budget_cost": 300},
+        ],
+        reserved_response_budget=4000,
+        reserved_tool_budget=1000,
+        reserved_evidence_budget=500,
+        context_budget_source="configured",
+    )
+
+    assert summary["context_budget_total"] == 32000
+    assert summary["context_budget_used"] == 1500
+    assert summary["context_budget_reserved_total"] == 5500
+    assert summary["context_budget_available_for_context"] == 26500
+    assert summary["context_budget_remaining"] == 25000
+    assert summary["context_budget_status"] == "within_budget"
+    assert summary["context_budget_source"] == "configured"
+
+
+def test_context_budget_summary_detects_overflow_without_inventing_context():
+    summary = build_context_budget_summary(
+        context_budget_total=4000,
+        selected_sources=[
+            {"source_kind": "filesystem", "source_id": "large.py", "budget_cost": 3500},
+        ],
+        reserved_response_budget=1000,
+        reserved_tool_budget=250,
+        reserved_evidence_budget=250,
+    )
+
+    assert summary["context_budget_used"] == 3500
+    assert summary["context_budget_available_for_context"] == 2500
+    assert summary["context_budget_status"] == "over_budget"
+    assert summary["overflow_amount"] == 1000
+    assert summary["overflow_strategy"] == "exclude_lowest_ranked_sources"
+
+
+def test_apply_context_budget_to_policy_attaches_budget_summary():
+    policy = build_context_selection_policy(
+        selected_sources=[
+            {"source_kind": "filesystem", "source_id": "frontend/src/App.tsx", "budget_cost": 700},
+            {"source_kind": "docs", "source_id": "README.md", "budget_cost": 300},
+        ],
+        context_budget_total=8000,
+        context_budget_source="configured",
+    )
+
+    enriched = apply_context_budget_to_policy(
+        policy,
+        reserved_response_budget=2000,
+        reserved_tool_budget=500,
+        reserved_evidence_budget=500,
+        overflow_strategy="summarize_lowest_ranked_sources",
+    )
+
+    assert enriched["context_budget_used"] == 1000
+    assert enriched["context_budget_total"] == 8000
+    assert enriched["context_budget"]["context_budget_available_for_context"] == 5000
+    assert enriched["context_budget"]["context_budget_remaining"] == 4000
+    assert enriched["context_budget"]["overflow_strategy"] == "summarize_lowest_ranked_sources"
