@@ -486,6 +486,27 @@ const Tools: React.FC = () => {
     }
     return map;
   }, [mcpSettingsSnapshot]);
+  const mcpSettingsRequiredActions = useMemo(() => {
+    return (mcpSettingsSnapshot?.tools || [])
+      .map((snapshot) => {
+        const tool = snapshot.tool_id ? items[snapshot.tool_id] : undefined;
+        if (!tool) return null;
+        const integration = INTEGRATIONS.find((ig) => ig.name === tool.name);
+        if (!snapshot.enabled) {
+          return { tool, snapshot, integration, label: `Enable ${tool.name}`, reason: 'disabled' };
+        }
+        if (snapshot.auth_status === 'expired' || snapshot.auth_status === 'error' || snapshot.auth_status === 'unknown') {
+          return { tool, snapshot, integration, label: `Review ${tool.name}`, reason: 'auth_not_ready' };
+        }
+        if (snapshot.auth_status === 'configured' && integration?.authType) {
+          return { tool, snapshot, integration, label: `Connect ${tool.name}`, reason: 'connect_required' };
+        }
+        return null;
+      })
+      .filter(Boolean)
+      .slice(0, 4) as Array<{ tool: ToolDefinition; snapshot: any; integration?: Integration; label: string; reason: string }>;
+  }, [items, mcpSettingsSnapshot]);
+
   const uninstalledIntegrations = useMemo(() => INTEGRATIONS.filter((ig) => !allTools.find((t) => t.name === ig.name)), [allTools]);
   const getIntegrationForTool = useCallback((tool: ToolDefinition) => INTEGRATIONS.find((ig) => ig.name === tool.name), []);
 
@@ -667,6 +688,35 @@ const Tools: React.FC = () => {
       if (!key.startsWith('_')) updated[key] = 'ask';
     }
     await dispatch(updateTool({ id: toolId, tool_permissions: updated }));
+  };
+
+  const handleMcpSettingsRequiredAction = async (action: { tool: ToolDefinition; integration?: Integration; reason: string }) => {
+    setCustomSectionOpen(true);
+    setExpandedToolId(action.tool.id);
+
+    if (action.reason === 'disabled') {
+      await dispatch(updateTool({ id: action.tool.id, enabled: true }));
+      dispatch(fetchMcpSettingsSnapshot());
+      setSnackbar({ open: true, message: `${action.tool.name} enabled. Review configuration before activation.` });
+      return;
+    }
+
+    if (action.reason === 'connect_required' && action.integration?.authType === 'oauth2') {
+      await handleOAuthConnect(action.tool.id);
+      return;
+    }
+
+    if (action.reason === 'connect_required' && action.integration?.authType === 'device_code') {
+      await handleDeviceCodeConnect(action.tool.id);
+      return;
+    }
+
+    if (action.reason === 'connect_required' && action.integration?.credentialFields) {
+      openCredentialsDialog(action.tool.id, action.integration);
+      return;
+    }
+
+    setSnackbar({ open: true, message: `Review ${action.tool.name} configuration in the expanded MCP card.` });
   };
 
   const [expandedServices, setExpandedServices] = useState<Record<string, boolean>>({});
@@ -1409,6 +1459,33 @@ const Tools: React.FC = () => {
                   {mcpSettingsSnapshotLoading && <CircularProgress size={14} sx={{ color: c.text.ghost }} />}
                 </Box>
               </Box>
+              {mcpSettingsRequiredActions.length > 0 && (
+                <Box sx={{ mt: 1.25, pt: 1.25, borderTop: `1px solid ${c.border.subtle}`, display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
+                  <Typography sx={{ color: c.text.ghost, fontSize: '0.72rem', mr: 0.5 }}>
+                    Required actions:
+                  </Typography>
+                  {mcpSettingsRequiredActions.map((action) => (
+                    <Button
+                      key={`${action.tool.id}-${action.reason}`}
+                      size="small"
+                      variant="outlined"
+                      onClick={() => handleMcpSettingsRequiredAction(action)}
+                      sx={{
+                        borderColor: `${c.status.warning}55`,
+                        color: c.status.warning,
+                        bgcolor: `${c.status.warning}08`,
+                        textTransform: 'none',
+                        fontSize: '0.72rem',
+                        borderRadius: 1.25,
+                        py: 0.25,
+                        '&:hover': { borderColor: c.status.warning, bgcolor: `${c.status.warning}14` },
+                      }}
+                    >
+                      {action.label}
+                    </Button>
+                  ))}
+                </Box>
+              )}
             </CardContent>
           </Card>
         </Box>
