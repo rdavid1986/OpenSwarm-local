@@ -11,6 +11,7 @@ from backend.apps.swarms.eval_harness import (
     build_eval_loop_contract,
     build_eval_planner_node,
     build_eval_refiner_node,
+    evaluate_eval_loop_stop_policy,
     normalize_eval_critic_finding,
     normalize_eval_final_decision,
     normalize_eval_generator_candidate,
@@ -71,8 +72,11 @@ def test_normalize_eval_stop_policy_bounds_iterations_and_score():
     assert policy["max_iterations"] == 12
     assert policy["min_score"] == 0.0
     assert policy["stop_on_pass"] is False
+    assert policy["stop_on_failed"] is False
     assert policy["stop_on_blocked"] is True
+    assert policy["stop_on_max_iterations"] is True
     assert policy["allow_refinement"] is True
+    assert policy["require_evidence"] is True
 
 
 def test_build_eval_loop_contract_is_side_effect_free_contract():
@@ -631,3 +635,100 @@ def test_default_eval_loop_uses_rich_evaluator_node_contract():
     assert evaluator["metadata"]["final_decision"]["status"] == "draft"
     assert evaluator["metadata"]["final_decision"]["passed"] is False
     assert evaluator["executed"] is False
+
+
+def test_evaluate_eval_loop_stop_policy_stops_on_pass():
+    evaluator = build_eval_evaluator_node(
+        metrics=[
+            {"metric_id": "grounding", "name": "Grounding", "status": "passed", "score": 0.9},
+            {"metric_id": "safety", "name": "Safety", "status": "passed", "score": 1.0},
+        ],
+    )
+
+    decision = evaluate_eval_loop_stop_policy(
+        stop_policy={"max_iterations": 3, "min_score": 0.8},
+        evaluator_node=evaluator,
+        current_iteration=1,
+    )
+
+    assert decision["should_stop"] is True
+    assert decision["reason"] == "passed"
+    assert decision["status"] == "passed"
+    assert decision["passed"] is True
+    assert decision["blocked"] is False
+    assert decision["needs_refinement"] is False
+    assert decision["executed"] is False
+    assert decision["execution_result"] is None
+
+
+def test_evaluate_eval_loop_stop_policy_stops_on_blockers():
+    evaluator = build_eval_evaluator_node(
+        metrics=[{"metric_id": "grounding", "name": "Grounding", "status": "failed", "score": 0.2}],
+        blockers=["missing evidence"],
+    )
+
+    decision = evaluate_eval_loop_stop_policy(
+        stop_policy={"max_iterations": 3, "min_score": 0.8},
+        evaluator_node=evaluator,
+        current_iteration=1,
+    )
+
+    assert decision["should_stop"] is True
+    assert decision["reason"] == "blocked"
+    assert decision["status"] == "blocked"
+    assert decision["passed"] is False
+    assert decision["blocked"] is True
+    assert decision["needs_refinement"] is True
+    assert decision["blockers"] == ["missing evidence"]
+
+
+def test_evaluate_eval_loop_stop_policy_stops_on_max_iterations():
+    evaluator = build_eval_evaluator_node(
+        metrics=[{"metric_id": "grounding", "name": "Grounding", "status": "failed", "score": 0.4}],
+    )
+
+    decision = evaluate_eval_loop_stop_policy(
+        stop_policy={"max_iterations": 2, "min_score": 0.8},
+        evaluator_node=evaluator,
+        current_iteration=2,
+    )
+
+    assert decision["should_stop"] is True
+    assert decision["reason"] == "max_iterations_reached"
+    assert decision["status"] == "failed"
+    assert decision["max_iterations_reached"] is True
+    assert decision["needs_refinement"] is True
+
+
+def test_evaluate_eval_loop_stop_policy_continues_when_refinement_allowed():
+    evaluator = build_eval_evaluator_node(
+        metrics=[{"metric_id": "grounding", "name": "Grounding", "status": "failed", "score": 0.4}],
+    )
+
+    decision = evaluate_eval_loop_stop_policy(
+        stop_policy={"max_iterations": 3, "min_score": 0.8, "allow_refinement": True},
+        evaluator_node=evaluator,
+        current_iteration=1,
+    )
+
+    assert decision["should_stop"] is False
+    assert decision["reason"] == "continue"
+    assert decision["status"] == "needs_refinement"
+    assert decision["needs_refinement"] is True
+
+
+def test_eval_loop_contract_includes_stop_decision_without_execution():
+    contract = build_eval_loop_contract(
+        objective="Evaluate loop stop decision.",
+        task_kind="response_intelligence",
+        nodes=[
+            build_eval_evaluator_node(
+                metrics=[{"metric_id": "safety", "name": "Safety", "status": "passed", "score": 1.0}]
+            )
+        ],
+        stop_policy={"max_iterations": 3, "min_score": 0.8},
+    )
+
+    assert contract["stop_decision"]["should_stop"] is True
+    assert contract["stop_decision"]["reason"] == "passed"
+    assert contract["stop_decision"]["executed"] is False

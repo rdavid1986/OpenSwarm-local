@@ -746,6 +746,11 @@ def build_eval_loop_contract(
             "nodes": normalized_nodes,
             "node_count": len(normalized_nodes),
             "stop_policy": policy,
+            "stop_decision": evaluate_eval_loop_stop_policy(
+                stop_policy=policy,
+                evaluator_node=normalized_nodes[-1] if normalized_nodes else None,
+                current_iteration=0,
+            ),
             "summary": summarize_eval_loop(nodes=normalized_nodes, stop_policy=policy, status=resolved_status),
             "executed": False,
             "execution_result": None,
@@ -772,9 +777,86 @@ def normalize_eval_stop_policy(value: Any) -> dict[str, Any]:
             "max_iterations": max_iterations,
             "min_score": min_score,
             "stop_on_pass": bool(raw.get("stop_on_pass", True)),
+            "stop_on_failed": bool(raw.get("stop_on_failed", False)),
             "stop_on_blocked": bool(raw.get("stop_on_blocked", True)),
+            "stop_on_max_iterations": bool(raw.get("stop_on_max_iterations", True)),
             "allow_refinement": bool(raw.get("allow_refinement", True)),
+            "require_evidence": bool(raw.get("require_evidence", True)),
             "reason": _as_text(raw.get("reason")) or "default_eval_stop_policy",
+        }
+    )
+
+
+def evaluate_eval_loop_stop_policy(
+    *,
+    stop_policy: dict[str, Any] | None = None,
+    evaluator_node: dict[str, Any] | None = None,
+    current_iteration: int | None = None,
+    blockers: list[Any] | None = None,
+) -> dict[str, Any]:
+    """Evaluate whether an eval loop should stop without running the loop."""
+
+    policy = normalize_eval_stop_policy(stop_policy)
+    evaluator = _as_dict(evaluator_node)
+    evaluator_metadata = _as_dict(evaluator.get("metadata"))
+    final_decision = normalize_eval_final_decision(evaluator_metadata.get("final_decision"))
+    blocker_values = [_as_text(item) for item in _as_list(blockers) if _as_text(item)]
+    blocker_values.extend([item for item in final_decision.get("blockers", []) if item not in blocker_values])
+
+    try:
+        iteration = int(current_iteration or 0)
+    except Exception:
+        iteration = 0
+    iteration = max(0, iteration)
+
+    score = _bounded_score(final_decision.get("score"))
+    passed = bool(final_decision.get("passed")) and score >= float(policy.get("min_score") or 0.0)
+    blocked = bool(final_decision.get("blocked")) or bool(blocker_values)
+    needs_refinement = bool(final_decision.get("needs_refinement")) or score < float(policy.get("min_score") or 0.0)
+    max_iterations_reached = iteration >= int(policy.get("max_iterations") or 1)
+
+    should_stop = False
+    reason = "continue"
+    final_status = "needs_refinement" if needs_refinement else "ready"
+
+    if blocked and policy.get("stop_on_blocked"):
+        should_stop = True
+        reason = "blocked"
+        final_status = "blocked"
+    elif passed and policy.get("stop_on_pass"):
+        should_stop = True
+        reason = "passed"
+        final_status = "passed"
+    elif max_iterations_reached and policy.get("stop_on_max_iterations"):
+        should_stop = True
+        reason = "max_iterations_reached"
+        final_status = "failed" if needs_refinement else "stopped"
+    elif final_decision.get("status") == "failed" and policy.get("stop_on_failed"):
+        should_stop = True
+        reason = "failed"
+        final_status = "failed"
+    elif needs_refinement and not policy.get("allow_refinement"):
+        should_stop = True
+        reason = "refinement_not_allowed"
+        final_status = "failed"
+
+    return _bounded_value(
+        {
+            "status": final_status,
+            "should_stop": should_stop,
+            "reason": reason,
+            "passed": passed,
+            "blocked": blocked,
+            "needs_refinement": needs_refinement,
+            "current_iteration": iteration,
+            "max_iterations": policy.get("max_iterations"),
+            "max_iterations_reached": max_iterations_reached,
+            "score": score,
+            "min_score": policy.get("min_score"),
+            "blockers": blocker_values,
+            "stop_policy": policy,
+            "executed": False,
+            "execution_result": None,
         }
     )
 
