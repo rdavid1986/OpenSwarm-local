@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo } from 'react';
 import Button from '@mui/material/Button';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
@@ -11,9 +11,31 @@ import AppsOutlinedIcon from '@mui/icons-material/AppsOutlined';
 import ExtensionOutlinedIcon from '@mui/icons-material/ExtensionOutlined';
 import BugReportOutlinedIcon from '@mui/icons-material/BugReportOutlined';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
+import { useAppDispatch, useAppSelector } from '@/shared/hooks';
+import { fetchModes, type Mode } from '@/shared/state/modesSlice';
 import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
 
 export const DEFAULT_SWARM_MODE: SwarmMode = 'ask';
+const SWARM_MODE_IDS = ['ask', 'plan', 'app_builder', 'skill_builder', 'debug'] as const;
+const SWARM_MODE_ALIASES: Record<string, SwarmMode> = {
+  ask: 'ask',
+  chat: 'ask',
+  plan: 'plan',
+  app_builder: 'app_builder',
+  'app-builder': 'app_builder',
+  view_builder: 'app_builder',
+  'view-builder': 'app_builder',
+  skill_builder: 'skill_builder',
+  'skill-builder': 'skill_builder',
+  debug: 'debug',
+};
+const REGISTRY_IDS_BY_SWARM_MODE: Record<SwarmMode, string[]> = {
+  ask: ['ask', 'chat'],
+  plan: ['plan'],
+  app_builder: ['app_builder', 'app-builder', 'view-builder', 'view_builder'],
+  skill_builder: ['skill_builder', 'skill-builder'],
+  debug: ['debug'],
+};
 
 export interface SwarmModeOption {
   id: SwarmMode;
@@ -24,7 +46,7 @@ export interface SwarmModeOption {
   icon: React.ReactNode;
 }
 
-export const SWARM_MODE_OPTIONS: SwarmModeOption[] = [
+const FALLBACK_SWARM_MODE_OPTIONS: SwarmModeOption[] = [
   {
     id: 'ask',
     label: 'Ask',
@@ -67,8 +89,59 @@ export const SWARM_MODE_OPTIONS: SwarmModeOption[] = [
   },
 ];
 
+function modeIcon(icon?: string | null): React.ReactNode {
+  const sx = { fontSize: 16 };
+  switch (icon) {
+    case 'map':
+      return <FactCheckOutlinedIcon sx={sx} />;
+    case 'view_quilt':
+    case 'category':
+      return <AppsOutlinedIcon sx={sx} />;
+    case 'psychology':
+      return <ExtensionOutlinedIcon sx={sx} />;
+    case 'bug_report':
+      return <BugReportOutlinedIcon sx={sx} />;
+    case 'question_answer':
+    case 'smart_toy':
+    default:
+      return <ChatBubbleOutlineIcon sx={sx} />;
+  }
+}
+
+export function normalizeSwarmMode(mode?: string | null): SwarmMode {
+  return SWARM_MODE_ALIASES[String(mode || '').trim().toLowerCase()] || DEFAULT_SWARM_MODE;
+}
+
+function findRegistryMode(modesMap: Record<string, Mode>, mode: SwarmMode): Mode | null {
+  for (const id of REGISTRY_IDS_BY_SWARM_MODE[mode]) {
+    if (modesMap[id]) return modesMap[id];
+  }
+  return null;
+}
+
+function placeholderForMode(mode: SwarmMode): string {
+  return FALLBACK_SWARM_MODE_OPTIONS.find((option) => option.id === mode)?.placeholder || FALLBACK_SWARM_MODE_OPTIONS[0].placeholder;
+}
+
+function fallbackSwarmModeOption(mode: SwarmMode): SwarmModeOption {
+  return FALLBACK_SWARM_MODE_OPTIONS.find((option) => option.id === mode) || FALLBACK_SWARM_MODE_OPTIONS[0];
+}
+
+function registrySwarmModeOption(modesMap: Record<string, Mode>, mode: SwarmMode): SwarmModeOption | null {
+  const registryMode = findRegistryMode(modesMap, mode);
+  if (!registryMode) return null;
+  return {
+    id: mode,
+    label: registryMode.name,
+    shortDescription: registryMode.description,
+    placeholder: placeholderForMode(mode),
+    color: registryMode.color,
+    icon: modeIcon(registryMode.icon),
+  };
+}
+
 export function getSwarmModeOption(mode?: string | null): SwarmModeOption {
-  return SWARM_MODE_OPTIONS.find((option) => option.id === mode) || SWARM_MODE_OPTIONS[0];
+  return fallbackSwarmModeOption(normalizeSwarmMode(mode));
 }
 
 interface Props {
@@ -79,8 +152,23 @@ interface Props {
 
 const SwarmModePicker: React.FC<Props> = ({ mode, onChange, disabled = false }) => {
   const c = useClaudeTokens();
+  const dispatch = useAppDispatch();
+  const modesMap = useAppSelector((state) => state.modes.items);
+  const modesLoaded = useAppSelector((state) => state.modes.loaded);
   const [anchorEl, setAnchorEl] = React.useState<HTMLElement | null>(null);
-  const selected = getSwarmModeOption(mode);
+  const registryOptions = useMemo(
+    () => SWARM_MODE_IDS
+      .map((modeId) => registrySwarmModeOption(modesMap, modeId))
+      .filter((option): option is SwarmModeOption => Boolean(option)),
+    [modesMap],
+  );
+  const options = registryOptions.length > 0 ? registryOptions : FALLBACK_SWARM_MODE_OPTIONS;
+  const normalizedMode = normalizeSwarmMode(mode);
+  const selected = registrySwarmModeOption(modesMap, normalizedMode) || fallbackSwarmModeOption(normalizedMode);
+
+  useEffect(() => {
+    if (!modesLoaded && Object.keys(modesMap).length === 0) dispatch(fetchModes());
+  }, [dispatch, modesLoaded, modesMap]);
 
   return (
     <>
@@ -122,10 +210,10 @@ const SwarmModePicker: React.FC<Props> = ({ mode, onChange, disabled = false }) 
           },
         }}
       >
-        {SWARM_MODE_OPTIONS.map((option) => (
+        {options.map((option) => (
           <MenuItem
             key={option.id}
-            selected={option.id === mode}
+            selected={option.id === normalizedMode}
             onClick={() => {
               onChange(option.id);
               setAnchorEl(null);
