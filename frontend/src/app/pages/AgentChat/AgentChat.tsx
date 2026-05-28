@@ -195,6 +195,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
   const [awaitingResponse, setAwaitingResponse] = useState(false);
   const [activatingMcp, setActivatingMcp] = useState<string | null>(null);
   const [activateError, setActivateError] = useState<string | null>(null);
+  const [activateStatus, setActivateStatus] = useState<string | null>(null);
   const [mode, setMode] = useState('agent');
   const [model, setModel] = useState('sonnet');
 
@@ -1015,6 +1016,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                         onClick={async () => {
                           if (activatingMcp) return;
                           setActivateError(null);
+                          setActivateStatus(null);
                           setActivatingMcp(s.id);
                           try {
                             const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -1029,9 +1031,33 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                                 parent_session_id: session.id,
                               }),
                             });
-                            if (!r.ok) {
-                              setActivateError(`Activation failed (${r.status})`);
+                            const data = await r.json().catch(() => ({}));
+                            const serverName = data?.server_name || s.title || s.id;
+
+                            if (!r.ok || data?.status === 'blocked') {
+                              setActivateError(`Activation blocked: ${serverName}`);
+                              return;
                             }
+
+                            if (data?.status === 'unknown_server') {
+                              const available = Array.isArray(data.available) && data.available.length ? ` Available: ${data.available.join(', ')}` : '';
+                              setActivateError(`Unknown MCP server: ${serverName}.${available}`);
+                              return;
+                            }
+
+                            if (data?.status === 'already_active') {
+                              setActivateStatus(`${serverName} is already active for this session.`);
+                              dispatch(fetchSession(session.id));
+                              return;
+                            }
+
+                            if (data?.status === 'activated') {
+                              setActivateStatus(`${serverName} activated. OpenSwarm will continue with this MCP available.`);
+                              dispatch(fetchSession(session.id));
+                              return;
+                            }
+
+                            setActivateError(`Activation returned unexpected status: ${data?.status || r.status}`);
                           } catch (e: any) {
                             setActivateError(e?.message || 'Activation failed');
                           } finally {
@@ -1056,6 +1082,11 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                     </Box>
                   ))}
                 </Box>
+                {activateStatus && (
+                  <Typography variant="caption" sx={{ display: 'block', mt: 0.75, color: c.status.success }}>
+                    {activateStatus}
+                  </Typography>
+                )}
                 {activateError && (
                   <Typography variant="caption" sx={{ display: 'block', mt: 0.75, color: c.status.error }}>
                     {activateError}
