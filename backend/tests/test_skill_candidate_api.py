@@ -7,6 +7,8 @@ from backend.apps.skills.candidate_store import SkillCandidateStore
 
 def _client(monkeypatch, tmp_path):
     monkeypatch.setattr(skills_module, "skill_candidate_store", SkillCandidateStore(root=tmp_path / "skill_candidates"))
+    monkeypatch.setattr(skills_module, "SKILLS_DIR", str(tmp_path / "legacy_skills"))
+    monkeypatch.setattr(skills_module, "INDEX_PATH", str(tmp_path / "legacy_skills" / ".skills_index.json"))
     app = FastAPI()
     app.include_router(skills_module.skills.router, prefix="/api/skills")
     return TestClient(app)
@@ -117,6 +119,56 @@ def test_approve_missing_skill_candidate_returns_404(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
 
     response = client.post("/api/skills/candidates/missing/approval", json={"approved": True})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Skill candidate not found"
+
+def test_install_skill_candidate_requires_approved_candidate(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    created = client.post("/api/skills/candidates/create", json=_candidate_payload())
+    candidate_id = created.json()["candidate"]["candidate_id"]
+
+    response = client.post(f"/api/skills/candidates/{candidate_id}/install")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Skill candidate is not approved for install"
+
+
+def test_install_approved_skill_candidate_writes_legacy_skill_and_audit(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    payload = _candidate_payload()
+    payload["skill_spec"]["command"] = "css-check"
+    payload["evidence_refs"] = ["evidence-1"]
+    payload["policy_refs"] = ["policy-1"]
+
+    created = client.post("/api/skills/candidates/create", json=payload)
+    candidate_id = created.json()["candidate"]["candidate_id"]
+
+    approved = client.post(f"/api/skills/candidates/{candidate_id}/approval", json={"approved": True})
+    assert approved.status_code == 200
+    assert approved.json()["candidate"]["status"] == "approved_for_install"
+
+    installed = client.post(f"/api/skills/candidates/{candidate_id}/install")
+
+    assert installed.status_code == 200
+    body = installed.json()
+    assert body["ok"] is True
+    assert body["skill"]["id"] == "css-check"
+    assert body["candidate"]["status"] == "installed"
+    assert body["audit"]["candidate_id"] == candidate_id
+    assert body["audit"]["event"] == "skill_candidate_installed"
+
+    listed = client.get("/api/skills/list")
+    assert listed.status_code == 200
+    assert any(skill["id"] == "css-check" for skill in listed.json()["skills"])
+
+
+def test_install_missing_skill_candidate_returns_404(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    response = client.post("/api/skills/candidates/missing/install")
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Skill candidate not found"

@@ -9,6 +9,7 @@ from backend.config.Apps import SubApp
 from backend.apps.skills.candidate_store import SkillCandidateStore
 from backend.apps.skills.candidate_approval import apply_skill_candidate_install_approval
 from backend.apps.skills.candidate_gate import apply_skill_candidate_gate
+from backend.apps.skills.candidate_install import install_approved_skill_candidate
 from backend.apps.skills.candidate_validation import apply_skill_candidate_validation
 from backend.apps.skills.models import Skill, SkillCandidateApprovalRequest, SkillCreate, SkillSpecCandidate, SkillUpdate, SkillWorkspaceSeedRequest
 
@@ -165,6 +166,38 @@ async def approve_skill_candidate(candidate_id: str, body: SkillCandidateApprova
     approved_candidate = apply_skill_candidate_install_approval(candidate, approved=body.approved)
     saved = skill_candidate_store.save(approved_candidate)
     return {"ok": saved.install_approved, "candidate": saved.model_dump(mode="json")}
+
+
+
+
+@skills.router.post("/candidates/{candidate_id}/install")
+async def install_skill_candidate(candidate_id: str):
+    try:
+        candidate = skill_candidate_store.load(candidate_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Skill candidate not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    try:
+        skill, installed_candidate, next_index, audit = install_approved_skill_candidate(
+            candidate,
+            skills_dir=SKILLS_DIR,
+            index=_load_index(),
+        )
+    except ValueError as exc:
+        if str(exc) == "skill_candidate_not_approved_for_install":
+            raise HTTPException(status_code=409, detail="Skill candidate is not approved for install")
+        raise
+
+    _save_index(next_index)
+    saved_candidate = skill_candidate_store.save(installed_candidate)
+    return {
+        "ok": True,
+        "skill": skill.model_dump(),
+        "candidate": saved_candidate.model_dump(mode="json"),
+        "audit": audit,
+    }
 
 
 @skills.router.get("/candidates/{candidate_id}")
