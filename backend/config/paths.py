@@ -27,6 +27,7 @@ else:
 SESSIONS_DIR = os.path.join(DATA_ROOT, "sessions")
 TOOLS_DIR = os.path.join(DATA_ROOT, "tools")
 SETTINGS_DIR = os.path.join(DATA_ROOT, "settings")
+PROJECTS_DIR = os.path.join(DATA_ROOT, "projects")
 MODES_DIR = os.path.join(DATA_ROOT, "modes")
 DASHBOARDS_DIR = os.path.join(DATA_ROOT, "dashboards")
 OUTPUTS_DIR = os.path.join(DATA_ROOT, "outputs")

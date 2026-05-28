@@ -1,4 +1,4 @@
-﻿"""Global user configuration contracts for CONFIG.1."""
+"""Configuration model contracts for CONFIG.1/CONFIG.2."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 GLOBAL_CONFIG_SCHEMA_VERSION = 1
+PROJECT_CONFIG_SCHEMA_VERSION = 1
 
 SECRET_KEY_FRAGMENTS = (
     "secret",
@@ -80,6 +81,61 @@ class GlobalUserConfig(BaseModel):
         return sanitize_global_config_payload(self.model_dump())
 
 
+class ProjectConfig(BaseModel):
+    """Persisted project-level configuration.
+
+    ``project_id`` is required because it anchors the controlled persistence
+    path. Defaults are intentionally safe and inherit model choice from global
+    configuration via ``auto``/``inherit`` values.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: int = PROJECT_CONFIG_SCHEMA_VERSION
+    project_id: str
+    project_name: str | None = None
+    project_root: str | None = None
+    project_instructions: str = ""
+    default_language: str | None = None
+    default_model: str | None = None
+    preferred_workflow: Literal["inherit", "inspect_then_change", "plan_then_execute", "direct"] = "inherit"
+    preferred_models: dict[str, Any] = Field(default_factory=lambda: {
+        "primary": "auto",
+        "fallback": "inherit",
+    })
+    tool_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_global": True,
+        "require_approval_for_privileged_tools": True,
+        "never_assume_permissions": True,
+    })
+    mcp_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_global": True,
+        "activation_requires_explicit_user_action": True,
+        "activate_from_config_load": False,
+    })
+    validation_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_global": True,
+        "run_targeted_tests": True,
+    })
+    docs_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_global": True,
+        "preserve_existing_content": True,
+    })
+    memory_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_global": True,
+        "scope": "project",
+        "allow_sensitive_global_memory_in_miniagents": False,
+    })
+
+    def to_project_config(self) -> dict[str, Any]:
+        """Return a JSON-safe mapping for CONFIG.0 ``project_config`` resolution."""
+        return sanitize_project_config_payload(self.model_dump(exclude_none=True))
+
+
+def default_project_config(project_id: str, *, project_name: str | None = None) -> ProjectConfig:
+    return ProjectConfig(project_id=project_id, project_name=project_name)
+
+
 def default_global_config() -> GlobalUserConfig:
     return GlobalUserConfig()
 
@@ -92,6 +148,20 @@ def sanitize_global_config_payload(payload: dict[str, Any] | None) -> dict[str, 
     if not isinstance(sanitized, dict):
         return {}
     sanitized["schema_version"] = GLOBAL_CONFIG_SCHEMA_VERSION
+    return sanitized
+
+
+
+def sanitize_project_config_payload(payload: dict[str, Any] | None, *, project_id: str | None = None) -> dict[str, Any]:
+    """Remove secrets and unsafe activation keys from project config payloads."""
+    if not isinstance(payload, dict):
+        payload = {}
+    sanitized = _sanitize_value(payload)
+    if not isinstance(sanitized, dict):
+        sanitized = {}
+    if project_id is not None:
+        sanitized["project_id"] = project_id
+    sanitized["schema_version"] = PROJECT_CONFIG_SCHEMA_VERSION
     return sanitized
 
 
