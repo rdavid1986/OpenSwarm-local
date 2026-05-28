@@ -144,6 +144,7 @@ class SwarmState(BaseModel):
     effective_configuration: dict[str, Any] = Field(default_factory=dict)
     configuration_sources: dict[str, Any] = Field(default_factory=dict)
     configuration_conflicts: list[dict[str, Any]] = Field(default_factory=list)
+    miniagent_profiles: dict[str, Any] = Field(default_factory=dict)
     evidence: list[EvidenceRecord] = Field(default_factory=list)
     final_evidence: list[dict[str, Any] | EvidenceRecord] = Field(default_factory=list)
     final_result: dict[str, Any] = Field(default_factory=dict)

@@ -11,6 +11,7 @@ GLOBAL_CONFIG_SCHEMA_VERSION = 1
 PROJECT_CONFIG_SCHEMA_VERSION = 1
 SWARM_CONFIG_SCHEMA_VERSION = 1
 AGENT_CONFIG_SCHEMA_VERSION = 1
+MINIAGENT_CONFIG_SCHEMA_VERSION = 1
 
 SECRET_KEY_FRAGMENTS = (
     "secret",
@@ -292,6 +293,155 @@ def default_agent_config(agent_id: str, *, swarm_id: str | None = None, agent_ro
     return AgentConfig(agent_id=agent_id, swarm_id=swarm_id, agent_role=agent_role)
 
 
+class MiniAgentConfig(BaseModel):
+    """Persisted mini agent runtime profile configuration.
+
+    MiniAgents are task-scoped runtime workers, not chats. This config defines
+    reusable/exportable execution profile metadata and safe policy defaults.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: int = MINIAGENT_CONFIG_SCHEMA_VERSION
+    miniagent_id: str
+    parent_swarm_id: str | None = None
+    parent_agent_id: str | None = None
+    miniagent_role: str | None = None
+    specialization: str | None = None
+    task_scope: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    thinking_level: Literal["inherit", "off", "low", "medium", "high", "auto"] = "inherit"
+    context_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_agent": True,
+        "task_scoped_context": True,
+        "reduced_context_by_default": True,
+        "include_full_swarm_history": False,
+        "include_sensitive_memory": False,
+    })
+    memory_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_agent": True,
+        "read_scope": "task",
+        "write_scope": "none",
+        "allow_profile_memory": False,
+    })
+    tool_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_agent": True,
+        "require_approval_for_privileged_tools": True,
+        "never_assume_permissions": True,
+    })
+    mcp_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_agent": True,
+        "activation_requires_explicit_user_action": True,
+        "activate_from_config_load": False,
+    })
+    validation_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_agent": True,
+        "run_targeted_tests": True,
+        "require_evidence": True,
+    })
+    evidence_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "capture_outputs": True,
+        "capture_tool_results": True,
+        "capture_validation_result": True,
+    })
+    reuse_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "reusable": False,
+        "reuse_scope": "task",
+        "requires_user_approval": True,
+        "preserve_model_assignment": False,
+        "preserve_tool_permissions": False,
+        "preserve_context_policy": True,
+        "preserve_validation_policy": True,
+        "preserve_skill_references": True,
+    })
+    export_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "exportable": False,
+        "export_modes": [],
+        "include_context_summary": True,
+        "include_task_scope": True,
+        "include_tool_policy": True,
+        "include_mcp_policy": True,
+        "include_validation_policy": True,
+        "include_evidence_schema": True,
+        "include_skill_references": True,
+        "include_memory_scope": False,
+        "include_sensitive_data": False,
+    })
+    bundle_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "bundle_id": None,
+        "bundle_role": None,
+        "can_export_with_bundle": False,
+        "required_peer_roles": [],
+        "dependency_outputs": [],
+        "handoff_contract": {},
+        "shared_context_policy_refs": [],
+        "shared_validation_policy_refs": [],
+        "shared_skill_refs": [],
+    })
+    skill_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "can_use_skills": True,
+        "can_request_skills": True,
+        "can_create_skills": False,
+        "can_assign_skills": False,
+        "can_validate_skills": False,
+        "allow_missing_skill_request": True,
+        "allow_skill_change_request": True,
+        "require_skill_fit_check": True,
+    })
+
+    def to_miniagent_config(self) -> dict[str, Any]:
+        """Return explicit miniagent overrides for CONFIG.0 resolution."""
+        payload = sanitize_miniagent_config_payload(self.model_dump(exclude_none=True))
+        defaults = sanitize_miniagent_config_payload(
+            MiniAgentConfig(
+                miniagent_id=self.miniagent_id,
+                parent_swarm_id=self.parent_swarm_id,
+                parent_agent_id=self.parent_agent_id,
+            ).model_dump(exclude_none=True)
+        )
+        explicit: dict[str, Any] = {}
+        for key, value in payload.items():
+            if key in {"schema_version", "miniagent_id", "parent_swarm_id", "parent_agent_id", "miniagent_role"}:
+                continue
+            if value == "inherit":
+                continue
+            default_value = defaults.get(key)
+            if value == default_value:
+                continue
+            if isinstance(value, dict):
+                default_dict = default_value if isinstance(default_value, dict) else {}
+                clean_dict = {
+                    nested_key: nested_value
+                    for nested_key, nested_value in value.items()
+                    if nested_value != "inherit"
+                    and not str(nested_key).startswith("inherit_")
+                    and nested_value != default_dict.get(nested_key)
+                }
+                if clean_dict:
+                    explicit[key] = clean_dict
+                continue
+            if isinstance(value, list) and not value:
+                continue
+            explicit[key] = value
+        return explicit
+
+
+def default_miniagent_config(
+    miniagent_id: str,
+    *,
+    parent_swarm_id: str | None = None,
+    parent_agent_id: str | None = None,
+    miniagent_role: str | None = None,
+) -> MiniAgentConfig:
+    return MiniAgentConfig(
+        miniagent_id=miniagent_id,
+        parent_swarm_id=parent_swarm_id,
+        parent_agent_id=parent_agent_id,
+        miniagent_role=miniagent_role,
+    )
+
+
 def default_project_config(project_id: str, *, project_name: str | None = None) -> ProjectConfig:
     return ProjectConfig(project_id=project_id, project_name=project_name)
 
@@ -349,6 +499,19 @@ def sanitize_agent_config_payload(payload: dict[str, Any] | None, *, agent_id: s
     if agent_id is not None:
         sanitized["agent_id"] = agent_id
     sanitized["schema_version"] = AGENT_CONFIG_SCHEMA_VERSION
+    return sanitized
+
+
+def sanitize_miniagent_config_payload(payload: dict[str, Any] | None, *, miniagent_id: str | None = None) -> dict[str, Any]:
+    """Remove secrets and unsafe activation keys from miniagent config payloads."""
+    if not isinstance(payload, dict):
+        payload = {}
+    sanitized = _sanitize_value(payload)
+    if not isinstance(sanitized, dict):
+        sanitized = {}
+    if miniagent_id is not None:
+        sanitized["miniagent_id"] = miniagent_id
+    sanitized["schema_version"] = MINIAGENT_CONFIG_SCHEMA_VERSION
     return sanitized
 
 

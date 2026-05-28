@@ -61,8 +61,11 @@ from backend.apps.configuration.models import (
     AgentConfig,
     default_agent_config,
     default_global_config,
+    default_miniagent_config,
     default_swarm_config,
+    MiniAgentConfig,
     sanitize_agent_config_payload,
+    sanitize_miniagent_config_payload,
     sanitize_swarm_config_payload,
     SwarmConfig,
 )
@@ -445,6 +448,48 @@ def _build_agent_config(swarm, agent) -> AgentConfig:
 
 def _configuration_resolution_payload(resolution: Any) -> dict[str, Any]:
     return _swarm_configuration_resolution_payload(resolution)
+
+
+def _miniagent_profile(swarm, miniagent_id: str) -> dict[str, Any]:
+    profiles = getattr(swarm, "miniagent_profiles", None)
+    if not isinstance(profiles, dict):
+        swarm.miniagent_profiles = {}
+    profile = swarm.miniagent_profiles.get(miniagent_id)
+    if not isinstance(profile, dict):
+        profile = {
+            "miniagent_id": miniagent_id,
+            "configuration": {},
+            "effective_configuration": {},
+            "configuration_sources": {},
+            "configuration_conflicts": [],
+        }
+        swarm.miniagent_profiles[miniagent_id] = profile
+    return profile
+
+
+def _build_miniagent_config(swarm, miniagent_id: str) -> MiniAgentConfig:
+    profile = _miniagent_profile(swarm, miniagent_id)
+    payload = profile.get("configuration") if isinstance(profile, dict) else {}
+    if isinstance(payload, dict) and payload:
+        return MiniAgentConfig(**sanitize_miniagent_config_payload(payload, miniagent_id=miniagent_id))
+    parent_agent_id = profile.get("parent_agent_id") if isinstance(profile, dict) else None
+    miniagent_role = profile.get("miniagent_role") if isinstance(profile, dict) else None
+    return default_miniagent_config(
+        miniagent_id,
+        parent_swarm_id=swarm.id,
+        parent_agent_id=str(parent_agent_id) if parent_agent_id else None,
+        miniagent_role=str(miniagent_role) if miniagent_role else None,
+    )
+
+
+def _resolve_parent_agent_config_for_miniagent(swarm, profile: dict[str, Any]) -> AgentConfig | None:
+    parent_agent_id = profile.get("parent_agent_id") if isinstance(profile, dict) else None
+    if not parent_agent_id:
+        return None
+    agent = next((contract for contract in swarm.contracts if contract.id == parent_agent_id), None)
+    if agent is None:
+        return None
+    return _build_agent_config(swarm, agent)
 
 @swarms.router.get("/experimental/capabilities")
 async def experimental_capabilities():
@@ -2907,6 +2952,55 @@ async def get_agent_effective_configuration(swarm_id: str, agent_id: str):
     agent.effective_configuration = dict(payload["effective_config"])
     agent.configuration_sources = dict(payload["source_map"])
     agent.configuration_conflicts = list(payload["conflicts"])
+    swarm_orchestrator.store.save(swarm)
+    return payload
+
+
+@swarms.router.get("/{swarm_id}/miniagents/{miniagent_id}/configuration")
+async def get_miniagent_configuration(swarm_id: str, miniagent_id: str):
+    swarm = _load_or_404(swarm_id)
+    config = _build_miniagent_config(swarm, miniagent_id)
+    return {"ok": True, "configuration": config.model_dump(mode="json")}
+
+
+@swarms.router.post("/{swarm_id}/miniagents/{miniagent_id}/configuration")
+async def update_miniagent_configuration(swarm_id: str, miniagent_id: str, body: dict[str, Any]):
+    swarm = _load_or_404(swarm_id)
+    body_miniagent_id = body.get("miniagent_id") if isinstance(body, dict) else None
+    if body_miniagent_id is not None and str(body_miniagent_id) != miniagent_id:
+        raise HTTPException(status_code=400, detail="miniagent_id in body must match miniagent_id in path")
+    sanitized = sanitize_miniagent_config_payload(body, miniagent_id=miniagent_id)
+    config = MiniAgentConfig(**sanitized)
+    profile = _miniagent_profile(swarm, miniagent_id)
+    profile["configuration"] = config.model_dump(mode="json", exclude_none=True)
+    if config.parent_agent_id:
+        profile["parent_agent_id"] = config.parent_agent_id
+    if config.miniagent_role:
+        profile["miniagent_role"] = config.miniagent_role
+    swarm_orchestrator.store.save(swarm)
+    return {"ok": True, "configuration": profile["configuration"]}
+
+
+@swarms.router.get("/{swarm_id}/miniagents/{miniagent_id}/configuration/effective")
+async def get_miniagent_effective_configuration(swarm_id: str, miniagent_id: str):
+    swarm = _load_or_404(swarm_id)
+    profile = _miniagent_profile(swarm, miniagent_id)
+    swarm_config = _build_swarm_config(swarm)
+    agent_config = _resolve_parent_agent_config_for_miniagent(swarm, profile)
+    miniagent_config = _build_miniagent_config(swarm, miniagent_id)
+    project_config = _existing_project_config_for_swarm(swarm, swarm_config)
+    resolution = resolve_effective_config(
+        system_default=default_global_config().to_user_global_config(),
+        user_global=load_global_config(create_if_missing=True).to_user_global_config(),
+        project_config=project_config,
+        swarm_config=swarm_config.to_swarm_config(),
+        agent_config=agent_config.to_agent_config() if agent_config else None,
+        miniagent_config=miniagent_config.to_miniagent_config(),
+    )
+    payload = _configuration_resolution_payload(resolution)
+    profile["effective_configuration"] = dict(payload["effective_config"])
+    profile["configuration_sources"] = dict(payload["source_map"])
+    profile["configuration_conflicts"] = list(payload["conflicts"])
     swarm_orchestrator.store.save(swarm)
     return payload
 
