@@ -1,5 +1,6 @@
 ﻿"""Configuration taxonomy and resolver contracts."""
 
+from backend.apps.configuration.models import GlobalUserConfig, default_global_config, sanitize_global_config_payload
 from backend.apps.configuration.resolver import ConfigurationResolution, resolve_effective_config
 from backend.apps.configuration.taxonomy import (
     ConfigConflict,
@@ -16,6 +17,7 @@ from backend.apps.configuration.taxonomy import (
 __all__ = [
     "ConfigConflict",
     "ConfigRequiredAction",
+    "GlobalUserConfig",
     "ConfigSafetyNote",
     "ConfigScope",
     "ConfigSource",
@@ -24,5 +26,7 @@ __all__ = [
     "ConfigurationScopeRule",
     "EffectiveConfig",
     "build_configuration_scope_matrix",
+    "default_global_config",
     "resolve_effective_config",
+    "sanitize_global_config_payload",
 ]
