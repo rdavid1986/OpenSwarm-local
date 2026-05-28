@@ -58,8 +58,11 @@ from backend.apps.agents.runtime.approvals import approval_runtime
 from backend.apps.agents.runtime.events import event_trace_runtime
 from backend.apps.agents.orchestration.models import AgentToAgentMessage
 from backend.apps.configuration.models import (
+    AgentConfig,
+    default_agent_config,
     default_global_config,
     default_swarm_config,
+    sanitize_agent_config_payload,
     sanitize_swarm_config_payload,
     SwarmConfig,
 )
@@ -424,6 +427,24 @@ def _swarm_configuration_resolution_payload(resolution: Any) -> dict[str, Any]:
         "safety_notes": [_config_note_to_dict(item) for item in resolution.safety_notes],
         "effective_config_hash": resolution.effective_config_hash,
     }
+
+
+def _agent_or_404(swarm, agent_id: str):
+    for contract in swarm.contracts:
+        if contract.id == agent_id:
+            return contract
+    raise HTTPException(status_code=404, detail="Agent not found")
+
+
+def _build_agent_config(swarm, agent) -> AgentConfig:
+    payload = getattr(agent, "configuration", None) or {}
+    if payload:
+        return AgentConfig(**sanitize_agent_config_payload(payload, agent_id=agent.id))
+    return default_agent_config(agent.id, swarm_id=swarm.id, agent_role=str(agent.role))
+
+
+def _configuration_resolution_payload(resolution: Any) -> dict[str, Any]:
+    return _swarm_configuration_resolution_payload(resolution)
 
 @swarms.router.get("/experimental/capabilities")
 async def experimental_capabilities():
@@ -2844,6 +2865,50 @@ async def get_swarm_tasks(swarm_id: str):
 async def get_swarm_agents(swarm_id: str):
     swarm = _load_or_404(swarm_id)
     return {"agents": [contract.model_dump(mode="json") for contract in swarm.contracts]}
+
+
+@swarms.router.get("/{swarm_id}/agents/{agent_id}/configuration")
+async def get_agent_configuration(swarm_id: str, agent_id: str):
+    swarm = _load_or_404(swarm_id)
+    agent = _agent_or_404(swarm, agent_id)
+    config = _build_agent_config(swarm, agent)
+    return {"ok": True, "configuration": config.model_dump(mode="json")}
+
+
+@swarms.router.post("/{swarm_id}/agents/{agent_id}/configuration")
+async def update_agent_configuration(swarm_id: str, agent_id: str, body: dict[str, Any]):
+    swarm = _load_or_404(swarm_id)
+    agent = _agent_or_404(swarm, agent_id)
+    body_agent_id = body.get("agent_id") if isinstance(body, dict) else None
+    if body_agent_id is not None and str(body_agent_id) != agent_id:
+        raise HTTPException(status_code=400, detail="agent_id in body must match agent_id in path")
+    sanitized = sanitize_agent_config_payload(body, agent_id=agent_id)
+    config = AgentConfig(**sanitized)
+    agent.configuration = config.model_dump(mode="json", exclude_none=True)
+    swarm_orchestrator.store.save(swarm)
+    return {"ok": True, "configuration": agent.configuration}
+
+
+@swarms.router.get("/{swarm_id}/agents/{agent_id}/configuration/effective")
+async def get_agent_effective_configuration(swarm_id: str, agent_id: str):
+    swarm = _load_or_404(swarm_id)
+    agent = _agent_or_404(swarm, agent_id)
+    swarm_config = _build_swarm_config(swarm)
+    agent_config = _build_agent_config(swarm, agent)
+    project_config = _existing_project_config_for_swarm(swarm, swarm_config)
+    resolution = resolve_effective_config(
+        system_default=default_global_config().to_user_global_config(),
+        user_global=load_global_config(create_if_missing=True).to_user_global_config(),
+        project_config=project_config,
+        swarm_config=swarm_config.to_swarm_config(),
+        agent_config=agent_config.to_agent_config(),
+    )
+    payload = _configuration_resolution_payload(resolution)
+    agent.effective_configuration = dict(payload["effective_config"])
+    agent.configuration_sources = dict(payload["source_map"])
+    agent.configuration_conflicts = list(payload["conflicts"])
+    swarm_orchestrator.store.save(swarm)
+    return payload
 
 
 @swarms.router.get("/{swarm_id}/messages")

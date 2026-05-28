@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 GLOBAL_CONFIG_SCHEMA_VERSION = 1
 PROJECT_CONFIG_SCHEMA_VERSION = 1
 SWARM_CONFIG_SCHEMA_VERSION = 1
+AGENT_CONFIG_SCHEMA_VERSION = 1
 
 SECRET_KEY_FRAGMENTS = (
     "secret",
@@ -218,6 +219,79 @@ def default_swarm_config(swarm_id: str, *, project_id: str | None = None) -> Swa
     return SwarmConfig(swarm_id=swarm_id, project_id=project_id)
 
 
+class AgentConfig(BaseModel):
+    """Persisted agent-level configuration.
+
+    ``agent_id`` is required because this config is stored on AgentContract and
+    must remain associated with one agent contract inside a SwarmState.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: int = AGENT_CONFIG_SCHEMA_VERSION
+    agent_id: str
+    swarm_id: str | None = None
+    agent_role: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    thinking_level: Literal["inherit", "off", "low", "medium", "high", "auto"] = "inherit"
+    tool_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_swarm": True,
+        "require_approval_for_privileged_tools": True,
+        "never_assume_permissions": True,
+    })
+    mcp_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_swarm": True,
+        "activation_requires_explicit_user_action": True,
+        "activate_from_config_load": False,
+    })
+    validation_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_swarm": True,
+        "run_targeted_tests": True,
+    })
+    memory_scope: Literal["inherit", "agent", "swarm", "project", "none"] = "inherit"
+    context_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_swarm": True,
+        "reduced_context_by_default": True,
+    })
+
+    def to_agent_config(self) -> dict[str, Any]:
+        """Return explicit agent overrides for CONFIG.0 resolution."""
+        payload = sanitize_agent_config_payload(self.model_dump(exclude_none=True))
+        defaults = sanitize_agent_config_payload(
+            AgentConfig(agent_id=self.agent_id, swarm_id=self.swarm_id).model_dump(exclude_none=True)
+        )
+        explicit: dict[str, Any] = {}
+        for key, value in payload.items():
+            if key in {"schema_version", "agent_id", "swarm_id", "agent_role"}:
+                continue
+            if value == "inherit":
+                continue
+            default_value = defaults.get(key)
+            if value == default_value:
+                continue
+            if isinstance(value, dict):
+                default_dict = default_value if isinstance(default_value, dict) else {}
+                clean_dict = {
+                    nested_key: nested_value
+                    for nested_key, nested_value in value.items()
+                    if nested_value != "inherit"
+                    and not str(nested_key).startswith("inherit_")
+                    and nested_value != default_dict.get(nested_key)
+                }
+                if clean_dict:
+                    explicit[key] = clean_dict
+                continue
+            if isinstance(value, list) and not value:
+                continue
+            explicit[key] = value
+        return explicit
+
+
+def default_agent_config(agent_id: str, *, swarm_id: str | None = None, agent_role: str | None = None) -> AgentConfig:
+    return AgentConfig(agent_id=agent_id, swarm_id=swarm_id, agent_role=agent_role)
+
+
 def default_project_config(project_id: str, *, project_name: str | None = None) -> ProjectConfig:
     return ProjectConfig(project_id=project_id, project_name=project_name)
 
@@ -262,6 +336,19 @@ def sanitize_swarm_config_payload(payload: dict[str, Any] | None, *, swarm_id: s
     if swarm_id is not None:
         sanitized["swarm_id"] = swarm_id
     sanitized["schema_version"] = SWARM_CONFIG_SCHEMA_VERSION
+    return sanitized
+
+
+def sanitize_agent_config_payload(payload: dict[str, Any] | None, *, agent_id: str | None = None) -> dict[str, Any]:
+    """Remove secrets and unsafe activation keys from agent config payloads."""
+    if not isinstance(payload, dict):
+        payload = {}
+    sanitized = _sanitize_value(payload)
+    if not isinstance(sanitized, dict):
+        sanitized = {}
+    if agent_id is not None:
+        sanitized["agent_id"] = agent_id
+    sanitized["schema_version"] = AGENT_CONFIG_SCHEMA_VERSION
     return sanitized
 
 

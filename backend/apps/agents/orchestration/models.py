@@ -65,6 +65,10 @@ class AgentContract(BaseModel):
     model: str | None = None
     acceptance_criteria: list[str] = Field(default_factory=list)
     output_contract: dict[str, Any] = Field(default_factory=dict)
+    configuration: dict[str, Any] = Field(default_factory=dict)
+    effective_configuration: dict[str, Any] = Field(default_factory=dict)
+    configuration_sources: dict[str, Any] = Field(default_factory=dict)
+    configuration_conflicts: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class EvidenceRecord(BaseModel):
