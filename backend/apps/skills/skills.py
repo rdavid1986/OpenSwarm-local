@@ -7,9 +7,10 @@ from contextlib import asynccontextmanager
 from fastapi import HTTPException
 from backend.config.Apps import SubApp
 from backend.apps.skills.candidate_store import SkillCandidateStore
+from backend.apps.skills.candidate_approval import apply_skill_candidate_install_approval
 from backend.apps.skills.candidate_gate import apply_skill_candidate_gate
 from backend.apps.skills.candidate_validation import apply_skill_candidate_validation
-from backend.apps.skills.models import Skill, SkillCreate, SkillSpecCandidate, SkillUpdate, SkillWorkspaceSeedRequest
+from backend.apps.skills.models import Skill, SkillCandidateApprovalRequest, SkillCreate, SkillSpecCandidate, SkillUpdate, SkillWorkspaceSeedRequest
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +149,22 @@ async def create_skill_candidate(body: SkillSpecCandidate):
     gated_candidate = apply_skill_candidate_gate(validated_candidate)
     candidate = skill_candidate_store.save(gated_candidate)
     return {"ok": True, "candidate": candidate.model_dump(mode="json")}
+
+
+
+
+@skills.router.post("/candidates/{candidate_id}/approval")
+async def approve_skill_candidate(candidate_id: str, body: SkillCandidateApprovalRequest):
+    try:
+        candidate = skill_candidate_store.load(candidate_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Skill candidate not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    approved_candidate = apply_skill_candidate_install_approval(candidate, approved=body.approved)
+    saved = skill_candidate_store.save(approved_candidate)
+    return {"ok": saved.install_approved, "candidate": saved.model_dump(mode="json")}
 
 
 @skills.router.get("/candidates/{candidate_id}")

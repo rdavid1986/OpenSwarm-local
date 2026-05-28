@@ -76,3 +76,47 @@ def test_create_skill_candidate_persists_validation_errors(monkeypatch, tmp_path
     loaded = client.get(f"/api/skills/candidates/{candidate_id}")
     assert loaded.status_code == 200
     assert loaded.json()["status"] == "needs_validation"
+
+def test_approve_skill_candidate_requires_gate_pass(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    created = client.post("/api/skills/candidates/create", json=_candidate_payload())
+    candidate_id = created.json()["candidate"]["candidate_id"]
+
+    response = client.post(f"/api/skills/candidates/{candidate_id}/approval", json={"approved": True})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["candidate"]["install_approved"] is False
+    assert body["candidate"]["status"] == "validated"
+    assert body["candidate"]["warnings"][-1]["code"] == "skill_candidate_install_approval"
+
+
+def test_approve_skill_candidate_can_mark_ready_candidate_without_installing(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    payload = _candidate_payload()
+    payload["status"] = "validated"
+    payload["evidence_refs"] = ["evidence-1"]
+    payload["policy_refs"] = ["policy-1"]
+
+    created = client.post("/api/skills/candidates/create", json=payload)
+    candidate_id = created.json()["candidate"]["candidate_id"]
+
+    response = client.post(f"/api/skills/candidates/{candidate_id}/approval", json={"approved": True})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["candidate"]["install_approved"] is True
+    assert body["candidate"]["status"] == "approved_for_install"
+
+
+def test_approve_missing_skill_candidate_returns_404(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    response = client.post("/api/skills/candidates/missing/approval", json={"approved": True})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Skill candidate not found"
