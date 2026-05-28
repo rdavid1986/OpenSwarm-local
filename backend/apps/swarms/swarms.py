@@ -1,4 +1,4 @@
-﻿"""Swarm API endpoints.
+"""Swarm API endpoints.
 
 Thin REST surface over the non-executing SwarmOrchestrator state. This is
 intentionally state-only for now: it exposes plans/contracts/messages/artifacts
@@ -11,6 +11,7 @@ import json
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
@@ -56,6 +57,14 @@ from backend.apps.agents.runtime.model_dag_proposal_preview import (
 from backend.apps.agents.runtime.approvals import approval_runtime
 from backend.apps.agents.runtime.events import event_trace_runtime
 from backend.apps.agents.orchestration.models import AgentToAgentMessage
+from backend.apps.configuration.models import (
+    default_global_config,
+    default_swarm_config,
+    sanitize_swarm_config_payload,
+    SwarmConfig,
+)
+from backend.apps.configuration.resolver import resolve_effective_config
+from backend.apps.configuration.store import load_global_config, load_project_config, project_config_path
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health
 from backend.apps.agents.runtime.provider import ProviderTurnContext
@@ -335,6 +344,86 @@ def _load_or_404(swarm_id: str):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid swarm_id")
 
+
+
+
+def _config_source_map(source_map: dict[str, Any]) -> dict[str, str]:
+    return {key: getattr(value, "value", str(value)) for key, value in source_map.items()}
+
+
+def _config_dict_sources(item: dict[str, Any]) -> dict[str, Any]:
+    return {key: getattr(value, "value", value) for key, value in item.items()}
+
+
+def _config_conflict_to_dict(conflict: Any) -> dict[str, Any]:
+    return {
+        "key": conflict.key,
+        "existing_source": getattr(conflict.existing_source, "value", conflict.existing_source),
+        "incoming_source": getattr(conflict.incoming_source, "value", conflict.incoming_source),
+        "reason": conflict.reason,
+        "blocked": conflict.blocked,
+    }
+
+
+def _config_action_to_dict(action: Any) -> dict[str, Any]:
+    return {
+        "code": action.code,
+        "message": action.message,
+        "key": action.key,
+        "source": getattr(action.source, "value", action.source),
+    }
+
+
+def _config_note_to_dict(note: Any) -> dict[str, Any]:
+    return {
+        "code": note.code,
+        "message": note.message,
+        "key": note.key,
+        "source": getattr(note.source, "value", note.source),
+        "scope": getattr(note.scope, "value", note.scope),
+    }
+
+
+def _swarm_project_id_candidate(swarm, config_payload: dict[str, Any] | None = None) -> str | None:
+    payload = config_payload if isinstance(config_payload, dict) else getattr(swarm, "configuration", {}) or {}
+    project_id = payload.get("project_id") if isinstance(payload, dict) else None
+    return str(project_id or getattr(swarm, "dashboard_id", None) or "").strip() or None
+
+
+def _build_swarm_config(swarm) -> SwarmConfig:
+    payload = getattr(swarm, "configuration", None) or {}
+    project_id = _swarm_project_id_candidate(swarm, payload)
+    if payload:
+        return SwarmConfig(**sanitize_swarm_config_payload(payload, swarm_id=swarm.id))
+    return default_swarm_config(swarm.id, project_id=project_id)
+
+
+def _existing_project_config_for_swarm(swarm, swarm_config: SwarmConfig) -> dict[str, Any] | None:
+    project_id = swarm_config.project_id or _swarm_project_id_candidate(swarm, swarm_config.model_dump(exclude_none=True))
+    if not project_id:
+        return None
+    try:
+        path = Path(project_config_path(project_id))
+    except ValueError:
+        return None
+    if not path.exists():
+        return None
+    return load_project_config(project_id, create_if_missing=False).to_project_config()
+
+
+def _swarm_configuration_resolution_payload(resolution: Any) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "effective_config": resolution.effective_config.values,
+        "source_map": _config_source_map(resolution.source_map),
+        "sources": _config_source_map(resolution.sources),
+        "overrides": [_config_dict_sources(item) for item in resolution.overrides],
+        "conflicts": [_config_conflict_to_dict(item) for item in resolution.conflicts],
+        "blocked_entries": [_config_dict_sources(item) for item in resolution.blocked_entries],
+        "required_user_actions": [_config_action_to_dict(item) for item in resolution.required_user_actions],
+        "safety_notes": [_config_note_to_dict(item) for item in resolution.safety_notes],
+        "effective_config_hash": resolution.effective_config_hash,
+    }
 
 @swarms.router.get("/experimental/capabilities")
 async def experimental_capabilities():
@@ -2702,6 +2791,47 @@ async def create_swarm(body: CreateSwarmRequest):
 @swarms.router.get("/{swarm_id}")
 async def get_swarm(swarm_id: str):
     return _dump(_load_or_404(swarm_id))
+
+
+
+
+@swarms.router.get("/{swarm_id}/configuration")
+async def get_swarm_configuration(swarm_id: str):
+    swarm = _load_or_404(swarm_id)
+    config = _build_swarm_config(swarm)
+    return {"ok": True, "configuration": config.model_dump(mode="json")}
+
+
+@swarms.router.post("/{swarm_id}/configuration")
+async def update_swarm_configuration(swarm_id: str, body: dict[str, Any]):
+    swarm = _load_or_404(swarm_id)
+    body_swarm_id = body.get("swarm_id") if isinstance(body, dict) else None
+    if body_swarm_id is not None and str(body_swarm_id) != swarm_id:
+        raise HTTPException(status_code=400, detail="swarm_id in body must match swarm_id in path")
+    sanitized = sanitize_swarm_config_payload(body, swarm_id=swarm_id)
+    config = SwarmConfig(**sanitized)
+    swarm.configuration = config.model_dump(mode="json", exclude_none=True)
+    swarm_orchestrator.store.save(swarm)
+    return {"ok": True, "configuration": swarm.configuration}
+
+
+@swarms.router.get("/{swarm_id}/configuration/effective")
+async def get_swarm_effective_configuration(swarm_id: str):
+    swarm = _load_or_404(swarm_id)
+    swarm_config = _build_swarm_config(swarm)
+    project_config = _existing_project_config_for_swarm(swarm, swarm_config)
+    resolution = resolve_effective_config(
+        system_default=default_global_config().to_user_global_config(),
+        user_global=load_global_config(create_if_missing=True).to_user_global_config(),
+        project_config=project_config,
+        swarm_config=swarm_config.to_swarm_config(),
+    )
+    payload = _swarm_configuration_resolution_payload(resolution)
+    swarm.effective_configuration = dict(payload["effective_config"])
+    swarm.configuration_sources = dict(payload["source_map"])
+    swarm.configuration_conflicts = list(payload["conflicts"])
+    swarm_orchestrator.store.save(swarm)
+    return payload
 
 
 @swarms.router.get("/{swarm_id}/tasks")

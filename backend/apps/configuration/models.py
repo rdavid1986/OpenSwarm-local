@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 GLOBAL_CONFIG_SCHEMA_VERSION = 1
 PROJECT_CONFIG_SCHEMA_VERSION = 1
+SWARM_CONFIG_SCHEMA_VERSION = 1
 
 SECRET_KEY_FRAGMENTS = (
     "secret",
@@ -29,6 +30,7 @@ MCP_ACTIVATION_KEYS = {
     "mcp_activation",
     "mcp_enabled",
     "enabled_mcp_servers",
+    "activate_from_config_load",
 }
 
 
@@ -132,6 +134,90 @@ class ProjectConfig(BaseModel):
         return sanitize_project_config_payload(self.model_dump(exclude_none=True))
 
 
+class SwarmConfig(BaseModel):
+    """Persisted swarm-level configuration.
+
+    ``swarm_id`` is required because this config is stored on SwarmState and
+    must remain associated with one swarm. Defaults are safe and inherit model
+    choices via ``auto``/``inherit`` values.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: int = SWARM_CONFIG_SCHEMA_VERSION
+    swarm_id: str
+    project_id: str | None = None
+    swarm_role: Literal["coordinator", "implementation", "review", "research", "general"] = "general"
+    orchestration_style: Literal["inherit", "conservative", "balanced", "parallel"] = "inherit"
+    planning_depth: Literal["inherit", "shallow", "standard", "deep"] = "inherit"
+    agent_creation_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_global": True,
+        "require_user_approval_for_new_agents": True,
+    })
+    miniagent_strategy: Literal["inherit", "disabled", "reduced_context", "task_scoped"] = "inherit"
+    allowed_domains: list[str] = Field(default_factory=list)
+    preferred_models: dict[str, Any] = Field(default_factory=lambda: {
+        "primary": "auto",
+        "fallback": "inherit",
+    })
+    tool_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_project": True,
+        "require_approval_for_privileged_tools": True,
+        "never_assume_permissions": True,
+    })
+    mcp_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_project": True,
+        "activation_requires_explicit_user_action": True,
+        "activate_from_config_load": False,
+    })
+    validation_policy: dict[str, Any] = Field(default_factory=lambda: {
+        "inherit_project": True,
+        "run_targeted_tests": True,
+    })
+    memory_scope: Literal["inherit", "swarm", "project", "none"] = "inherit"
+
+    def to_swarm_config(self) -> dict[str, Any]:
+        """Return explicit swarm overrides for CONFIG.0 resolution.
+
+        Default swarm values are safe UI/storage defaults, not effective-config
+        overrides. Only values that differ from a default SwarmConfig are sent to
+        the resolver, so project/global configuration can still inherit normally.
+        """
+        payload = sanitize_swarm_config_payload(self.model_dump(exclude_none=True))
+        defaults = sanitize_swarm_config_payload(
+            SwarmConfig(swarm_id=self.swarm_id, project_id=self.project_id).model_dump(exclude_none=True)
+        )
+        explicit: dict[str, Any] = {}
+        for key, value in payload.items():
+            if key in {"schema_version", "swarm_id"}:
+                continue
+            if value == "inherit":
+                continue
+            default_value = defaults.get(key)
+            if value == default_value:
+                continue
+            if isinstance(value, dict):
+                default_dict = default_value if isinstance(default_value, dict) else {}
+                clean_dict = {
+                    nested_key: nested_value
+                    for nested_key, nested_value in value.items()
+                    if nested_value != "inherit"
+                    and not str(nested_key).startswith("inherit_")
+                    and nested_value != default_dict.get(nested_key)
+                }
+                if clean_dict:
+                    explicit[key] = clean_dict
+                continue
+            if isinstance(value, list) and not value:
+                continue
+            explicit[key] = value
+        return explicit
+
+
+def default_swarm_config(swarm_id: str, *, project_id: str | None = None) -> SwarmConfig:
+    return SwarmConfig(swarm_id=swarm_id, project_id=project_id)
+
+
 def default_project_config(project_id: str, *, project_name: str | None = None) -> ProjectConfig:
     return ProjectConfig(project_id=project_id, project_name=project_name)
 
@@ -165,13 +251,27 @@ def sanitize_project_config_payload(payload: dict[str, Any] | None, *, project_i
     return sanitized
 
 
+
+def sanitize_swarm_config_payload(payload: dict[str, Any] | None, *, swarm_id: str | None = None) -> dict[str, Any]:
+    """Remove secrets and unsafe activation keys from swarm config payloads."""
+    if not isinstance(payload, dict):
+        payload = {}
+    sanitized = _sanitize_value(payload)
+    if not isinstance(sanitized, dict):
+        sanitized = {}
+    if swarm_id is not None:
+        sanitized["swarm_id"] = swarm_id
+    sanitized["schema_version"] = SWARM_CONFIG_SCHEMA_VERSION
+    return sanitized
+
+
 def _sanitize_value(value: Any) -> Any:
     if isinstance(value, dict):
         clean: dict[str, Any] = {}
         for raw_key, raw_value in value.items():
             key = str(raw_key)
             key_lower = key.lower()
-            if _is_secret_key(key_lower) or _is_mcp_activation_key(key_lower):
+            if _is_secret_key(key_lower) or (_is_mcp_activation_key(key_lower) and bool(raw_value)):
                 continue
             clean[key] = _sanitize_value(raw_value)
         return clean
