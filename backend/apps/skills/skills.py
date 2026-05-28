@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import HTTPException
 from backend.config.Apps import SubApp
 from backend.apps.skills.candidate_store import SkillCandidateStore
+from backend.apps.skills.candidate_validation import apply_skill_candidate_validation
 from backend.apps.skills.models import Skill, SkillCreate, SkillSpecCandidate, SkillUpdate, SkillWorkspaceSeedRequest
 
 logger = logging.getLogger(__name__)
@@ -142,7 +143,7 @@ async def list_skill_candidates():
 
 @skills.router.post("/candidates/create")
 async def create_skill_candidate(body: SkillSpecCandidate):
-    candidate = skill_candidate_store.save(body)
+    candidate = skill_candidate_store.save(apply_skill_candidate_validation(body))
     return {"ok": True, "candidate": candidate.model_dump(mode="json")}
 
 
