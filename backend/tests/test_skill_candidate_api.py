@@ -35,6 +35,10 @@ def test_create_list_and_get_skill_candidate_without_installing(monkeypatch, tmp
     assert created_body["ok"] is True
     assert created_body["candidate"]["status"] == "validated"
     assert created_body["candidate"]["install_approved"] is False
+    gate_warning = created_body["candidate"]["warnings"][-1]
+    assert gate_warning["code"] == "skill_candidate_gate"
+    assert gate_warning["status"] == "blocked"
+    assert {reason["code"] for reason in gate_warning["reasons"]} == {"evidence_refs_missing", "policy_refs_missing"}
 
     listed = client.get("/api/skills/candidates/list")
     assert listed.status_code == 200
@@ -64,6 +68,10 @@ def test_create_skill_candidate_persists_validation_errors(monkeypatch, tmp_path
     assert body["candidate"]["status"] == "needs_validation"
     assert body["candidate"]["install_approved"] is False
     assert {reason["code"] for reason in body["candidate"]["validation_errors"]} == {"name_missing"}
+    gate_warning = body["candidate"]["warnings"][-1]
+    assert gate_warning["code"] == "skill_candidate_gate"
+    assert gate_warning["status"] == "blocked"
+    assert "validation_errors_present" in {reason["code"] for reason in gate_warning["reasons"]}
 
     loaded = client.get(f"/api/skills/candidates/{candidate_id}")
     assert loaded.status_code == 200
