@@ -146,7 +146,7 @@ const SkillBuilderChat: React.FC<SkillBuilderChatProps> = ({ onSkillPreview, onS
       const data = await res.json();
       setWorkspacePath(data.path);
       const action = dispatch(createDraftSession({
-        mode: 'skill-builder',
+        mode: 'skill_builder',
         setActive: false,
         targetDirectory: data.path,
         model: defaultModel || undefined,
@@ -156,7 +156,7 @@ const SkillBuilderChat: React.FC<SkillBuilderChatProps> = ({ onSkillPreview, onS
       setInitialDraftId(action.payload.draftId);
     } catch {
       const action = dispatch(createDraftSession({
-        mode: 'skill-builder',
+        mode: 'skill_builder',
         setActive: false,
         model: defaultModel || undefined,
         provider: resolvedProvider,
