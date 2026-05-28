@@ -13,7 +13,7 @@ import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import { useAppDispatch, useAppSelector } from '@/shared/hooks';
 import { createDraftSession, removeDraftSession } from '@/shared/state/agentsSlice';
-import { createSkill } from '@/shared/state/skillsSlice';
+import { createSkillCandidate } from '@/shared/state/skillsSlice';
 import AgentChat from '../AgentChat/AgentChat';
 import { ContextPath } from '@/app/components/DirectoryBrowser';
 import { API_BASE } from '@/shared/config';
@@ -233,13 +233,19 @@ const SkillBuilderChat: React.FC<SkillBuilderChatProps> = ({ onSkillPreview, onS
     if (!currentPreview || !currentPreview.name || !currentPreview.content) return;
     setSaving(true);
     try {
-      await dispatch(createSkill({
-        name: currentPreview.name,
-        description: currentPreview.description,
-        content: currentPreview.content,
-        command: currentPreview.command,
+      await dispatch(createSkillCandidate({
+        skill_spec: {
+          name: currentPreview.name,
+          description: currentPreview.description,
+          content: currentPreview.content,
+          command: currentPreview.command,
+          source_format: 'openswarm_skill_builder',
+          metadata_confidence: 'inferred',
+        },
+        source: 'skill_builder',
+        source_ref: workspacePath || '',
       })).unwrap();
-      onSkillSaved(`Skill "${currentPreview.name}" saved successfully`);
+      onSkillSaved(`Skill candidate "${currentPreview.name}" saved for review`);
     } catch (err) {
       console.error('Failed to save skill:', err);
     } finally {

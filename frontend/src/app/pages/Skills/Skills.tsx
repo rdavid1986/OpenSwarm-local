@@ -38,6 +38,7 @@ import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import { useAppDispatch, useAppSelector } from '@/shared/hooks';
 import {
   fetchSkills,
+  fetchSkillCandidates,
   createSkill,
   updateSkill,
   deleteSkill,
@@ -105,7 +106,7 @@ const Skills: React.FC = () => {
 
   const handleBuilderSaved = useCallback((message: string) => {
     setSnackbar({ open: true, message });
-    dispatch(fetchSkills());
+    dispatch(fetchSkillCandidates());
   }, [dispatch]);
 
   useEffect(() => {
