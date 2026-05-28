@@ -6,7 +6,8 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import HTTPException
 from backend.config.Apps import SubApp
-from backend.apps.skills.models import Skill, SkillCreate, SkillUpdate, SkillWorkspaceSeedRequest
+from backend.apps.skills.candidate_store import SkillCandidateStore
+from backend.apps.skills.models import Skill, SkillCreate, SkillSpecCandidate, SkillUpdate, SkillWorkspaceSeedRequest
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ async def skills_lifespan():
 
 
 skills = SubApp("skills", skills_lifespan)
+skill_candidate_store = SkillCandidateStore()
 
 
 def _load_index() -> dict[str, dict]:
@@ -129,6 +131,30 @@ async def read_skill_workspace(workspace_id: str):
         "meta": meta,
         "frontmatter": frontmatter,
     }
+
+
+
+
+@skills.router.get("/candidates/list")
+async def list_skill_candidates():
+    return {"candidates": [candidate.model_dump(mode="json") for candidate in skill_candidate_store.list()]}
+
+
+@skills.router.post("/candidates/create")
+async def create_skill_candidate(body: SkillSpecCandidate):
+    candidate = skill_candidate_store.save(body)
+    return {"ok": True, "candidate": candidate.model_dump(mode="json")}
+
+
+@skills.router.get("/candidates/{candidate_id}")
+async def get_skill_candidate(candidate_id: str):
+    try:
+        candidate = skill_candidate_store.load(candidate_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Skill candidate not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return candidate.model_dump(mode="json")
 
 
 @skills.router.get("/{skill_id}")
