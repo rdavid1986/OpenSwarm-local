@@ -43,6 +43,7 @@ import {
   updateSkill,
   deleteSkill,
   Skill,
+  SkillSpecCandidate,
 } from '@/shared/state/skillsSlice';
 import {
   fetchAllRegistrySkills,
@@ -63,6 +64,7 @@ interface SkillForm {
 type Selection =
   | { type: 'registry'; name: string }
   | { type: 'local'; id: string }
+  | { type: 'candidate'; id: string }
   | { type: 'builder-preview' }
   | null;
 
@@ -73,7 +75,7 @@ const SIDEBAR_W = 260;
 const Skills: React.FC = () => {
   const c = useClaudeTokens();
   const dispatch = useAppDispatch();
-  const { items, loading } = useAppSelector((s) => s.skills);
+  const { items, loading, candidates } = useAppSelector((s) => s.skills);
   const {
     skills: regSkills,
     loading: regLoading,
@@ -82,6 +84,7 @@ const Skills: React.FC = () => {
     detailLoading: regDetailLoading,
   } = useAppSelector((s) => s.skillRegistry);
   const localSkills = Object.values(items);
+  const skillCandidates = Object.values(candidates);
 
   const [selection, setSelection] = useState<Selection>(null);
   const [searchFilter, setSearchFilter] = useState('');
@@ -111,6 +114,7 @@ const Skills: React.FC = () => {
 
   useEffect(() => {
     dispatch(fetchSkills());
+    dispatch(fetchSkillCandidates());
     dispatch(fetchSkillRegistryStats());
     dispatch(fetchAllRegistrySkills());
   }, [dispatch]);
@@ -134,6 +138,15 @@ const Skills: React.FC = () => {
     return localSkills.filter((s) => s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q));
   }, [localSkills, searchFilter]);
 
+  const filteredCandidates = useMemo(() => {
+    const q = searchFilter.toLowerCase();
+    if (!q) return skillCandidates;
+    return skillCandidates.filter((candidate) => {
+      const spec = candidate.skill_spec;
+      return spec.name.toLowerCase().includes(q) || spec.description.toLowerCase().includes(q);
+    });
+  }, [skillCandidates, searchFilter]);
+
   const categoryOrder = useMemo(() => Object.keys(regGrouped).sort(), [regGrouped]);
 
   const toggleCategory = (cat: string) =>
@@ -149,9 +162,15 @@ const Skills: React.FC = () => {
     setSelection({ type: 'local', id });
   };
 
+  const selectCandidate = (id: string) => {
+    setSelection({ type: 'candidate', id });
+  };
+
   // Get active detail content
   const selectedLocal: Skill | null =
     selection?.type === 'local' ? items[selection.id] ?? null : null;
+  const selectedCandidate: SkillSpecCandidate | null =
+    selection?.type === 'candidate' ? candidates[selection.id] ?? null : null;
   const selectedReg: RegistrySkillDetail | null =
     selection?.type === 'registry' && regDetail?.name === selection.name ? regDetail : null;
 
@@ -205,9 +224,10 @@ const Skills: React.FC = () => {
     setDialogOpen(true);
   };
 
-  const isSelected = (type: 'registry' | 'local', key: string) => {
+  const isSelected = (type: 'registry' | 'local' | 'candidate', key: string) => {
     if (!selection) return false;
     if (type === 'registry') return selection.type === 'registry' && selection.name === key;
+    if (type === 'candidate') return selection.type === 'candidate' && selection.id === key;
     return selection.type === 'local' && selection.id === key;
   };
 
@@ -428,6 +448,41 @@ const Skills: React.FC = () => {
             </Box>
           )}
 
+          {/* Skill candidates */}
+          {filteredCandidates.length > 0 && (
+            <Box sx={{ mb: 1 }}>
+              <Box
+                onClick={() => toggleCategory('__candidates')}
+                sx={{
+                  display: 'flex', alignItems: 'center', gap: 0.5, px: 1, py: 0.5,
+                  cursor: 'pointer', userSelect: 'none',
+                  '&:hover': { bgcolor: 'rgba(0,0,0,0.02)' }, borderRadius: `${c.radius.sm}px`,
+                }}
+              >
+                {collapsedCats['__candidates']
+                  ? <KeyboardArrowRightIcon sx={{ fontSize: 16, color: c.text.ghost }} />
+                  : <KeyboardArrowDownIcon sx={{ fontSize: 16, color: c.text.ghost }} />}
+                <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: c.text.tertiary, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Skill Candidates
+                </Typography>
+                <Typography sx={{ fontSize: '0.68rem', color: c.text.ghost, ml: 0.5 }}>({filteredCandidates.length})</Typography>
+              </Box>
+              <Collapse in={!collapsedCats['__candidates']}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, mt: 0.25 }}>
+                  {filteredCandidates.map((candidate) => (
+                    <SidebarRow
+                      key={candidate.candidate_id}
+                      label={candidate.skill_spec.name}
+                      selected={isSelected('candidate', candidate.candidate_id)}
+                      onClick={() => selectCandidate(candidate.candidate_id)}
+                      icon={<AutoFixHighIcon sx={{ fontSize: 15, color: c.accent.primary, flexShrink: 0 }} />}
+                    />
+                  ))}
+                </Box>
+              </Collapse>
+            </Box>
+          )}
+
           {/* Registry categories */}
           {(loading || regLoading) && regSkills.length === 0 && localSkills.length === 0 ? (
             <Box sx={{ display: 'flex', justifyContent: 'center', pt: 6 }}>
@@ -528,6 +583,58 @@ const Skills: React.FC = () => {
             )}
 
             <ContentPreview content={builderPreview.content} />
+          </Box>
+        ) : selectedCandidate ? (
+          <Box sx={{ p: 4, pb: 3, maxWidth: 1100, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5, flexShrink: 0 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                <Typography sx={{ fontSize: '1.4rem', fontWeight: 700, color: c.text.primary, fontFamily: c.font.sans }}>
+                  {selectedCandidate.skill_spec.name || 'Untitled Skill Candidate'}
+                </Typography>
+                <Chip
+                  label={`Candidate · ${selectedCandidate.status}`}
+                  size="small"
+                  sx={{
+                    bgcolor: `${c.accent.primary}15`,
+                    color: c.accent.primary,
+                    fontWeight: 600,
+                    fontSize: '0.68rem',
+                    height: 22,
+                  }}
+                />
+              </Box>
+            </Box>
+
+            {selectedCandidate.skill_spec.command && (
+              <Box sx={{ mb: 1.5, flexShrink: 0 }}>
+                <Chip
+                  icon={<TerminalIcon sx={{ fontSize: 14 }} />}
+                  label={`/${selectedCandidate.skill_spec.command}`}
+                  size="small"
+                  sx={{
+                    bgcolor: 'rgba(174,86,48,0.08)', color: c.accent.primary,
+                    fontWeight: 500, fontSize: '0.78rem', height: 26,
+                  }}
+                />
+              </Box>
+            )}
+
+            <Box sx={{ mb: 1, flexShrink: 0 }}>
+              <Typography sx={{ fontSize: '0.78rem', color: c.text.ghost }}>
+                Saved as <strong style={{ color: c.accent.primary, fontWeight: 600 }}>review candidate</strong>. Install approval is not implemented yet.
+              </Typography>
+            </Box>
+
+            {selectedCandidate.skill_spec.description && (
+              <Box sx={{ mb: 2, flexShrink: 0 }}>
+                <Typography sx={{ fontSize: '0.78rem', color: c.text.ghost, mb: 0.5 }}>Description</Typography>
+                <Typography sx={{ fontSize: '0.88rem', color: c.text.secondary, lineHeight: 1.6 }}>
+                  {selectedCandidate.skill_spec.description}
+                </Typography>
+              </Box>
+            )}
+
+            <ContentPreview content={selectedCandidate.skill_spec.content} />
           </Box>
         ) : !selection ? (
           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: c.text.ghost, gap: 2 }}>
