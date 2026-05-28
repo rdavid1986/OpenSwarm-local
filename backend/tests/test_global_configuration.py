@@ -123,6 +123,7 @@ def test_effective_config_uses_defaults_when_no_overrides(monkeypatch, tmp_path:
 
     assert result.effective_config.values["default_model"] == "auto"
     assert result.effective_config.values["default_mcp_policy"]["activate_from_config_load"] is False
+    assert result.effective_config.values["default_docs_update_policy"]["update_roadmap_every_closed_phases"] == 4
 
 
 def test_global_override_changes_effective_config_hash(monkeypatch, tmp_path: Path):

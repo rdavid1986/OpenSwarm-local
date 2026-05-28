@@ -58,7 +58,7 @@ class GlobalUserConfig(BaseModel):
     })
     default_commit_policy: Literal["never_without_explicit_request", "ask_first", "allowed"] = "never_without_explicit_request"
     default_docs_update_policy: dict[str, Any] = Field(default_factory=lambda: {
-        "update_roadmap_every_closed_phases": 2,
+        "update_roadmap_every_closed_phases": 4,
         "preserve_existing_content": True,
     })
     default_memory_policy: dict[str, Any] = Field(default_factory=lambda: {
