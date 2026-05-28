@@ -62,12 +62,13 @@ function mergeSwarmPreservingImplementation(previous: any | null, incoming: any 
 
 export const createExperimentalSwarm = createAsyncThunk(
   'experimentalSwarms/create',
-  async ({ userPrompt, dashboardId, intent, swarmMode, swarmModel }: {
+  async ({ userPrompt, dashboardId, intent, swarmMode, swarmModel, workspacePath }: {
     userPrompt: string;
     dashboardId?: string;
     intent?: 'chat' | 'task';
     swarmMode?: SwarmMode;
     swarmModel?: string | null;
+    workspacePath?: string | null;
   }) => {
     const res = await fetch(`${SWARMS_API}/create`, {
       method: 'POST',
@@ -78,6 +79,7 @@ export const createExperimentalSwarm = createAsyncThunk(
         intent,
         swarm_mode: swarmMode,
         swarm_model: swarmModel,
+        workspace_path: workspacePath,
       }),
     });
     return await readJson(res);

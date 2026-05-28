@@ -1566,6 +1566,8 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     swarmCardId: string;
     swarmId?: string | null;
     previewOutputId?: string | null;
+    skillWorkspaceId?: string | null;
+    skillWorkspacePath?: string | null;
     x?: number;
     y?: number;
     width?: number;
@@ -1583,6 +1585,8 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
           ...current,
           swarm_id: 'swarmId' in swarmPatch ? swarmPatch.swarmId ?? null : current.swarm_id,
           preview_output_id: 'previewOutputId' in swarmPatch ? swarmPatch.previewOutputId ?? null : current.preview_output_id ?? null,
+          skill_workspace_id: 'skillWorkspaceId' in swarmPatch ? swarmPatch.skillWorkspaceId ?? null : current.skill_workspace_id ?? null,
+          skill_workspace_path: 'skillWorkspacePath' in swarmPatch ? swarmPatch.skillWorkspacePath ?? null : current.skill_workspace_path ?? null,
           x: swarmPatch.x ?? current.x,
           y: swarmPatch.y ?? current.y,
           width: swarmPatch.width ?? current.width,
@@ -2704,6 +2708,8 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                 swarmMode={sc.swarm_mode || 'ask'}
                 swarmModel={sc.swarm_model || null}
                 previewOutputId={sc.preview_output_id || null}
+                skillWorkspaceId={sc.skill_workspace_id || null}
+                skillWorkspacePath={sc.skill_workspace_path || null}
                 zoom={canvas.zoom}
                 isSelected={selection.isSelected(sc.swarm_card_id)}
                 isHighlighted={highlightedCardId === sc.swarm_card_id}

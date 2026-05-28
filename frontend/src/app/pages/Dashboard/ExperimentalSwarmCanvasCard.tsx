@@ -16,6 +16,7 @@ import {
   setSwarmCardModel,
   setSwarmCardPosition,
   setSwarmCardSize,
+  setSwarmCardSkillWorkspace,
   setSwarmCardSwarmId,
   toggleSwarmCardCollapsed,
 } from '@/shared/state/dashboardLayoutSlice';
@@ -38,6 +39,7 @@ import type { CardType } from './useDashboardSelection';
 import SwarmPromptInput from './SwarmPromptInput';
 import { DEFAULT_SWARM_MODE, getSwarmModeOption } from './SwarmModePicker';
 import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
+import { API_BASE } from '@/shared/config';
 
 type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 type ImplementationVisualState =
@@ -64,6 +66,8 @@ interface Props {
   swarmMode?: SwarmMode;
   swarmModel?: string | null;
   previewOutputId?: string | null;
+  skillWorkspaceId?: string | null;
+  skillWorkspacePath?: string | null;
   zoom?: number;
   isSelected?: boolean;
   isHighlighted?: boolean;
@@ -78,6 +82,8 @@ interface Props {
     swarmCardId: string;
     swarmId?: string | null;
     previewOutputId?: string | null;
+    skillWorkspaceId?: string | null;
+    skillWorkspacePath?: string | null;
     x?: number;
     y?: number;
     width?: number;
@@ -98,6 +104,16 @@ const MAX_SIDE_W = 520;
 const DEFAULT_SWARM_CONTEXT_LIMIT = 32_000;
 
 const PREVIEW_REFINEMENT_MARKER = 'quiero refinar la app generada desde esta preview';
+const SKILL_WORKSPACE_API = `${API_BASE}/skills`;
+
+function stableSkillWorkspaceIdForSwarmCard(swarmCardId: string): string {
+  const safeId = String(swarmCardId || 'swarm-main')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'swarm-main';
+  return `swarm-skill-ws-${safeId}`;
+}
 
 function parseCsvRefs(value: string | null | undefined): string[] {
   return (value || '')
@@ -714,6 +730,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   swarmMode = DEFAULT_SWARM_MODE,
   swarmModel = null,
   previewOutputId = null,
+  skillWorkspaceId = null,
+  skillWorkspacePath = null,
   zoom = 1,
   isSelected = false,
   isHighlighted = false,
@@ -826,6 +844,45 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const handleSwarmModelChange = useCallback((nextModel: string) => {
     dispatch(setSwarmCardModel({ swarmCardId, swarmModel: nextModel }));
   }, [dispatch, swarmCardId]);
+
+  const ensureSkillWorkspace = useCallback(async (): Promise<string | null> => {
+    if (activeSwarmModeRef.current !== 'skill_builder') return skillWorkspacePath || null;
+    if (skillWorkspacePath) return skillWorkspacePath;
+
+    const workspaceId = skillWorkspaceId || stableSkillWorkspaceIdForSwarmCard(swarmCardId);
+    try {
+      const res = await fetch(`${SKILL_WORKSPACE_API}/workspace/seed`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace_id: workspaceId }),
+      });
+      if (!res.ok) throw new Error(`Skill workspace seed failed: ${res.status}`);
+      const data = await res.json();
+      const nextPath = typeof data.path === 'string' && data.path.trim() ? data.path : null;
+      if (!nextPath) throw new Error('Skill workspace seed response did not include path');
+
+      // Persisted workspace is Skill Builder parity for SwarmCard, not skill installation.
+      dispatch(setSwarmCardSkillWorkspace({
+        swarmCardId,
+        skillWorkspaceId: workspaceId,
+        skillWorkspacePath: nextPath,
+      }));
+      onSwarmBound?.({
+        swarmCardId,
+        skillWorkspaceId: workspaceId,
+        skillWorkspacePath: nextPath,
+      });
+      return nextPath;
+    } catch (error) {
+      console.warn('Failed to prepare Swarm Skill Builder workspace; continuing chat without workspace.', error);
+      return null;
+    }
+  }, [dispatch, onSwarmBound, skillWorkspaceId, skillWorkspacePath, swarmCardId]);
+
+  useEffect(() => {
+    if (activeSwarmMode !== 'skill_builder') return;
+    void ensureSkillWorkspace();
+  }, [activeSwarmMode, ensureSkillWorkspace]);
 
   const activeSwarmId = swarmId || null;
   const activeSwarm = activeSwarmId && swarmState.swarm?.id === activeSwarmId ? swarmState.swarm : null;
@@ -1077,6 +1134,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     let swarmIdToRun = activeSwarmId;
     const activeIntent = activeSwarm?.intent || null;
     const requestedMode = getSwarmModeOption(activeSwarmModeRef.current).id;
+    const skillWorkspacePathToUse = requestedMode === 'skill_builder'
+      ? await ensureSkillWorkspace()
+      : null;
 
     const isPreviewRefinementMessage = Boolean(parsePreviewRefinementDraft(messageToSend));
 
@@ -1087,6 +1147,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
         intent: 'chat',
         swarmMode: requestedMode,
         swarmModel: activeSwarmModel,
+        workspacePath: skillWorkspacePathToUse,
       }));
       if (createExperimentalSwarm.fulfilled.match(action)) {
         swarmIdToRun = action.payload.id;
@@ -1130,7 +1191,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       model: activeSwarmModel,
     }));
     dispatch(fetchExperimentalSwarm(swarmIdToRun));
-  }, [activeSwarm?.intent, activeSwarmId, activeSwarmModel, dashboardId, dispatch, lastSubmittedPrompt, onSwarmBound, pendingPreviewRefinementDraft, prompt, swarmCardId]);
+  }, [activeSwarm?.intent, activeSwarmId, activeSwarmModel, dashboardId, dispatch, ensureSkillWorkspace, lastSubmittedPrompt, onSwarmBound, pendingPreviewRefinementDraft, prompt, swarmCardId]);
 
   useEffect(() => {
     const intakeStatus = (activeSwarm as any)?.project_intake_state?.status;

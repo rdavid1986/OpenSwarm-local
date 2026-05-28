@@ -3,6 +3,7 @@ from pathlib import Path
 from backend.apps.agents.orchestration.models import EvidenceRecord, SwarmState
 from backend.apps.outputs.models import Output, OutputIterationRecord
 from backend.apps.swarms.workspace_intelligence import build_output_version_freshness, build_workspace_intelligence
+from backend.config import paths as backend_paths
 
 
 def _workspace(tmp_path: Path) -> Path:
@@ -103,6 +104,23 @@ def test_workspace_intelligence_reports_outside_root_without_reading(tmp_path: P
     assert snapshot["freshness"] == "unknown"
     assert snapshot["errors"][0]["error"] == "workspace_outside_allowed_root"
     assert all(item["sha256"] is None for item in snapshot["files"])
+
+
+def test_workspace_intelligence_allows_skill_workspace_root(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    skills_root = tmp_path / "data" / "skills_workspace"
+    monkeypatch.setattr(backend_paths, "SKILLS_WORKSPACE_DIR", str(skills_root))
+    monkeypatch.setattr("backend.apps.swarms.workspace_intelligence.SKILLS_WORKSPACE_DIR", str(skills_root))
+
+    workspace = skills_root / "skill-ws"
+    workspace.mkdir(parents=True)
+    (workspace / "SKILL.md").write_text("# Skill\n", encoding="utf-8")
+
+    snapshot = build_workspace_intelligence(workspace_path=str(workspace))
+
+    assert snapshot["errors"] == []
+    assert snapshot["exists"] is True
+    assert snapshot["workspace_path"] == str(workspace.resolve())
 
 
 def test_workspace_intelligence_rejects_symlink_outside_workspace(tmp_path: Path, monkeypatch):

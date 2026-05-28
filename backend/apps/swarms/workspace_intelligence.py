@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from backend.apps.outputs import outputs as outputs_module
+from backend.config.paths import SKILLS_WORKSPACE_DIR
 from backend.apps.outputs.outputs import STATIC_OUTPUT_ALLOWED_FILES, STATIC_OUTPUT_REQUIRED_FILES, load_output, load_output_iterations
 
 
@@ -42,9 +43,10 @@ def _safe_workspace_root() -> Path:
 
 def _allowed_workspace_roots() -> list[Path]:
     roots = [_safe_workspace_root()]
-    outputs_workspace_root = Path(outputs_module.WORKSPACE_DIR).resolve()
-    if outputs_workspace_root not in roots:
-        roots.append(outputs_workspace_root)
+    for raw_root in (outputs_module.WORKSPACE_DIR, SKILLS_WORKSPACE_DIR):
+        workspace_root = Path(raw_root).resolve()
+        if workspace_root not in roots:
+            roots.append(workspace_root)
     return roots
 
 
