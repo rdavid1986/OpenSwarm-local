@@ -14,6 +14,7 @@ from uuid import uuid5, NAMESPACE_URL
 from backend.apps.agents.providers.ollama_adapter import OllamaAdapter
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health, is_local_model
 from backend.apps.agents.runtime.provider import ProviderTurnContext
+from backend.apps.modes.mode_ids import normalize_mode_id
 from backend.apps.swarms.model_response_contract import build_model_response_contract_prompt
 from backend.apps.swarms.state_context import build_state_context_payload, build_state_context_prompt
 from backend.apps.swarms.system_prompt import build_openswarm_system_prompt
@@ -112,7 +113,7 @@ def build_creation_type_options() -> list[dict[str, str]]:
 
 
 def build_clarification_question(*, mode: str, reason: str) -> str:
-    normalized_mode = _lower(mode or "ask")
+    normalized_mode = normalize_mode_id(mode, default="ask")
     if reason == "empty_user_message":
         return {
             "plan": "¿Qué querés planear?",
@@ -142,7 +143,7 @@ def build_clarification_options(*, mode: str, reason: str) -> list[dict[str, str
     if reason == "creation_type_unclear":
         return build_creation_type_options()
 
-    normalized_mode = _lower(mode or "ask")
+    normalized_mode = normalize_mode_id(mode, default="ask")
     base_options = {
         "plan": [
             {"label": "Plan técnico", "value": "plan técnico", "kind": "recommended"},
@@ -224,7 +225,7 @@ def resolve_context_clarification(
     """
 
     message = _lower(user_message)
-    mode = _lower(swarm_mode or intent or "ask")
+    mode = normalize_mode_id(swarm_mode or intent, default="ask")
     context = available_context if isinstance(available_context, dict) else {}
 
     has_output = bool(context.get("output_id") or context.get("preview_output_id") or context.get("active_output"))

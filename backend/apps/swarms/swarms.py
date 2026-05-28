@@ -93,6 +93,7 @@ from backend.apps.swarms.intent_brief import build_intent_brief
 from backend.apps.swarms.model_response_contract import build_model_response_contract_prompt
 from backend.apps.swarms.state_context import build_state_context_payload, build_state_context_prompt
 from backend.apps.swarms.system_prompt import build_openswarm_system_prompt
+from backend.apps.modes.mode_ids import normalize_mode_id
 
 
 @asynccontextmanager
@@ -2755,8 +2756,8 @@ def _controlled_chat_response(route: str, user_message: str, swarm) -> str | Non
 
 
 def _normalize_swarm_mode(value: str | None) -> str:
-    normalized = (value or "ask").strip().lower()
-    return normalized if normalized in {"ask", "plan", "app_builder", "skill_builder", "debug"} else "ask"
+    normalized = normalize_mode_id(value, default="ask")
+    return normalized if normalized in {"ask", "plan", "app_builder", "skill_builder", "debug", "refine"} else "ask"
 
 
 def _swarm_mode_local_response(swarm_mode: str, user_message: str, swarm) -> tuple[str, str] | None:

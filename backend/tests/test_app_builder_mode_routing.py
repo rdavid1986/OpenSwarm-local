@@ -39,6 +39,22 @@ def _create_chat_swarm(orchestrator):
     return orchestrator.create_swarm(user_prompt="hello", dashboard_id="dash-1", intent="chat")
 
 
+def test_normalize_swarm_mode_uses_canonical_mode_ids():
+    expected = {
+        "skill-builder": "skill_builder",
+        "skill_builder": "skill_builder",
+        "view-builder": "app_builder",
+        "view_builder": "app_builder",
+        "app-builder": "app_builder",
+        "app_builder": "app_builder",
+        "candidate_refinement": "refine",
+        "unknown": "ask",
+    }
+
+    for raw_mode, canonical_mode in expected.items():
+        assert swarms_module._normalize_swarm_mode(raw_mode) == canonical_mode
+
+
 def test_app_builder_normal_chat_starts_project_intake(monkeypatch, tmp_path):
     client, orchestrator = _client(monkeypatch, tmp_path)
     swarm = _create_chat_swarm(orchestrator)
@@ -54,6 +70,38 @@ def test_app_builder_normal_chat_starts_project_intake(monkeypatch, tmp_path):
     assert body["final_result"]["route"] == "implementation_request"
     assert body["project_intake_state"]["status"] == "collecting"
     assert body["final_result"]["project_intake_state"]["status"] == "collecting"
+    assert body["provider_events"] == []
+
+
+def test_app_builder_alias_view_builder_starts_project_intake(monkeypatch, tmp_path):
+    client, orchestrator = _client(monkeypatch, tmp_path)
+    swarm = _create_chat_swarm(orchestrator)
+    monkeypatch.setattr(swarms_module, "OllamaAdapter", _FakeNormalChatAdapter)
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "CRM para odontólogos", "swarm_mode": "view-builder"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["final_result"]["route"] == "implementation_request"
+    assert body["project_intake_state"]["status"] == "collecting"
+    assert body["provider_events"] == []
+
+
+def test_skill_builder_alias_skill_builder_dash_uses_skill_builder_local_response(monkeypatch, tmp_path):
+    client, orchestrator = _client(monkeypatch, tmp_path)
+    swarm = _create_chat_swarm(orchestrator)
+
+    response = client.post(
+        f"/api/swarms/{swarm.id}/experimental/chat",
+        json={"message": "crear skill para validar CSS", "swarm_mode": "skill-builder"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["final_result"]["route"] == "swarm_mode_skill_builder"
     assert body["provider_events"] == []
 
 

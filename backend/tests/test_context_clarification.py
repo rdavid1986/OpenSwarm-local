@@ -37,6 +37,15 @@ def test_context_clarification_asks_for_vague_project_mode_request():
     assert result["reason"] == "project_mode_request_too_vague"
 
 
+def test_context_clarification_normalizes_mode_aliases():
+    result = resolve_context_clarification(user_message="hacelo", swarm_mode="view-builder")
+
+    assert result["ok"] is False
+    assert result["needs_clarification"] is True
+    assert result["mode"] == "app_builder"
+    assert result["clarification_state"]["mode"] == "app_builder"
+
+
 def test_context_clarification_asks_for_debug_target_without_context():
     result = resolve_context_clarification(user_message="debug este error", swarm_mode="debug")
 
