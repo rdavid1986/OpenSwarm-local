@@ -67,3 +67,33 @@ def test_project_mode_uses_canonical_mode_ids():
 def test_all_canonical_modes_normalize_to_themselves():
     for mode_id in CANONICAL_MODE_IDS:
         assert normalize_mode_id(mode_id) == mode_id
+
+def test_agent_manager_resolves_canonical_builder_modes_to_legacy_mode_store(monkeypatch):
+    from backend.apps.agents.agent_manager import AgentManager
+    from backend.apps.modes.models import Mode
+
+    def fake_load_mode(mode_id: str):
+        if mode_id == "view-builder":
+            return Mode(
+                id="view-builder",
+                name="App Builder",
+                system_prompt="app prompt",
+                tools=["Read"],
+                default_folder="/tmp/app-workspace",
+            )
+        if mode_id == "skill-builder":
+            return Mode(
+                id="skill-builder",
+                name="Skill Builder",
+                system_prompt="skill prompt",
+                tools=["Read", "Write"],
+                default_folder="/tmp/skill-workspace",
+            )
+        return None
+
+    monkeypatch.setattr("backend.apps.agents.agent_manager.load_mode", fake_load_mode)
+
+    manager = AgentManager()
+
+    assert manager._resolve_mode("app_builder") == (["Read"], "app prompt", "/tmp/app-workspace")
+    assert manager._resolve_mode("skill_builder") == (["Read", "Write"], "skill prompt", "/tmp/skill-workspace")

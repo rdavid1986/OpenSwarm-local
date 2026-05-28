@@ -17,6 +17,7 @@ from backend.apps.agents.ws_manager import ws_manager
 from backend.apps.agents.plans import create_plan_from_text
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health
 from backend.apps.modes.modes import load_mode
+from backend.apps.modes.mode_ids import mode_aliases, normalize_mode_id
 from backend.apps.outputs.outputs import _load_all as load_all_outputs
 from backend.apps.settings.settings import load_settings
 from backend.apps.tools_lib.tools_lib import (
@@ -523,11 +524,23 @@ class AgentManager:
         self.tasks: dict[str, asyncio.Task] = {}
     
     def _resolve_mode(self, mode_id: str) -> tuple[list[str], str | None, str | None]:
-        """Return (tools, system_prompt, default_folder) resolved from the mode store."""
-        mode_def = load_mode(mode_id)
-        if mode_def:
-            tools = mode_def.tools if mode_def.tools is not None else get_all_tool_names()
-            return tools, mode_def.system_prompt, mode_def.default_folder
+        """Return (tools, system_prompt, default_folder) resolved from the mode store.
+
+        The mode store still contains some legacy built-in ids such as
+        "view-builder" and "skill-builder", while newer Agent/Swarm flows use
+        canonical ids such as "app_builder" and "skill_builder".
+        """
+        normalized_mode = normalize_mode_id(mode_id)
+        candidate_ids = []
+        for candidate in [mode_id, normalized_mode, *mode_aliases(normalized_mode)]:
+            if candidate and candidate not in candidate_ids:
+                candidate_ids.append(candidate)
+
+        for candidate_id in candidate_ids:
+            mode_def = load_mode(candidate_id)
+            if mode_def:
+                tools = mode_def.tools if mode_def.tools is not None else get_all_tool_names()
+                return tools, mode_def.system_prompt, mode_def.default_folder
         return get_all_tool_names(), None, None
 
     async def _build_mcp_servers(
@@ -907,7 +920,7 @@ class AgentManager:
             or os.path.expanduser("~")
         )
 
-        if config.mode in ("view-builder", "skill-builder") and not config.target_directory:
+        if normalize_mode_id(config.mode) in {"app_builder", "skill_builder"} and not config.target_directory:
             effective_cwd = os.path.join(effective_cwd, session_id)
 
         os.makedirs(effective_cwd, exist_ok=True)
@@ -1674,7 +1687,7 @@ class AgentManager:
                 mcp_registry_ctx,
             )
 
-            if session.mode == "view-builder":
+            if normalize_mode_id(session.mode) == "app_builder":
                 from backend.apps.outputs.view_builder_templates import VIEW_BUILDER_SKILL
                 skill_block = f"<app_builder_reference>\n{VIEW_BUILDER_SKILL}\n</app_builder_reference>"
                 composed_prompt = f"{composed_prompt}\n\n{skill_block}" if composed_prompt else skill_block
