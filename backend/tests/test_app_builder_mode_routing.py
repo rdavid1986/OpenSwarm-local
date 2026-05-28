@@ -90,9 +90,10 @@ def test_app_builder_alias_view_builder_starts_project_intake(monkeypatch, tmp_p
     assert body["provider_events"] == []
 
 
-def test_skill_builder_alias_skill_builder_dash_uses_skill_builder_local_response(monkeypatch, tmp_path):
+def test_skill_builder_alias_skill_builder_dash_uses_model_response_intelligence(monkeypatch, tmp_path):
     client, orchestrator = _client(monkeypatch, tmp_path)
     swarm = _create_chat_swarm(orchestrator)
+    monkeypatch.setattr(swarms_module, "OllamaAdapter", _FakeNormalChatAdapter)
 
     response = client.post(
         f"/api/swarms/{swarm.id}/experimental/chat",
@@ -101,8 +102,10 @@ def test_skill_builder_alias_skill_builder_dash_uses_skill_builder_local_respons
 
     assert response.status_code == 200
     body = response.json()
-    assert body["final_result"]["route"] == "swarm_mode_skill_builder"
-    assert body["provider_events"] == []
+    assert body["final_result"]["route"] == "normal_chat"
+    assert body["final_result"]["swarm_mode"] == "skill_builder"
+    assert body["final_result"]["summary"] == "normal answer"
+    assert body["provider_events"]
 
 
 def test_ask_mode_same_text_stays_normal_chat(monkeypatch, tmp_path):

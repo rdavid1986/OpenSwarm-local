@@ -2771,16 +2771,6 @@ def _swarm_mode_local_response(swarm_mode: str, user_message: str, swarm) -> tup
             ),
         )
 
-    if swarm_mode == "skill_builder":
-        return (
-            "swarm_mode_skill_builder",
-            (
-                "Skill Builder todavía está en modo borrador controlado y no toca AgentManager legacy. "
-                "Usá este modo para describir la skill/agente, entradas, herramientas esperadas y criterios de validación.\n\n"
-                f"Pedido recibido: {user_message}"
-            ),
-        )
-
     if swarm_mode == "debug":
         return (
             "swarm_mode_debug",
