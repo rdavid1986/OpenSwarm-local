@@ -13,6 +13,7 @@ from backend.apps.skills.candidate_install import install_approved_skill_candida
 from backend.apps.skills.candidate_validation import apply_skill_candidate_validation
 from backend.apps.skills.models import Skill, SkillCandidateApprovalRequest, SkillCreate, SkillSpecCandidate, SkillUpdate, SkillWorkspaceSeedRequest
 from backend.apps.skills.requirements_contract import build_skill_candidate_requirements_contract
+from backend.apps.skills.skill_reviewer import review_skill_candidate
 from backend.apps.tools_lib.models import BUILTIN_TOOLS
 
 logger = logging.getLogger(__name__)
@@ -268,6 +269,18 @@ async def get_skill_candidate_requirements_contract(candidate_id: str):
         modes=modes_snapshot,
         warnings=contract_warnings,
     )
+
+
+@skills.router.get("/candidates/{candidate_id}/quality-review")
+async def get_skill_candidate_quality_review(candidate_id: str):
+    try:
+        candidate = skill_candidate_store.load(candidate_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Skill candidate not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return review_skill_candidate(candidate)
 
 
 @skills.router.get("/candidates/{candidate_id}")
