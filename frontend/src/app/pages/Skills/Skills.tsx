@@ -39,6 +39,7 @@ import { useAppDispatch, useAppSelector } from '@/shared/hooks';
 import {
   fetchSkills,
   fetchSkillCandidates,
+  createSkillCandidate,
   createSkill,
   updateSkill,
   deleteSkill,
