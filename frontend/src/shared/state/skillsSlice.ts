@@ -172,6 +172,35 @@ export const installSkillCandidate = createAsyncThunk(
   }
 );
 
+export const rejectSkillCandidate = createAsyncThunk(
+  'skills/rejectCandidate',
+  async (candidateId: string) => {
+    const res = await fetch(`${SKILLS_API}/candidates/${candidateId}/reject`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Failed to reject skill candidate');
+    }
+    const data = await res.json();
+    return data.candidate as SkillSpecCandidate;
+  }
+);
+
+export const deleteSkillCandidate = createAsyncThunk(
+  'skills/deleteCandidate',
+  async (candidateId: string) => {
+    const res = await fetch(`${SKILLS_API}/candidates/${candidateId}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Failed to delete skill candidate');
+    }
+    return candidateId;
+  }
+);
+
 export const deleteSkill = createAsyncThunk('skills/delete', async (id: string) => {
   await fetch(`${SKILLS_API}/${id}`, { method: 'DELETE' });
   return id;
@@ -214,6 +243,12 @@ const skillsSlice = createSlice({
       .addCase(installSkillCandidate.fulfilled, (state, action) => {
         state.candidates[action.payload.candidate.candidate_id] = action.payload.candidate;
         state.items[action.payload.skill.id] = action.payload.skill;
+      })
+      .addCase(rejectSkillCandidate.fulfilled, (state, action) => {
+        state.candidates[action.payload.candidate_id] = action.payload;
+      })
+      .addCase(deleteSkillCandidate.fulfilled, (state, action) => {
+        delete state.candidates[action.payload];
       });
   },
 });
