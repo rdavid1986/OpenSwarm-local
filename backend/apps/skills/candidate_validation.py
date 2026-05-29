@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.apps.skills.knowledge_contract import build_skill_knowledge_contract
 from backend.apps.skills.models import SkillSpecCandidate
 
 
@@ -64,11 +65,24 @@ def apply_skill_candidate_validation(candidate: SkillSpecCandidate) -> SkillSpec
     """Return a validated copy without mutating or installing the original candidate."""
 
     result = validate_skill_candidate(candidate)
+    knowledge_contract = build_skill_knowledge_contract(candidate.skill_spec)
+    warnings = list(candidate.warnings)
+    if knowledge_contract["warnings"]:
+        warnings.append(
+            {
+                "code": "skill_knowledge_contract",
+                "status": "warning",
+                "contract_kind": knowledge_contract["contract_kind"],
+                "reasons": knowledge_contract["warnings"],
+                "report": knowledge_contract,
+            }
+        )
     next_status = "validated" if result["ok"] else "needs_validation"
     return candidate.model_copy(
         update={
             "status": next_status,
             "validation_errors": result["reasons"],
+            "warnings": warnings,
             "install_approved": False,
         }
     )
