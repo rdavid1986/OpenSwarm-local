@@ -172,3 +172,67 @@ def test_install_missing_skill_candidate_returns_404(monkeypatch, tmp_path):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Skill candidate not found"
+
+def test_reject_skill_candidate_clears_install_approval(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    payload = _candidate_payload()
+    payload["status"] = "validated"
+    payload["evidence_refs"] = ["evidence-1"]
+    payload["policy_refs"] = ["policy-1"]
+
+    created = client.post("/api/skills/candidates/create", json=payload)
+    candidate_id = created.json()["candidate"]["candidate_id"]
+    approved = client.post(f"/api/skills/candidates/{candidate_id}/approval", json={"approved": True})
+    assert approved.json()["candidate"]["install_approved"] is True
+
+    rejected = client.post(f"/api/skills/candidates/{candidate_id}/reject")
+
+    assert rejected.status_code == 200
+    body = rejected.json()
+    assert body["ok"] is True
+    assert body["candidate"]["status"] == "rejected"
+    assert body["candidate"]["install_approved"] is False
+
+
+def test_install_rejected_skill_candidate_is_blocked(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    payload = _candidate_payload()
+    payload["status"] = "validated"
+    payload["evidence_refs"] = ["evidence-1"]
+    payload["policy_refs"] = ["policy-1"]
+
+    created = client.post("/api/skills/candidates/create", json=payload)
+    candidate_id = created.json()["candidate"]["candidate_id"]
+    rejected = client.post(f"/api/skills/candidates/{candidate_id}/reject")
+    assert rejected.status_code == 200
+
+    installed = client.post(f"/api/skills/candidates/{candidate_id}/install")
+
+    assert installed.status_code == 409
+    assert installed.json()["detail"] == "Skill candidate is not approved for install"
+
+
+def test_delete_skill_candidate_removes_candidate(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    created = client.post("/api/skills/candidates/create", json=_candidate_payload())
+    candidate_id = created.json()["candidate"]["candidate_id"]
+
+    deleted = client.delete(f"/api/skills/candidates/{candidate_id}")
+    assert deleted.status_code == 200
+    assert deleted.json()["ok"] is True
+
+    loaded = client.get(f"/api/skills/candidates/{candidate_id}")
+    assert loaded.status_code == 404
+
+
+def test_reject_and_delete_missing_skill_candidate_return_404(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    rejected = client.post("/api/skills/candidates/missing/reject")
+    deleted = client.delete("/api/skills/candidates/missing")
+
+    assert rejected.status_code == 404
+    assert deleted.status_code == 404

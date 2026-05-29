@@ -55,3 +55,9 @@ class SkillCandidateStore:
             except (json.JSONDecodeError, TypeError, ValueError):
                 continue
         return candidates
+
+    def delete(self, candidate_id: str) -> None:
+        path = self._path(candidate_id)
+        if not path.exists():
+            raise FileNotFoundError(candidate_id)
+        path.unlink()

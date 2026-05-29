@@ -200,6 +200,33 @@ async def install_skill_candidate(candidate_id: str):
     }
 
 
+
+
+@skills.router.post("/candidates/{candidate_id}/reject")
+async def reject_skill_candidate(candidate_id: str):
+    try:
+        candidate = skill_candidate_store.load(candidate_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Skill candidate not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    rejected = candidate.model_copy(update={"status": "rejected", "install_approved": False})
+    saved = skill_candidate_store.save(rejected)
+    return {"ok": True, "candidate": saved.model_dump(mode="json")}
+
+
+@skills.router.delete("/candidates/{candidate_id}")
+async def delete_skill_candidate(candidate_id: str):
+    try:
+        skill_candidate_store.delete(candidate_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Skill candidate not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True}
+
+
 @skills.router.get("/candidates/{candidate_id}")
 async def get_skill_candidate(candidate_id: str):
     try:

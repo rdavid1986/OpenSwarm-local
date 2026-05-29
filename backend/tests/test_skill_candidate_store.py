@@ -1,5 +1,13 @@
 from backend.apps.skills.candidate_store import SkillCandidateStore
 from backend.apps.skills.models import SkillSpec, SkillSpecCandidate
+from backend.apps.skills.models import SkillSpec, SkillSpecCandidate
+
+
+def _candidate() -> SkillSpecCandidate:
+    return SkillSpecCandidate(
+        skill_spec=SkillSpec(name="CSS Validator", content="# CSS Validator\n"),
+        source="skill_builder",
+    )
 
 
 def test_skill_candidate_store_saves_loads_and_lists_without_installing(tmp_path):
@@ -28,3 +36,12 @@ def test_skill_candidate_store_requires_candidate_id(tmp_path):
         assert str(exc) == "candidate_id is required"
     else:
         raise AssertionError("Expected ValueError")
+
+def test_skill_candidate_store_delete_removes_candidate(tmp_path):
+    store = SkillCandidateStore(root=tmp_path / "skill_candidates")
+    candidate = _candidate()
+    store.save(candidate)
+
+    store.delete(candidate.candidate_id)
+
+    assert store.list() == []
