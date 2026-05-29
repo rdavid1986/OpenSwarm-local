@@ -414,6 +414,254 @@ const Skills: React.FC = () => {
     </Box>
   );
 
+  const toDisplayText = (value: unknown, fallback = '—') => {
+    if (typeof value === 'string' && value.trim()) return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    return fallback;
+  };
+
+  const getGateStatus = (warning: Record<string, any>) => {
+    const status = toDisplayText(warning.status, '').toLowerCase();
+    if (['blocked', 'failed', 'denied', 'rejected'].some((token) => status.includes(token))) {
+      return { label: toDisplayText(warning.status, 'blocked'), color: c.status.error, bg: c.status.errorBg };
+    }
+    if (['passed', 'approved', 'ok', 'allowed'].some((token) => status.includes(token))) {
+      return { label: toDisplayText(warning.status, 'passed'), color: c.status.success, bg: c.status.successBg };
+    }
+    return { label: toDisplayText(warning.status, 'warning'), color: c.status.warning, bg: c.status.warningBg };
+  };
+
+  const ReviewSection: React.FC<{
+    title: string;
+    tone?: 'default' | 'success' | 'warning' | 'error';
+    children: React.ReactNode;
+  }> = ({ title, tone = 'default', children }) => {
+    const toneColor = tone === 'success'
+      ? c.status.success
+      : tone === 'warning'
+        ? c.status.warning
+        : tone === 'error'
+          ? c.status.error
+          : c.text.secondary;
+
+    return (
+      <Box
+        sx={{
+          p: 1.5,
+          borderRadius: `${c.radius.sm}px`,
+          border: `1px solid ${c.border.subtle}`,
+          bgcolor: c.bg.page,
+          minWidth: 0,
+        }}
+      >
+        <Typography sx={{ fontSize: '0.74rem', color: toneColor, mb: 1, fontWeight: 700, letterSpacing: 0.1 }}>
+          {title}
+        </Typography>
+        {children}
+      </Box>
+    );
+  };
+
+  const EmptyReviewState: React.FC<{ text: string; tone?: 'success' | 'default' }> = ({ text, tone = 'default' }) => (
+    <Typography
+      sx={{
+        fontSize: '0.76rem',
+        color: tone === 'success' ? c.status.success : c.text.ghost,
+        lineHeight: 1.5,
+      }}
+    >
+      {text}
+    </Typography>
+  );
+
+  const MetaChip: React.FC<{ label: string; tone?: 'default' | 'success' | 'warning' | 'error' }> = ({ label, tone = 'default' }) => {
+    const chipTone = tone === 'success'
+      ? { color: c.status.success, bg: c.status.successBg }
+      : tone === 'warning'
+        ? { color: c.status.warning, bg: c.status.warningBg }
+        : tone === 'error'
+          ? { color: c.status.error, bg: c.status.errorBg }
+          : { color: c.text.muted, bg: c.bg.secondary };
+
+    return (
+      <Chip
+        label={label}
+        size="small"
+        sx={{
+          bgcolor: chipTone.bg,
+          color: chipTone.color,
+          fontSize: '0.68rem',
+          height: 21,
+          border: `1px solid ${c.border.subtle}`,
+          '& .MuiChip-label': { px: 0.8 },
+        }}
+      />
+    );
+  };
+
+  const CandidateReview: React.FC<{ candidate: SkillSpecCandidate }> = ({ candidate }) => {
+    const validationErrors = Array.isArray(candidate.validation_errors) ? candidate.validation_errors : [];
+    const warnings = Array.isArray(candidate.warnings) ? candidate.warnings : [];
+    const evidenceRefs = Array.isArray(candidate.evidence_refs) ? candidate.evidence_refs : [];
+    const policyRefs = Array.isArray(candidate.policy_refs) ? candidate.policy_refs : [];
+    const gateBlocked = validationErrors.length > 0 || warnings.some((warning) => {
+      const status = toDisplayText(warning?.status, '').toLowerCase();
+      return ['blocked', 'failed', 'denied', 'rejected'].some((token) => status.includes(token));
+    });
+
+    return (
+      <Box
+        sx={{
+          mb: 2,
+          p: 2,
+          borderRadius: `${c.radius.md}px`,
+          border: `1px solid ${c.border.subtle}`,
+          bgcolor: c.bg.secondary,
+          boxShadow: c.shadow.sm,
+          flexShrink: 0,
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 1.5 }}>
+          <Typography sx={{ fontSize: '0.82rem', color: c.text.primary, fontWeight: 700 }}>
+            Candidate review
+          </Typography>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, justifyContent: 'flex-end' }}>
+            <MetaChip
+              label={gateBlocked ? 'Gate blocked' : 'Gate passed'}
+              tone={gateBlocked ? 'error' : 'success'}
+            />
+            <MetaChip
+              label={candidate.install_approved ? 'Install approved' : 'Install not approved'}
+              tone={candidate.install_approved ? 'success' : 'warning'}
+            />
+          </Box>
+        </Box>
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 1.25 }}>
+          <ReviewSection title="Validation errors" tone={validationErrors.length > 0 ? 'error' : 'success'}>
+            {validationErrors.length > 0 ? (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                {validationErrors.map((item, index) => (
+                  <Box
+                    key={`validation-${index}`}
+                    sx={{
+                      p: 1,
+                      borderRadius: `${c.radius.xs}px`,
+                      border: `1px solid ${c.border.subtle}`,
+                      bgcolor: c.bg.elevated,
+                    }}
+                  >
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.6, mb: 0.4 }}>
+                      <Typography sx={{ fontSize: '0.76rem', color: c.text.primary, fontWeight: 650 }}>
+                        {toDisplayText(item?.code, 'validation_error')}
+                      </Typography>
+                      {item?.severity != null && <MetaChip label={toDisplayText(item.severity, 'severity')} tone="error" />}
+                    </Box>
+                    <Typography sx={{ fontSize: '0.76rem', color: c.text.secondary, lineHeight: 1.45 }}>
+                      {toDisplayText(item?.message, 'No validation message provided')}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+            ) : (
+              <EmptyReviewState text="Validation passed." tone="success" />
+            )}
+          </ReviewSection>
+
+          <ReviewSection title="Gate warnings" tone={warnings.length > 0 ? 'warning' : 'success'}>
+            {warnings.length > 0 ? (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                {warnings.map((warning, warningIndex) => {
+                  const gateStatus = getGateStatus(warning);
+                  const reasons = Array.isArray(warning?.reasons) ? warning.reasons : [];
+
+                  return (
+                    <Box
+                      key={`warning-${warningIndex}`}
+                      sx={{
+                        p: 1,
+                        borderRadius: `${c.radius.xs}px`,
+                        border: `1px solid ${c.border.subtle}`,
+                        bgcolor: c.bg.elevated,
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.6, mb: reasons.length ? 0.75 : 0 }}>
+                        <Typography sx={{ fontSize: '0.76rem', color: c.text.primary, fontWeight: 650 }}>
+                          {toDisplayText(warning?.code, 'warning')}
+                        </Typography>
+                        <Chip
+                          label={gateStatus.label}
+                          size="small"
+                          sx={{
+                            bgcolor: gateStatus.bg,
+                            color: gateStatus.color,
+                            fontSize: '0.66rem',
+                            height: 20,
+                            '& .MuiChip-label': { px: 0.7 },
+                          }}
+                        />
+                      </Box>
+                      {reasons.length > 0 ? (
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.55 }}>
+                          {reasons.map((reason: unknown, reasonIndex: number) => {
+                            const reasonObj = reason && typeof reason === 'object' ? reason as Record<string, any> : {};
+                            const reasonText = typeof reason === 'string' ? reason : toDisplayText(reasonObj.message, 'No reason message provided');
+
+                            return (
+                              <Box key={`warning-${warningIndex}-reason-${reasonIndex}`} sx={{ pl: 1, borderLeft: `2px solid ${c.border.subtle}` }}>
+                                <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.5, mb: 0.2 }}>
+                                  <Typography sx={{ fontSize: '0.72rem', color: c.text.secondary, fontWeight: 600 }}>
+                                    {toDisplayText(reasonObj.code, 'reason')}
+                                  </Typography>
+                                  {reasonObj.severity != null && <MetaChip label={toDisplayText(reasonObj.severity, 'severity')} tone="warning" />}
+                                </Box>
+                                <Typography sx={{ fontSize: '0.72rem', color: c.text.ghost, lineHeight: 1.4 }}>
+                                  {reasonText}
+                                </Typography>
+                              </Box>
+                            );
+                          })}
+                        </Box>
+                      ) : (
+                        <EmptyReviewState text="No warning reasons provided." />
+                      )}
+                    </Box>
+                  );
+                })}
+              </Box>
+            ) : (
+              <EmptyReviewState text="No gate warnings." tone="success" />
+            )}
+          </ReviewSection>
+
+          <ReviewSection title="Evidence refs">
+            {evidenceRefs.length > 0 ? (
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.65 }}>
+                {evidenceRefs.map((ref, index) => (
+                  <MetaChip key={`evidence-${index}-${ref}`} label={toDisplayText(ref, 'evidence_ref')} />
+                ))}
+              </Box>
+            ) : (
+              <EmptyReviewState text="No evidence refs attached" />
+            )}
+          </ReviewSection>
+
+          <ReviewSection title="Policy refs">
+            {policyRefs.length > 0 ? (
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.65 }}>
+                {policyRefs.map((ref, index) => (
+                  <MetaChip key={`policy-${index}-${ref}`} label={toDisplayText(ref, 'policy_ref')} />
+                ))}
+              </Box>
+            ) : (
+              <EmptyReviewState text="No policy refs attached" />
+            )}
+          </ReviewSection>
+        </Box>
+      </Box>
+    );
+  };
+
   return (
     <Box sx={{ display: 'flex', height: '100%', overflow: 'hidden', bgcolor: c.bg.page, position: 'relative' }}>
       {/* ─── Left Sidebar ─── */}
@@ -800,73 +1048,7 @@ const Skills: React.FC = () => {
               </Box>
             )}
 
-            <Box
-              sx={{
-                mb: 2,
-                p: 2,
-                borderRadius: `${c.radius.md}px`,
-                border: `1px solid ${c.border.subtle}`,
-                bgcolor: c.bg.secondary,
-                flexShrink: 0,
-              }}
-            >
-              <Typography sx={{ fontSize: '0.78rem', color: c.text.ghost, mb: 1, fontWeight: 600 }}>
-                Candidate review
-              </Typography>
-
-              {selectedCandidate.validation_errors.length > 0 ? (
-                <Box sx={{ mb: 1.25 }}>
-                  <Typography sx={{ fontSize: '0.76rem', color: c.status.error, mb: 0.5, fontWeight: 600 }}>
-                    Validation errors
-                  </Typography>
-                  {selectedCandidate.validation_errors.map((item, index) => (
-                    <Typography key={`validation-${index}`} sx={{ fontSize: '0.76rem', color: c.text.secondary, lineHeight: 1.5 }}>
-                      • {item.code || 'validation_error'}{item.message ? ` — ${item.message}` : ''}
-                    </Typography>
-                  ))}
-                </Box>
-              ) : (
-                <Typography sx={{ fontSize: '0.76rem', color: c.status.success, mb: 1.25 }}>
-                  Validation passed.
-                </Typography>
-              )}
-
-              {selectedCandidate.warnings.length > 0 && (
-                <Box sx={{ mb: 1.25 }}>
-                  <Typography sx={{ fontSize: '0.76rem', color: c.status.warning, mb: 0.5, fontWeight: 600 }}>
-                    Gate warnings
-                  </Typography>
-                  {selectedCandidate.warnings.map((warning, warningIndex) => (
-                    <Box key={`warning-${warningIndex}`} sx={{ mb: 0.75 }}>
-                      <Typography sx={{ fontSize: '0.76rem', color: c.text.secondary, lineHeight: 1.5 }}>
-                        • {warning.code || 'warning'}{warning.status ? ` — ${warning.status}` : ''}
-                      </Typography>
-                      {Array.isArray(warning.reasons) && warning.reasons.map((reason: Record<string, any>, reasonIndex: number) => (
-                        <Typography
-                          key={`warning-${warningIndex}-reason-${reasonIndex}`}
-                          sx={{ fontSize: '0.73rem', color: c.text.ghost, lineHeight: 1.45, pl: 2 }}
-                        >
-                          - {reason.code || 'reason'}{reason.message ? ` — ${reason.message}` : ''}
-                        </Typography>
-                      ))}
-                    </Box>
-                  ))}
-                </Box>
-              )}
-
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
-                <Chip
-                  label={`Evidence refs: ${selectedCandidate.evidence_refs.length}`}
-                  size="small"
-                  sx={{ bgcolor: c.bg.page, color: c.text.muted, fontSize: '0.7rem', height: 22 }}
-                />
-                <Chip
-                  label={`Policy refs: ${selectedCandidate.policy_refs.length}`}
-                  size="small"
-                  sx={{ bgcolor: c.bg.page, color: c.text.muted, fontSize: '0.7rem', height: 22 }}
-                />
-              </Box>
-            </Box>
+            <CandidateReview candidate={selectedCandidate} />
 
             <ContentPreview content={selectedCandidate.skill_spec.content} />
           </Box>
