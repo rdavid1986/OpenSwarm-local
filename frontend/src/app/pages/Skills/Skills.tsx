@@ -703,6 +703,74 @@ const Skills: React.FC = () => {
               </Box>
             )}
 
+            <Box
+              sx={{
+                mb: 2,
+                p: 2,
+                borderRadius: `${c.radius.md}px`,
+                border: `1px solid ${c.border.subtle}`,
+                bgcolor: c.bg.secondary,
+                flexShrink: 0,
+              }}
+            >
+              <Typography sx={{ fontSize: '0.78rem', color: c.text.ghost, mb: 1, fontWeight: 600 }}>
+                Candidate review
+              </Typography>
+
+              {selectedCandidate.validation_errors.length > 0 ? (
+                <Box sx={{ mb: 1.25 }}>
+                  <Typography sx={{ fontSize: '0.76rem', color: c.status.error, mb: 0.5, fontWeight: 600 }}>
+                    Validation errors
+                  </Typography>
+                  {selectedCandidate.validation_errors.map((item, index) => (
+                    <Typography key={`validation-${index}`} sx={{ fontSize: '0.76rem', color: c.text.secondary, lineHeight: 1.5 }}>
+                      • {item.code || 'validation_error'}{item.message ? ` — ${item.message}` : ''}
+                    </Typography>
+                  ))}
+                </Box>
+              ) : (
+                <Typography sx={{ fontSize: '0.76rem', color: c.status.success, mb: 1.25 }}>
+                  Validation passed.
+                </Typography>
+              )}
+
+              {selectedCandidate.warnings.length > 0 && (
+                <Box sx={{ mb: 1.25 }}>
+                  <Typography sx={{ fontSize: '0.76rem', color: c.status.warning, mb: 0.5, fontWeight: 600 }}>
+                    Gate warnings
+                  </Typography>
+                  {selectedCandidate.warnings.map((warning, warningIndex) => (
+                    <Box key={`warning-${warningIndex}`} sx={{ mb: 0.75 }}>
+                      <Typography sx={{ fontSize: '0.76rem', color: c.text.secondary, lineHeight: 1.5 }}>
+                        • {warning.code || 'warning'}{warning.status ? ` — ${warning.status}` : ''}
+                      </Typography>
+                      {Array.isArray(warning.reasons) && warning.reasons.map((reason: Record<string, any>, reasonIndex: number) => (
+                        <Typography
+                          key={`warning-${warningIndex}-reason-${reasonIndex}`}
+                          sx={{ fontSize: '0.73rem', color: c.text.ghost, lineHeight: 1.45, pl: 2 }}
+                        >
+                          - {reason.code || 'reason'}{reason.message ? ` — ${reason.message}` : ''}
+                        </Typography>
+                      ))}
+                    </Box>
+                  ))}
+                </Box>
+              )}
+
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+                <Chip
+                  label={`Evidence refs: ${selectedCandidate.evidence_refs.length}`}
+                  size="small"
+                  sx={{ bgcolor: c.bg.page, color: c.text.muted, fontSize: '0.7rem', height: 22 }}
+                />
+                <Chip
+                  label={`Policy refs: ${selectedCandidate.policy_refs.length}`}
+                  size="small"
+                  sx={{ bgcolor: c.bg.page, color: c.text.muted, fontSize: '0.7rem', height: 22 }}
+                />
+              </Box>
+            </Box>
+
             <ContentPreview content={selectedCandidate.skill_spec.content} />
           </Box>
         ) : !selection ? (
