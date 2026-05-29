@@ -39,6 +39,7 @@ import { useAppDispatch, useAppSelector } from '@/shared/hooks';
 import {
   fetchSkills,
   fetchSkillCandidates,
+  fetchSkillCandidateRequirementsContract,
   createSkillCandidate,
   createSkill,
   updateSkill,
@@ -48,6 +49,7 @@ import {
   rejectSkillCandidate,
   deleteSkillCandidate,
   Skill,
+  SkillCandidateRequirementsContract,
   SkillSpecCandidate,
 } from '@/shared/state/skillsSlice';
 import {
@@ -80,7 +82,14 @@ const SIDEBAR_W = 260;
 const Skills: React.FC = () => {
   const c = useClaudeTokens();
   const dispatch = useAppDispatch();
-  const { items, loading, candidates } = useAppSelector((s) => s.skills);
+  const {
+    items,
+    loading,
+    candidates,
+    candidateRequirementsContracts,
+    candidateRequirementsContractsLoading,
+    candidateRequirementsContractsError,
+  } = useAppSelector((s) => s.skills);
   const {
     skills: regSkills,
     loading: regLoading,
@@ -177,8 +186,21 @@ const Skills: React.FC = () => {
     selection?.type === 'local' ? items[selection.id] ?? null : null;
   const selectedCandidate: SkillSpecCandidate | null =
     selection?.type === 'candidate' ? candidates[selection.id] ?? null : null;
+  const selectedRequirementsContract: SkillCandidateRequirementsContract | null =
+    selectedCandidate ? candidateRequirementsContracts[selectedCandidate.candidate_id] ?? null : null;
+  const selectedRequirementsContractLoading =
+    selectedCandidate ? !!candidateRequirementsContractsLoading[selectedCandidate.candidate_id] : false;
+  const selectedRequirementsContractError =
+    selectedCandidate ? candidateRequirementsContractsError[selectedCandidate.candidate_id] ?? null : null;
   const selectedReg: RegistrySkillDetail | null =
     selection?.type === 'registry' && regDetail?.name === selection.name ? regDetail : null;
+
+  useEffect(() => {
+    if (!selectedCandidate) return;
+    if (candidateRequirementsContracts[selectedCandidate.candidate_id]) return;
+    if (candidateRequirementsContractsLoading[selectedCandidate.candidate_id]) return;
+    dispatch(fetchSkillCandidateRequirementsContract(selectedCandidate.candidate_id));
+  }, [candidateRequirementsContracts, candidateRequirementsContractsLoading, dispatch, selectedCandidate]);
 
   // CRUD
   const openCreate = () => {
@@ -843,6 +865,143 @@ const Skills: React.FC = () => {
     );
   };
 
+  const contractTone = (value: unknown): 'default' | 'success' | 'warning' | 'error' => {
+    const normalized = toDisplayText(value, '').toLowerCase();
+    if (['always_allow', 'active', 'known', 'true'].includes(normalized)) return 'success';
+    if (['ask', 'unknown', 'inactive'].includes(normalized)) return 'warning';
+    if (['deny', 'blocked', 'not_found', 'false'].includes(normalized)) return 'error';
+    return 'default';
+  };
+
+  const RequirementsContractPanel: React.FC<{
+    contract: SkillCandidateRequirementsContract | null;
+    loading: boolean;
+    error: string | null;
+  }> = ({ contract, loading, error }) => {
+    const summary = contract?.summary ?? {};
+    const toolRows = Array.isArray(contract?.tools) ? contract.tools : [];
+    const mcpRows = Array.isArray(contract?.mcp_servers) ? contract.mcp_servers : [];
+    const warnings = Array.isArray(contract?.warnings) ? contract.warnings : [];
+
+    return (
+      <Box
+        sx={{
+          mb: 2,
+          p: 2,
+          borderRadius: `${c.radius.md}px`,
+          border: `1px solid ${c.border.subtle}`,
+          bgcolor: c.bg.secondary,
+          boxShadow: c.shadow.sm,
+          flexShrink: 0,
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 1.5 }}>
+          <Box>
+            <Typography sx={{ fontSize: '0.82rem', color: c.text.primary, fontWeight: 700 }}>
+              Requirements contract
+            </Typography>
+            <Typography sx={{ fontSize: '0.72rem', color: c.text.ghost, mt: 0.25 }}>
+              Read-only map against Actions and Modes. No permissions are changed.
+            </Typography>
+          </Box>
+          {loading && <CircularProgress size={16} sx={{ color: c.accent.primary }} />}
+        </Box>
+
+        {error ? (
+          <ReviewSection title="Contract unavailable" tone="error">
+            <EmptyReviewState text={error} />
+          </ReviewSection>
+        ) : !contract && loading ? (
+          <ReviewSection title="Loading contract">
+            <EmptyReviewState text="Checking declared requirements..." />
+          </ReviewSection>
+        ) : !contract ? (
+          <ReviewSection title="Contract unavailable">
+            <EmptyReviewState text="No requirements contract loaded" />
+          </ReviewSection>
+        ) : (
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 1.25 }}>
+            <ReviewSection title="Summary">
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.65 }}>
+                <MetaChip label={`tools ${summary.declared_tool_count ?? 0}`} />
+                <MetaChip label={`known ${summary.known_tool_count ?? 0}`} tone="success" />
+                <MetaChip label={`missing ${summary.missing_tool_count ?? 0}`} tone={(summary.missing_tool_count ?? 0) > 0 ? 'error' : 'default'} />
+                <MetaChip label={`MCP ${summary.declared_mcp_count ?? 0}`} />
+                <MetaChip label={`blocked ${summary.blocked_count ?? 0}`} tone={(summary.blocked_count ?? 0) > 0 ? 'error' : 'default'} />
+                <MetaChip label={`unknown ${summary.unknown_count ?? 0}`} tone={(summary.unknown_count ?? 0) > 0 ? 'warning' : 'default'} />
+              </Box>
+            </ReviewSection>
+
+            <ReviewSection title="Warnings" tone={warnings.length > 0 ? 'warning' : 'success'}>
+              {warnings.length > 0 ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                  {warnings.map((warning, index) => (
+                    <Typography key={`contract-warning-${index}`} sx={{ fontSize: '0.74rem', color: c.text.secondary, lineHeight: 1.4 }}>
+                      {warning}
+                    </Typography>
+                  ))}
+                </Box>
+              ) : (
+                <EmptyReviewState text="No contract warnings." tone="success" />
+              )}
+            </ReviewSection>
+
+            <ReviewSection title="Required tools">
+              {toolRows.length > 0 ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                  {toolRows.map((tool, index) => (
+                    <Box key={`contract-tool-${index}-${tool.name}`} sx={{ p: 1, borderRadius: `${c.radius.xs}px`, border: `1px solid ${c.border.subtle}`, bgcolor: c.bg.elevated }}>
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.55, alignItems: 'center', mb: 0.45 }}>
+                        <Typography sx={{ fontSize: '0.76rem', color: c.text.primary, fontWeight: 650 }}>
+                          {toDisplayText(tool.name, 'tool')}
+                        </Typography>
+                        <MetaChip label={tool.known === true ? 'known' : tool.known === false ? 'not_found' : 'unknown'} tone={contractTone(tool.known)} />
+                        <MetaChip label={toDisplayText(tool.permission, 'unknown')} tone={contractTone(tool.permission)} />
+                        <MetaChip label={toDisplayText(tool.source, 'unknown')} />
+                      </Box>
+                      {asArray(tool.notes).slice(0, 2).map((note, noteIndex) => (
+                        <Typography key={`contract-tool-note-${index}-${noteIndex}`} sx={{ fontSize: '0.7rem', color: c.text.ghost, lineHeight: 1.35 }}>
+                          {toDisplayText(note)}
+                        </Typography>
+                      ))}
+                    </Box>
+                  ))}
+                </Box>
+              ) : (
+                <EmptyReviewState text="No required tools declared" />
+              )}
+            </ReviewSection>
+
+            <ReviewSection title="Required MCP servers">
+              {mcpRows.length > 0 ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                  {mcpRows.map((server, index) => (
+                    <Box key={`contract-mcp-${index}-${server.name}`} sx={{ p: 1, borderRadius: `${c.radius.xs}px`, border: `1px solid ${c.border.subtle}`, bgcolor: c.bg.elevated }}>
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.55, alignItems: 'center', mb: 0.45 }}>
+                        <Typography sx={{ fontSize: '0.76rem', color: c.text.primary, fontWeight: 650 }}>
+                          {toDisplayText(server.name, 'mcp_server')}
+                        </Typography>
+                        <MetaChip label={server.known === true ? 'known' : server.known === false ? 'not_found' : 'unknown'} tone={contractTone(server.known)} />
+                        <MetaChip label={toDisplayText(server.activation_state, 'unknown')} tone={contractTone(server.activation_state)} />
+                      </Box>
+                      {asArray(server.notes).slice(0, 2).map((note, noteIndex) => (
+                        <Typography key={`contract-mcp-note-${index}-${noteIndex}`} sx={{ fontSize: '0.7rem', color: c.text.ghost, lineHeight: 1.35 }}>
+                          {toDisplayText(note)}
+                        </Typography>
+                      ))}
+                    </Box>
+                  ))}
+                </Box>
+              ) : (
+                <EmptyReviewState text="No required MCP servers declared" />
+              )}
+            </ReviewSection>
+          </Box>
+        )}
+      </Box>
+    );
+  };
+
   const CandidateSidebarRow: React.FC<{ candidate: SkillSpecCandidate }> = ({ candidate }) => {
     const selected = isSelected('candidate', candidate.candidate_id);
 
@@ -1301,6 +1460,12 @@ const Skills: React.FC = () => {
             <CandidateReview candidate={selectedCandidate} />
 
             <CandidateRequirements candidate={selectedCandidate} />
+
+            <RequirementsContractPanel
+              contract={selectedRequirementsContract}
+              loading={selectedRequirementsContractLoading}
+              error={selectedRequirementsContractError}
+            />
 
             <CandidateSourcePanel candidate={selectedCandidate} />
 

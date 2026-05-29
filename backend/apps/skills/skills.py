@@ -12,6 +12,8 @@ from backend.apps.skills.candidate_gate import apply_skill_candidate_gate
 from backend.apps.skills.candidate_install import install_approved_skill_candidate
 from backend.apps.skills.candidate_validation import apply_skill_candidate_validation
 from backend.apps.skills.models import Skill, SkillCandidateApprovalRequest, SkillCreate, SkillSpecCandidate, SkillUpdate, SkillWorkspaceSeedRequest
+from backend.apps.skills.requirements_contract import build_skill_candidate_requirements_contract
+from backend.apps.tools_lib.models import BUILTIN_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +227,47 @@ async def delete_skill_candidate(candidate_id: str):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"ok": True}
+
+
+@skills.router.get("/candidates/{candidate_id}/requirements-contract")
+async def get_skill_candidate_requirements_contract(candidate_id: str):
+    try:
+        candidate = skill_candidate_store.load(candidate_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Skill candidate not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    contract_warnings: list[str] = []
+
+    try:
+        from backend.apps.tools_lib import tools_lib as tools_module
+        tools_snapshot = tools_module._load_all()
+        builtin_permissions = tools_module.load_builtin_permissions()
+    except Exception as exc:
+        tools_snapshot = []
+        builtin_permissions = {}
+        contract_warnings.append(f"Tools snapshot unavailable; tool availability marked conservatively: {type(exc).__name__}")
+
+    try:
+        from backend.apps.modes import modes as modes_module
+        persisted_modes = modes_module._load_all()
+        by_id = {mode.id: mode for mode in persisted_modes}
+        for builtin_mode in modes_module.BUILTIN_MODES:
+            by_id.setdefault(builtin_mode.id, builtin_mode)
+        modes_snapshot = list(by_id.values())
+    except Exception as exc:
+        modes_snapshot = []
+        contract_warnings.append(f"Modes snapshot unavailable; mode mapping marked unknown: {type(exc).__name__}")
+
+    return build_skill_candidate_requirements_contract(
+        candidate,
+        tools=tools_snapshot,
+        builtin_tools=BUILTIN_TOOLS,
+        builtin_permissions=builtin_permissions,
+        modes=modes_snapshot,
+        warnings=contract_warnings,
+    )
 
 
 @skills.router.get("/candidates/{candidate_id}")

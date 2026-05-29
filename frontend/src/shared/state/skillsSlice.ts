@@ -59,6 +59,45 @@ export interface SkillSpecCandidate {
   install_approved: boolean;
 }
 
+export interface SkillCandidateRequirementsContract {
+  contract_kind: 'skill_candidate_requirements_contract';
+  candidate_id: string;
+  candidate_status: string;
+  install_approved: boolean;
+  requirements: {
+    required_tools?: string[];
+    required_mcp_servers?: string[];
+    compatible_providers?: string[];
+    tested_models?: string[];
+    recommended_models?: string[];
+    unsupported_models?: string[];
+  };
+  tools: Array<{
+    name: string;
+    declared: boolean;
+    known: boolean | 'unknown';
+    permission: 'always_allow' | 'ask' | 'deny' | 'unknown' | 'not_found' | string;
+    source: 'builtin' | 'custom' | 'mcp' | 'unknown' | string;
+    notes: string[];
+  }>;
+  mcp_servers: Array<{
+    name: string;
+    declared: boolean;
+    known: boolean | 'unknown';
+    activation_state: 'active' | 'blocked' | 'inactive' | 'unknown' | 'not_found' | string;
+    notes: string[];
+  }>;
+  modes: Array<{
+    mode_id: string;
+    name: string;
+    mentions_required_tools: boolean | 'unknown';
+    allowed_tools_policy: 'all_actions' | 'specific_actions' | 'unknown' | string;
+    notes: string[];
+  }>;
+  summary: Record<string, number>;
+  warnings: string[];
+}
+
 export type SkillCandidateCreateBody = Partial<Omit<SkillSpecCandidate, 'skill_spec'>> & {
   skill_spec: Partial<SkillSpec> & Pick<SkillSpec, 'name'>;
 };
@@ -70,6 +109,9 @@ interface SkillsState {
   candidates: Record<string, SkillSpecCandidate>;
   candidatesLoading: boolean;
   candidatesLoaded: boolean;
+  candidateRequirementsContracts: Record<string, SkillCandidateRequirementsContract>;
+  candidateRequirementsContractsLoading: Record<string, boolean>;
+  candidateRequirementsContractsError: Record<string, string | null>;
 }
 
 const initialState: SkillsState = {
@@ -79,6 +121,9 @@ const initialState: SkillsState = {
   candidates: {},
   candidatesLoading: false,
   candidatesLoaded: false,
+  candidateRequirementsContracts: {},
+  candidateRequirementsContractsLoading: {},
+  candidateRequirementsContractsError: {},
 };
 
 export const fetchSkills = createAsyncThunk(
@@ -125,6 +170,18 @@ export const fetchSkillCandidates = createAsyncThunk(
     return data.candidates as SkillSpecCandidate[];
   },
   { condition: (_, { getState }) => !(getState() as { skills: SkillsState }).skills.candidatesLoading },
+);
+
+export const fetchSkillCandidateRequirementsContract = createAsyncThunk(
+  'skills/fetchCandidateRequirementsContract',
+  async (candidateId: string) => {
+    const res = await fetch(`${SKILLS_API}/candidates/${candidateId}/requirements-contract`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Failed to fetch skill candidate requirements contract');
+    }
+    return await res.json() as SkillCandidateRequirementsContract;
+  },
 );
 
 export const createSkillCandidate = createAsyncThunk(
@@ -233,6 +290,18 @@ const skillsSlice = createSlice({
       .addCase(fetchSkillCandidates.rejected, (state) => {
         state.candidatesLoading = false;
         state.candidatesLoaded = true;
+      })
+      .addCase(fetchSkillCandidateRequirementsContract.pending, (state, action) => {
+        state.candidateRequirementsContractsLoading[action.meta.arg] = true;
+        state.candidateRequirementsContractsError[action.meta.arg] = null;
+      })
+      .addCase(fetchSkillCandidateRequirementsContract.fulfilled, (state, action) => {
+        state.candidateRequirementsContractsLoading[action.payload.candidate_id] = false;
+        state.candidateRequirementsContracts[action.payload.candidate_id] = action.payload;
+      })
+      .addCase(fetchSkillCandidateRequirementsContract.rejected, (state, action) => {
+        state.candidateRequirementsContractsLoading[action.meta.arg] = false;
+        state.candidateRequirementsContractsError[action.meta.arg] = action.error.message || 'Failed to fetch requirements contract';
       })
       .addCase(createSkillCandidate.fulfilled, (state, action) => {
         state.candidates[action.payload.candidate_id] = action.payload;
