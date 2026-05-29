@@ -205,13 +205,26 @@ const Skills: React.FC = () => {
 
   const handleInstall = async () => {
     if (!selectedReg) return;
-    await dispatch(createSkill({
-      name: selectedReg.name,
-      description: selectedReg.description,
-      content: selectedReg.content,
-      command: selectedReg.name.toLowerCase().replace(/\s+/g, '-'),
-    }));
-    setSnackbar({ open: true, message: `Installed "${selectedReg.name}" as a local skill` });
+    await dispatch(createSkillCandidate({
+      skill_spec: {
+        name: selectedReg.name,
+        description: selectedReg.description,
+        content: selectedReg.content,
+        command: selectedReg.name.toLowerCase().replace(/\s+/g, '-'),
+        source_format: 'openswarm_skill_registry',
+        metadata_confidence: 'inferred',
+        provenance: {
+          registry_name: selectedReg.name,
+          registry_folder: selectedReg.folder,
+          repository_url: selectedReg.repositoryUrl,
+        },
+        categories: selectedReg.category ? [selectedReg.category] : [],
+      },
+      source: 'skill_registry',
+      source_ref: selectedReg.name,
+    })).unwrap();
+    dispatch(fetchSkillCandidates());
+    setSnackbar({ open: true, message: `Skill candidate "${selectedReg.name}" saved for review` });
   };
 
   const handleEditInstall = () => {
@@ -802,7 +815,7 @@ const Skills: React.FC = () => {
                       fontSize: '0.8rem', fontWeight: 600, boxShadow: 'none',
                     }}
                   >
-                    Install
+                    Save Candidate
                   </Button>
                   <Button
                     variant="outlined"
