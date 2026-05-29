@@ -40,6 +40,7 @@ import {
   fetchSkills,
   fetchSkillCandidates,
   fetchSkillCandidateRequirementsContract,
+  fetchSkillCandidateQualityReview,
   createSkillCandidate,
   createSkill,
   updateSkill,
@@ -50,6 +51,7 @@ import {
   deleteSkillCandidate,
   Skill,
   SkillCandidateRequirementsContract,
+  SkillCandidateQualityReview,
   SkillSpecCandidate,
 } from '@/shared/state/skillsSlice';
 import {
@@ -89,6 +91,9 @@ const Skills: React.FC = () => {
     candidateRequirementsContracts,
     candidateRequirementsContractsLoading,
     candidateRequirementsContractsError,
+    candidateQualityReviews,
+    candidateQualityReviewsLoading,
+    candidateQualityReviewsError,
   } = useAppSelector((s) => s.skills);
   const {
     skills: regSkills,
@@ -192,6 +197,12 @@ const Skills: React.FC = () => {
     selectedCandidate ? !!candidateRequirementsContractsLoading[selectedCandidate.candidate_id] : false;
   const selectedRequirementsContractError =
     selectedCandidate ? candidateRequirementsContractsError[selectedCandidate.candidate_id] ?? null : null;
+  const selectedQualityReview: SkillCandidateQualityReview | null =
+    selectedCandidate ? candidateQualityReviews[selectedCandidate.candidate_id] ?? null : null;
+  const selectedQualityReviewLoading =
+    selectedCandidate ? !!candidateQualityReviewsLoading[selectedCandidate.candidate_id] : false;
+  const selectedQualityReviewError =
+    selectedCandidate ? candidateQualityReviewsError[selectedCandidate.candidate_id] ?? null : null;
   const selectedReg: RegistrySkillDetail | null =
     selection?.type === 'registry' && regDetail?.name === selection.name ? regDetail : null;
 
@@ -201,6 +212,13 @@ const Skills: React.FC = () => {
     if (candidateRequirementsContractsLoading[selectedCandidate.candidate_id]) return;
     dispatch(fetchSkillCandidateRequirementsContract(selectedCandidate.candidate_id));
   }, [candidateRequirementsContracts, candidateRequirementsContractsLoading, dispatch, selectedCandidate]);
+
+  useEffect(() => {
+    if (!selectedCandidate) return;
+    if (candidateQualityReviews[selectedCandidate.candidate_id]) return;
+    if (candidateQualityReviewsLoading[selectedCandidate.candidate_id]) return;
+    dispatch(fetchSkillCandidateQualityReview(selectedCandidate.candidate_id));
+  }, [candidateQualityReviews, candidateQualityReviewsLoading, dispatch, selectedCandidate]);
 
   // CRUD
   const openCreate = () => {
@@ -1002,6 +1020,227 @@ const Skills: React.FC = () => {
     );
   };
 
+  const qualityTone = (value: unknown): 'default' | 'success' | 'warning' | 'error' => {
+    const normalized = toDisplayText(value, '').toLowerCase();
+    if (['strong', 'clear', 'not_required', 'true', 'low'].includes(normalized)) return 'success';
+    if (['needs_improvement', 'missing', 'web_research_recommended', 'medium', 'false'].includes(normalized)) return 'warning';
+    if (['high', 'requirements_declared_boundary_missing', 'blocked', 'error'].includes(normalized)) return 'error';
+    return 'default';
+  };
+
+  const SkillQualityReviewPanel: React.FC<{
+    review: SkillCandidateQualityReview | null;
+    loading: boolean;
+    error: string | null;
+  }> = ({ review, loading, error }) => {
+    const improvementItems = Array.isArray(review?.improvement_items) ? review.improvement_items : [];
+    const recommendedSections = Array.isArray(review?.recommended_sections) ? review.recommended_sections : [];
+    const missingSections = Array.isArray(review?.missing_sections) ? review.missing_sections : [];
+    const riskNotes = Array.isArray(review?.risk_notes) ? review.risk_notes : [];
+    const qualityContract = isPlainObject(review?.quality_contract) ? review?.quality_contract : {};
+    const contractChecks = [
+      ['Expert role', qualityContract.has_role_definition],
+      ['Methodology', qualityContract.has_expert_methodology],
+      ['Decision criteria', qualityContract.has_decision_criteria],
+      ['Validation', qualityContract.has_validation_guidance],
+      ['Pitfalls', qualityContract.has_pitfalls],
+      ['Boundaries', qualityContract.has_operational_boundaries],
+      ['Skill / Action boundary', qualityContract.has_action_boundary_statement],
+    ];
+    const contractWarnings = Array.isArray(qualityContract.warnings) ? qualityContract.warnings : [];
+    const research = isPlainObject(review?.research_recommendation) ? review?.research_recommendation : null;
+    const safeToAutoApply = review?.safe_to_auto_apply === true;
+
+    return (
+      <Box
+        sx={{
+          mb: 2,
+          p: 2,
+          borderRadius: `${c.radius.md}px`,
+          border: `1px solid ${c.border.subtle}`,
+          bgcolor: c.bg.secondary,
+          boxShadow: c.shadow.sm,
+          flexShrink: 0,
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 1.5 }}>
+          <Box>
+            <Typography sx={{ fontSize: '0.82rem', color: c.text.primary, fontWeight: 700 }}>
+              Skill quality review
+            </Typography>
+            <Typography sx={{ fontSize: '0.72rem', color: c.text.ghost, mt: 0.25 }}>
+              Read-only expert-skill checklist. No apply, diff, install, approval, or mutation.
+            </Typography>
+          </Box>
+          {loading && <CircularProgress size={16} sx={{ color: c.accent.primary }} />}
+        </Box>
+
+        {error ? (
+          <ReviewSection title="Review unavailable" tone="error">
+            <EmptyReviewState text={error} />
+          </ReviewSection>
+        ) : !review && loading ? (
+          <ReviewSection title="Loading review">
+            <EmptyReviewState text="Checking expert-skill structure..." />
+          </ReviewSection>
+        ) : !review ? (
+          <ReviewSection title="Review unavailable">
+            <EmptyReviewState text="No quality review loaded" />
+          </ReviewSection>
+        ) : (
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 1.25 }}>
+            <ReviewSection title="Summary" tone={qualityTone(review.status)}>
+              <Typography sx={{ fontSize: '0.78rem', color: c.text.secondary, lineHeight: 1.5, mb: 1 }}>
+                {toDisplayText(review.improvement_summary, 'No summary provided.')}
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.65 }}>
+                <MetaChip label={toDisplayText(review.status, 'unknown status')} tone={qualityTone(review.status)} />
+                <MetaChip label={`candidate ${toDisplayText(review.candidate_status ?? review.status, 'unknown')}`} />
+                <MetaChip
+                  label={safeToAutoApply ? 'safe_to_auto_apply true' : 'safe_to_auto_apply false · review-only'}
+                  tone={safeToAutoApply ? 'success' : 'warning'}
+                />
+                <MetaChip
+                  label={`boundary ${toDisplayText(review.action_boundary_status, 'unknown')}`}
+                  tone={qualityTone(review.action_boundary_status)}
+                />
+              </Box>
+            </ReviewSection>
+
+            <ReviewSection title="Research recommendation" tone={qualityTone(research?.status)}>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.65, mb: 0.75 }}>
+                <MetaChip label={toDisplayText(research?.status, 'not provided')} tone={qualityTone(research?.status)} />
+              </Box>
+              <Typography sx={{ fontSize: '0.74rem', color: c.text.secondary, lineHeight: 1.45 }}>
+                {toDisplayText(research?.message, 'No research recommendation provided.')}
+              </Typography>
+            </ReviewSection>
+
+            <Box sx={{ gridColumn: { xs: 'auto', lg: '1 / -1' } }}>
+              <ReviewSection title="Improvement items" tone={improvementItems.length > 0 ? 'warning' : 'success'}>
+                {improvementItems.length > 0 ? (
+                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 0.85 }}>
+                    {improvementItems.map((rawItem, index) => {
+                      const item = isPlainObject(rawItem) ? rawItem : {};
+                      const title = toDisplayText(item.title, toDisplayText(item.code, 'Improvement'));
+                      const severity = toDisplayText(item.severity, 'unknown');
+
+                      return (
+                        <Box
+                          key={`quality-item-${index}-${toCompactValue(item.code)}`}
+                          sx={{
+                            p: 1,
+                            borderRadius: `${c.radius.xs}px`,
+                            border: `1px solid ${c.border.subtle}`,
+                            bgcolor: c.bg.elevated,
+                          }}
+                        >
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.55, mb: 0.55 }}>
+                            <Typography sx={{ fontSize: '0.76rem', color: c.text.primary, fontWeight: 650 }}>
+                              {title}
+                            </Typography>
+                            <MetaChip label={severity} tone={qualityTone(severity)} />
+                            <MetaChip label={toDisplayText(item.code, 'no_code')} />
+                            <MetaChip
+                              label={item.auto_apply_supported === true ? 'auto apply supported' : 'review-only'}
+                              tone={item.auto_apply_supported === true ? 'success' : 'warning'}
+                            />
+                          </Box>
+                          <Typography sx={{ fontSize: '0.74rem', color: c.text.secondary, lineHeight: 1.45, mb: 0.65 }}>
+                            {toDisplayText(item.message, 'No improvement message provided.')}
+                          </Typography>
+                          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 0.65 }}>
+                            <Box>
+                              <Typography sx={{ fontSize: '0.68rem', color: c.text.ghost, mb: 0.2, fontWeight: 600 }}>
+                                Suggested section
+                              </Typography>
+                              <Typography sx={{ fontSize: '0.72rem', color: c.text.secondary, lineHeight: 1.35 }}>
+                                {toDisplayText(item.suggested_section, '—')}
+                              </Typography>
+                            </Box>
+                            <Box>
+                              <Typography sx={{ fontSize: '0.68rem', color: c.text.ghost, mb: 0.2, fontWeight: 600 }}>
+                                Reason
+                              </Typography>
+                              <Typography sx={{ fontSize: '0.72rem', color: c.text.secondary, lineHeight: 1.35 }}>
+                                {toDisplayText(item.reason, '—')}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </Box>
+                      );
+                    })}
+                  </Box>
+                ) : (
+                  <EmptyReviewState text="No improvements suggested." tone="success" />
+                )}
+              </ReviewSection>
+            </Box>
+
+            <ReviewSection title="Recommended sections">
+              <ChipList values={recommendedSections} empty="No recommended sections provided" />
+            </ReviewSection>
+
+            <ReviewSection title="Missing sections" tone={missingSections.length > 0 ? 'warning' : 'success'}>
+              <ChipList values={missingSections} empty="No missing sections detected" tone="warning" />
+            </ReviewSection>
+
+            <ReviewSection title="Quality contract checks">
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.65 }}>
+                {contractChecks.map(([label, present]) => (
+                  <MetaChip
+                    key={`quality-contract-${label}`}
+                    label={`${label}: ${present === true ? 'present' : present === false ? 'missing' : 'unknown'}`}
+                    tone={present === true ? 'success' : present === false ? 'warning' : 'default'}
+                  />
+                ))}
+              </Box>
+            </ReviewSection>
+
+            <ReviewSection title="Risk notes" tone={riskNotes.length > 0 ? 'warning' : 'success'}>
+              {riskNotes.length > 0 ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                  {riskNotes.map((note, index) => (
+                    <Typography key={`quality-risk-${index}`} sx={{ fontSize: '0.74rem', color: c.text.secondary, lineHeight: 1.4 }}>
+                      {toDisplayText(note)}
+                    </Typography>
+                  ))}
+                </Box>
+              ) : (
+                <EmptyReviewState text="No risk notes provided." tone="success" />
+              )}
+            </ReviewSection>
+
+            {contractWarnings.length > 0 && (
+              <Box sx={{ gridColumn: { xs: 'auto', lg: '1 / -1' } }}>
+                <ReviewSection title="Contract warnings" tone="warning">
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.65 }}>
+                    {contractWarnings.map((warning, index) => {
+                      const warningObj = isPlainObject(warning) ? warning : {};
+                      return (
+                        <Box key={`quality-contract-warning-${index}`} sx={{ pl: 1, borderLeft: `2px solid ${c.border.subtle}` }}>
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, alignItems: 'center', mb: 0.2 }}>
+                            <Typography sx={{ fontSize: '0.72rem', color: c.text.secondary, fontWeight: 600 }}>
+                              {toDisplayText(warningObj.code, 'warning')}
+                            </Typography>
+                            <MetaChip label={toDisplayText(warningObj.severity, 'severity')} tone={qualityTone(warningObj.severity)} />
+                          </Box>
+                          <Typography sx={{ fontSize: '0.72rem', color: c.text.ghost, lineHeight: 1.4 }}>
+                            {toDisplayText(warningObj.message, toDisplayText(warning))}
+                          </Typography>
+                        </Box>
+                      );
+                    })}
+                  </Box>
+                </ReviewSection>
+              </Box>
+            )}
+          </Box>
+        )}
+      </Box>
+    );
+  };
+
   const CandidateSidebarRow: React.FC<{ candidate: SkillSpecCandidate }> = ({ candidate }) => {
     const selected = isSelected('candidate', candidate.candidate_id);
 
@@ -1465,6 +1704,12 @@ const Skills: React.FC = () => {
               contract={selectedRequirementsContract}
               loading={selectedRequirementsContractLoading}
               error={selectedRequirementsContractError}
+            />
+
+            <SkillQualityReviewPanel
+              review={selectedQualityReview}
+              loading={selectedQualityReviewLoading}
+              error={selectedQualityReviewError}
             />
 
             <CandidateSourcePanel candidate={selectedCandidate} />

@@ -98,6 +98,50 @@ export interface SkillCandidateRequirementsContract {
   warnings: string[];
 }
 
+export interface SkillCandidateQualityReviewItem {
+  code?: string;
+  severity?: 'low' | 'medium' | 'high' | string;
+  title?: string;
+  message?: string;
+  suggested_section?: string;
+  reason?: string;
+  auto_apply_supported?: boolean;
+}
+
+export interface SkillCandidateQualityReview {
+  review_kind?: 'skill_quality_review' | string;
+  candidate_id: string;
+  skill_name?: string;
+  status?: string;
+  candidate_status?: string;
+  install_approved?: boolean;
+  quality_contract?: {
+    contract_kind?: string;
+    skill_name?: string;
+    has_role_definition?: boolean;
+    has_expert_methodology?: boolean;
+    has_decision_criteria?: boolean;
+    has_validation_guidance?: boolean;
+    has_pitfalls?: boolean;
+    has_operational_boundaries?: boolean;
+    has_action_boundary_statement?: boolean;
+    warnings?: Array<Record<string, any>>;
+    [key: string]: any;
+  } | null;
+  improvement_summary?: string;
+  improvement_items?: SkillCandidateQualityReviewItem[];
+  recommended_sections?: string[];
+  missing_sections?: string[];
+  action_boundary_status?: string;
+  risk_notes?: string[];
+  research_recommendation?: {
+    status?: string;
+    message?: string;
+    [key: string]: any;
+  } | null;
+  safe_to_auto_apply?: boolean;
+}
+
 export type SkillCandidateCreateBody = Partial<Omit<SkillSpecCandidate, 'skill_spec'>> & {
   skill_spec: Partial<SkillSpec> & Pick<SkillSpec, 'name'>;
 };
@@ -112,6 +156,9 @@ interface SkillsState {
   candidateRequirementsContracts: Record<string, SkillCandidateRequirementsContract>;
   candidateRequirementsContractsLoading: Record<string, boolean>;
   candidateRequirementsContractsError: Record<string, string | null>;
+  candidateQualityReviews: Record<string, SkillCandidateQualityReview>;
+  candidateQualityReviewsLoading: Record<string, boolean>;
+  candidateQualityReviewsError: Record<string, string | null>;
 }
 
 const initialState: SkillsState = {
@@ -124,6 +171,9 @@ const initialState: SkillsState = {
   candidateRequirementsContracts: {},
   candidateRequirementsContractsLoading: {},
   candidateRequirementsContractsError: {},
+  candidateQualityReviews: {},
+  candidateQualityReviewsLoading: {},
+  candidateQualityReviewsError: {},
 };
 
 export const fetchSkills = createAsyncThunk(
@@ -181,6 +231,18 @@ export const fetchSkillCandidateRequirementsContract = createAsyncThunk(
       throw new Error(data.detail || 'Failed to fetch skill candidate requirements contract');
     }
     return await res.json() as SkillCandidateRequirementsContract;
+  },
+);
+
+export const fetchSkillCandidateQualityReview = createAsyncThunk(
+  'skills/fetchCandidateQualityReview',
+  async (candidateId: string) => {
+    const res = await fetch(`${SKILLS_API}/candidates/${candidateId}/quality-review`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Failed to fetch skill candidate quality review');
+    }
+    return await res.json() as SkillCandidateQualityReview;
   },
 );
 
@@ -302,6 +364,18 @@ const skillsSlice = createSlice({
       .addCase(fetchSkillCandidateRequirementsContract.rejected, (state, action) => {
         state.candidateRequirementsContractsLoading[action.meta.arg] = false;
         state.candidateRequirementsContractsError[action.meta.arg] = action.error.message || 'Failed to fetch requirements contract';
+      })
+      .addCase(fetchSkillCandidateQualityReview.pending, (state, action) => {
+        state.candidateQualityReviewsLoading[action.meta.arg] = true;
+        state.candidateQualityReviewsError[action.meta.arg] = null;
+      })
+      .addCase(fetchSkillCandidateQualityReview.fulfilled, (state, action) => {
+        state.candidateQualityReviewsLoading[action.payload.candidate_id] = false;
+        state.candidateQualityReviews[action.payload.candidate_id] = action.payload;
+      })
+      .addCase(fetchSkillCandidateQualityReview.rejected, (state, action) => {
+        state.candidateQualityReviewsLoading[action.meta.arg] = false;
+        state.candidateQualityReviewsError[action.meta.arg] = action.error.message || 'Failed to fetch quality review';
       })
       .addCase(createSkillCandidate.fulfilled, (state, action) => {
         state.candidates[action.payload.candidate_id] = action.payload;
