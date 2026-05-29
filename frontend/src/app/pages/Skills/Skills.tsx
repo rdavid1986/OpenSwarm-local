@@ -96,6 +96,7 @@ const Skills: React.FC = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<SkillForm>(emptyForm);
+  const [formSource, setFormSource] = useState<'local' | 'registry'>('local');
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string }>({ open: false, message: '' });
   const [builderPreview, setBuilderPreview] = useState<SkillPreviewData | null>(null);
   const [builderOpen, setBuilderOpen] = useState(false);
@@ -179,12 +180,14 @@ const Skills: React.FC = () => {
   // CRUD
   const openCreate = () => {
     setEditingId(null);
+    setFormSource('local');
     setForm(emptyForm);
     setDialogOpen(true);
   };
 
   const openEdit = (skill: Skill) => {
     setEditingId(skill.id);
+    setFormSource('local');
     setForm({ name: skill.name, description: skill.description, content: skill.content, command: skill.command });
     setDialogOpen(true);
   };
@@ -192,6 +195,21 @@ const Skills: React.FC = () => {
   const handleSave = async () => {
     if (editingId) {
       await dispatch(updateSkill({ id: editingId, ...form }));
+    } else if (formSource === 'registry') {
+      await dispatch(createSkillCandidate({
+        skill_spec: {
+          name: form.name,
+          description: form.description,
+          content: form.content,
+          command: form.command,
+          source_format: 'openswarm_skill_registry_edited',
+          metadata_confidence: 'inferred',
+        },
+        source: 'skill_registry_edit',
+        source_ref: form.name,
+      })).unwrap();
+      dispatch(fetchSkillCandidates());
+      setSnackbar({ open: true, message: `Skill candidate "${form.name}" saved for review` });
     } else {
       await dispatch(createSkill(form));
     }
@@ -230,6 +248,7 @@ const Skills: React.FC = () => {
   const handleEditInstall = () => {
     if (!selectedReg) return;
     setEditingId(null);
+    setFormSource('registry');
     setForm({
       name: selectedReg.name,
       description: selectedReg.description,
@@ -924,7 +943,7 @@ const Skills: React.FC = () => {
         }}
       >
         <DialogTitle sx={{ color: c.text.primary, fontWeight: 600, fontFamily: c.font.sans }}>
-          {editingId ? 'Edit Skill' : 'New Skill'}
+          {editingId ? 'Edit Skill' : formSource === 'registry' ? 'Edit Registry Candidate' : 'New Skill'}
         </DialogTitle>
         <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: '8px !important' }}>
           <TextField
@@ -980,7 +999,7 @@ const Skills: React.FC = () => {
               textTransform: 'none', borderRadius: `${c.radius.md}px`,
             }}
           >
-            {editingId ? 'Save Changes' : 'Create Skill'}
+            {editingId ? 'Save Changes' : formSource === 'registry' ? 'Save Candidate' : 'Create Skill'}
           </Button>
         </DialogActions>
       </Dialog>
