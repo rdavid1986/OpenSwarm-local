@@ -1548,7 +1548,8 @@ const Skills: React.FC = () => {
             <ContentPreview content={builderPreview.content} />
           </Box>
         ) : selectedCandidate ? (
-          <Box sx={{ p: 4, pb: 3, maxWidth: 1100, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+          <Box sx={{ height: '100%', minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
+            <Box sx={{ p: 4, pb: 3, maxWidth: 1100, display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5, flexShrink: 0 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                 <Typography sx={{ fontSize: '1.4rem', fontWeight: 700, color: c.text.primary, fontFamily: c.font.sans }}>
@@ -1696,6 +1697,31 @@ const Skills: React.FC = () => {
               </Box>
             )}
 
+            <Box
+              sx={{
+                mb: 2,
+                p: 2,
+                borderRadius: `${c.radius.md}px`,
+                border: `1px solid ${c.border.subtle}`,
+                bgcolor: c.bg.secondary,
+                boxShadow: c.shadow.sm,
+                flexShrink: 0,
+              }}
+            >
+              <Typography sx={{ fontSize: '0.82rem', color: c.text.primary, fontWeight: 700, mb: 0.75 }}>
+                Review summary
+              </Typography>
+              <Typography sx={{ fontSize: '0.78rem', color: c.text.secondary, lineHeight: 1.5 }}>
+                Validation passed. Installation is still blocked until evidence and policy references are attached and install approval is granted.
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.65, mt: 1 }}>
+                <MetaChip label="Validation passed" tone="success" />
+                <MetaChip label={selectedCandidate.install_approved ? 'Install approved' : 'Install needs approval'} tone={selectedCandidate.install_approved ? 'success' : 'warning'} />
+                <MetaChip label={(selectedCandidate.evidence_refs || []).length > 0 ? 'Evidence attached' : 'Evidence missing'} tone={(selectedCandidate.evidence_refs || []).length > 0 ? 'success' : 'warning'} />
+                <MetaChip label={(selectedCandidate.policy_refs || []).length > 0 ? 'Policy refs attached' : 'Policy refs missing'} tone={(selectedCandidate.policy_refs || []).length > 0 ? 'success' : 'warning'} />
+              </Box>
+            </Box>
+
             <CandidateReview candidate={selectedCandidate} />
 
             <CandidateRequirements candidate={selectedCandidate} />
@@ -1715,6 +1741,7 @@ const Skills: React.FC = () => {
             <CandidateSourcePanel candidate={selectedCandidate} />
 
             <ContentPreview content={selectedCandidate.skill_spec.content} />
+            </Box>
           </Box>
         ) : !selection ? (
           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: c.text.ghost, gap: 2 }}>
