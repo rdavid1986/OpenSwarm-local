@@ -131,6 +131,30 @@ def test_frontend_design_style_skill_does_not_miss_methodology():
     assert review["human_missing_items"]
 
 
+def test_frontend_design_style_skill_separates_openswarm_adaptation_gap():
+    review = review_skill_candidate(_candidate(FRONTEND_DESIGN_CONTENT))
+
+    quality_codes = {item["code"] for item in review["quality_gap_items"]}
+    adaptation_codes = {item["code"] for item in review["openswarm_adaptation_items"]}
+
+    assert review["skill_profile"] == "design_creation"
+    assert "add_methodology" not in quality_codes
+    assert "clarify_skill_not_action" in adaptation_codes
+    assert review["human_status_label"] == "Strong skill · OpenSwarm adaptation needed"
+
+
+def test_generic_candidate_keeps_quality_gap_items():
+    review = review_skill_candidate(_candidate("Help with tasks using best practices."))
+
+    quality_codes = {item["code"] for item in review["quality_gap_items"]}
+
+    assert "add_expert_role" in quality_codes
+    assert "add_methodology" in quality_codes
+    assert review["skill_profile"] == "general_skill"
+    assert review["openswarm_adaptation_items"]
+
+
+
 def test_review_never_modifies_candidate():
     candidate = _candidate("Help with tasks using best practices.", required_tools=["Read"])
     before = deepcopy(candidate.model_dump(mode="json"))

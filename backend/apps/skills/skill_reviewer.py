@@ -86,32 +86,111 @@ def _human_strengths(quality_contract: dict[str, Any]) -> list[str]:
     return strengths
 
 
+QUALITY_GAP_CODES = {
+    "add_expert_role",
+    "add_methodology",
+    "add_decision_criteria",
+    "add_validation_guidance",
+    "add_pitfalls",
+    "add_boundaries",
+}
+
+OPENSWARM_ADAPTATION_CODES = {
+    "clarify_skill_not_action",
+    "clarify_required_tools_are_declarative",
+}
+
+EXAMPLES_GAP_CODES = {
+    "add_domain_specific_examples",
+}
+
+
+def _split_improvement_items(improvement_items: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    quality_gap_items: list[dict[str, Any]] = []
+    openswarm_adaptation_items: list[dict[str, Any]] = []
+    examples_gap_items: list[dict[str, Any]] = []
+    research_gap_items: list[dict[str, Any]] = []
+
+    for item in improvement_items:
+        code = str(item.get("code") or "")
+        if code in QUALITY_GAP_CODES:
+            quality_gap_items.append(item)
+        elif code in OPENSWARM_ADAPTATION_CODES:
+            openswarm_adaptation_items.append(item)
+        elif code in EXAMPLES_GAP_CODES:
+            examples_gap_items.append(item)
+        elif code == "web_research_recommended":
+            research_gap_items.append(item)
+        else:
+            quality_gap_items.append(item)
+
+    return {
+        "quality_gap_items": quality_gap_items,
+        "openswarm_adaptation_items": openswarm_adaptation_items,
+        "examples_gap_items": examples_gap_items,
+        "research_gap_items": research_gap_items,
+    }
+
+
+def _skill_profile(spec: SkillSpec, quality_contract: dict[str, Any]) -> str:
+    text = _normalized(f"{spec.name}\n{spec.description}\n{spec.content}")
+    if any(token in text for token in ("docx", ".docx", "word document", "pptx", ".pptx", "pdf", ".pdf", "xlsx", "spreadsheet")):
+        return "document_workflow"
+    if any(token in text for token in ("frontend", "design", "aesthetics", "typography", "motion", "visual")):
+        return "design_creation"
+    if any(token in text for token in ("communication", "comms", "newsletter", "status report", "leadership update")):
+        return "communication_template"
+    if any(token in text for token in ("mcp", "api", "server", "sdk", "tool")):
+        return "procedural_tool_guide"
+    if quality_contract.get("has_expert_methodology") and quality_contract.get("has_decision_criteria"):
+        return "expert_behavior"
+    return "general_skill"
+
+
 def _human_review_fields(
     *,
+    spec: SkillSpec,
     quality_contract: dict[str, Any],
     improvement_items: list[dict[str, Any]],
     action_boundary_status: str,
     research_recommendation: dict[str, Any],
 ) -> dict[str, Any]:
     strengths = _human_strengths(quality_contract)
-    missing_items = [_human_item_label(item) for item in improvement_items if item.get("code") != "add_domain_specific_examples"]
-    next_steps = missing_items[:]
+    taxonomy = _split_improvement_items(improvement_items)
+    skill_profile = _skill_profile(spec, quality_contract)
+
+    quality_missing = [_human_item_label(item) for item in taxonomy["quality_gap_items"]]
+    adaptation_missing = [_human_item_label(item) for item in taxonomy["openswarm_adaptation_items"]]
+    research_missing = [_human_item_label(item) for item in taxonomy["research_gap_items"]]
+    examples_missing = [_human_item_label(item) for item in taxonomy["examples_gap_items"]]
+
+    missing_items = quality_missing + adaptation_missing + research_missing
+    next_steps = quality_missing + adaptation_missing + research_missing
 
     if not strengths:
         summary = "This skill still looks too generic to work as reusable expert knowledge."
-    elif not improvement_items:
+    elif not taxonomy["quality_gap_items"] and not taxonomy["openswarm_adaptation_items"]:
         summary = "This skill has a strong expert-knowledge structure and already includes applicable guidance."
+    elif not taxonomy["quality_gap_items"] and taxonomy["openswarm_adaptation_items"]:
+        summary = "This skill has strong expert content. The remaining work is mainly OpenSwarm adaptation, not content quality."
     else:
-        summary = "This skill already has useful expert content, but still needs a few adjustments to be clearer and safer."
+        summary = "This skill already has useful expert content, but still needs quality improvements before it is ideal."
 
     if action_boundary_status != "clear":
         summary += " It should also clarify that the skill does not activate tools, MCP, or permissions."
     if research_recommendation.get("status") == "web_research_recommended":
         next_steps.append("Mark time-sensitive claims for a separate, permitted web research workflow.")
+    if examples_missing and not quality_missing:
+        next_steps.append("Consider examples only if they would make the skill easier to apply; this is not a core quality blocker.")
     if strengths:
         next_steps.append("Keep the domain-specific guidance because it helps future agents apply professional judgment.")
 
-    status_label = "Strong expert skill" if not improvement_items else "Needs expert-skill polish"
+    if not taxonomy["quality_gap_items"] and taxonomy["openswarm_adaptation_items"]:
+        status_label = "Strong skill · OpenSwarm adaptation needed"
+    elif not improvement_items:
+        status_label = "Strong expert skill"
+    else:
+        status_label = "Needs expert-skill polish"
 
     return {
         "human_summary": summary,
@@ -119,6 +198,11 @@ def _human_review_fields(
         "human_next_steps": next_steps,
         "human_strengths": strengths,
         "human_missing_items": missing_items,
+        "skill_profile": skill_profile,
+        "quality_gap_items": taxonomy["quality_gap_items"],
+        "openswarm_adaptation_items": taxonomy["openswarm_adaptation_items"],
+        "examples_gap_items": taxonomy["examples_gap_items"],
+        "research_gap_items": taxonomy["research_gap_items"],
         "technical_details_label": "Technical reviewer details",
     }
 
@@ -230,6 +314,7 @@ def review_skill_spec(spec: SkillSpec, candidate_id: str | None = None) -> dict[
         else f"Skill needs quality improvements: {high_count} high, {medium_count} medium, {len(improvement_items) - high_count - medium_count} low."
     )
     human_fields = _human_review_fields(
+        spec=spec,
         quality_contract=quality_contract,
         improvement_items=improvement_items,
         action_boundary_status=action_boundary_status,

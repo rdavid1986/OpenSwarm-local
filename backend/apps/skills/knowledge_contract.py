@@ -180,7 +180,7 @@ def build_skill_knowledge_contract(spec: SkillSpec) -> dict[str, Any]:
             "act as",
             "actua como",
             "actúa como",
-                        "you are a",
+            "you are a",
             "you are an",
             "senior",
             "expert",
