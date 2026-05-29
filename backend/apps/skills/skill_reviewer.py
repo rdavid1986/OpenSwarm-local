@@ -50,6 +50,79 @@ def _item(
     }
 
 
+def _human_item_label(item: dict[str, Any]) -> str:
+    code = str(item.get("code") or "")
+    labels = {
+        "add_expert_role": "Define the expert role",
+        "add_methodology": "Explain the expert methodology",
+        "add_decision_criteria": "Add decision criteria",
+        "add_validation_guidance": "Add validation criteria",
+        "add_pitfalls": "Add pitfalls and anti-patterns",
+        "add_boundaries": "Clarify scope and boundaries",
+        "clarify_skill_not_action": "Clarify that this skill does not activate tools or permissions",
+        "clarify_required_tools_are_declarative": "Clarify that declared tools/MCP are requirements only",
+        "add_domain_specific_examples": "Add domain-specific examples",
+        "web_research_recommended": "Add research notes for current information",
+    }
+    return labels.get(code, str(item.get("title") or "Improve this skill"))
+
+
+def _human_strengths(quality_contract: dict[str, Any]) -> list[str]:
+    strengths: list[str] = []
+    if quality_contract.get("has_role_definition"):
+        strengths.append("Clear expert perspective or domain-specialist guidance.")
+    if quality_contract.get("has_expert_methodology"):
+        strengths.append("Includes a repeatable methodology, framework, guidelines, or workflow.")
+    if quality_contract.get("has_decision_criteria"):
+        strengths.append("Includes criteria, tradeoffs, constraints, or heuristics for decisions.")
+    if quality_contract.get("has_validation_guidance"):
+        strengths.append("Includes quality, validation, review, or acceptance guidance.")
+    if quality_contract.get("has_pitfalls"):
+        strengths.append("Calls out mistakes, anti-patterns, risks, or things to avoid.")
+    if quality_contract.get("has_operational_boundaries"):
+        strengths.append("Defines scope, constraints, assumptions, or operating boundaries.")
+    if quality_contract.get("has_action_boundary_statement"):
+        strengths.append("Clarifies the Skill/Action boundary and permissions model.")
+    return strengths
+
+
+def _human_review_fields(
+    *,
+    quality_contract: dict[str, Any],
+    improvement_items: list[dict[str, Any]],
+    action_boundary_status: str,
+    research_recommendation: dict[str, Any],
+) -> dict[str, Any]:
+    strengths = _human_strengths(quality_contract)
+    missing_items = [_human_item_label(item) for item in improvement_items if item.get("code") != "add_domain_specific_examples"]
+    next_steps = missing_items[:]
+
+    if not strengths:
+        summary = "This skill still looks too generic to work as reusable expert knowledge."
+    elif not improvement_items:
+        summary = "This skill has a strong expert-knowledge structure and already includes applicable guidance."
+    else:
+        summary = "This skill already has useful expert content, but still needs a few adjustments to be clearer and safer."
+
+    if action_boundary_status != "clear":
+        summary += " It should also clarify that the skill does not activate tools, MCP, or permissions."
+    if research_recommendation.get("status") == "web_research_recommended":
+        next_steps.append("Mark time-sensitive claims for a separate, permitted web research workflow.")
+    if strengths:
+        next_steps.append("Keep the domain-specific guidance because it helps future agents apply professional judgment.")
+
+    status_label = "Strong expert skill" if not improvement_items else "Needs expert-skill polish"
+
+    return {
+        "human_summary": summary,
+        "human_status_label": status_label,
+        "human_next_steps": next_steps,
+        "human_strengths": strengths,
+        "human_missing_items": missing_items,
+        "technical_details_label": "Technical reviewer details",
+    }
+
+
 def _research_recommendation(spec: SkillSpec) -> dict[str, Any]:
     text = _normalized(f"{spec.name}\n{spec.description}\n{spec.content}")
     needs_current_info = any(
@@ -156,6 +229,12 @@ def review_skill_spec(spec: SkillSpec, candidate_id: str | None = None) -> dict[
         if status == "strong"
         else f"Skill needs quality improvements: {high_count} high, {medium_count} medium, {len(improvement_items) - high_count - medium_count} low."
     )
+    human_fields = _human_review_fields(
+        quality_contract=quality_contract,
+        improvement_items=improvement_items,
+        action_boundary_status=action_boundary_status,
+        research_recommendation=research_recommendation,
+    )
 
     return {
         "review_kind": REVIEW_KIND,
@@ -165,6 +244,7 @@ def review_skill_spec(spec: SkillSpec, candidate_id: str | None = None) -> dict[
         "install_approved": False,
         "quality_contract": quality_contract,
         "improvement_summary": improvement_summary,
+        **human_fields,
         "improvement_items": improvement_items,
         "recommended_sections": RECOMMENDED_SECTIONS,
         "missing_sections": missing_sections,

@@ -45,6 +45,34 @@ required_mcp_servers are declarative requirements only.
 Example: for a read-only reviewer, compare the candidate before and after review.
 """
 
+FRONTEND_DESIGN_CONTENT = """
+# Frontend Design
+
+## Design Thinking
+Start with product intent, audience, tone, constraints, and differentiation.
+Before coding, identify what the interface should make the user feel and do.
+Use a clear approach: define purpose, hierarchy, and visual rhythm.
+
+## Frontend Aesthetics Guidelines
+Focus on typography, color & theme, motion, spatial composition, responsive
+layout, backgrounds, contrast, and visual details.
+
+## Decision criteria
+Choose typography based on density and tone. Trade decoration against clarity.
+Use constraints to decide whether motion should guide attention or stay quiet.
+
+## Quality bar
+CRITICAL: review hierarchy, accessibility, contrast, empty states, and whether
+the visual system supports the product intent.
+
+## Anti-patterns
+NEVER ship generic aesthetics. Avoid random gradients, inconsistent spacing,
+low contrast, and motion that distracts from the task.
+
+## Scope
+This guidance covers frontend visual design and implementation choices.
+"""
+
 
 def _client(monkeypatch, tmp_path):
     monkeypatch.setattr(skills_module, "skill_candidate_store", SkillCandidateStore(root=tmp_path / "skill_candidates"))
@@ -75,6 +103,8 @@ def test_generic_candidate_produces_improvement_items():
     assert "add_methodology" in codes
     assert "clarify_skill_not_action" in codes
     assert review["quality_contract"]["contract_kind"] == "skill_knowledge_contract"
+    assert review["human_summary"]
+    assert review["human_next_steps"]
 
 
 def test_expert_candidate_produces_fewer_improvement_items():
@@ -84,6 +114,21 @@ def test_expert_candidate_produces_fewer_improvement_items():
     assert len(expert["improvement_items"]) < len(generic["improvement_items"])
     assert expert["quality_contract"]["has_expert_methodology"] is True
     assert expert["quality_contract"]["has_action_boundary_statement"] is True
+
+
+def test_frontend_design_style_skill_does_not_miss_methodology():
+    review = review_skill_candidate(_candidate(FRONTEND_DESIGN_CONTENT))
+
+    codes = {item["code"] for item in review["improvement_items"]}
+    assert review["quality_contract"]["has_expert_methodology"] is True
+    assert review["quality_contract"]["has_pitfalls"] is True
+    assert review["quality_contract"]["has_validation_guidance"] is True
+    assert "add_methodology" not in codes
+    assert "clarify_skill_not_action" in codes
+    assert review["safe_to_auto_apply"] is False
+    assert review["human_summary"]
+    assert review["human_strengths"]
+    assert review["human_missing_items"]
 
 
 def test_review_never_modifies_candidate():

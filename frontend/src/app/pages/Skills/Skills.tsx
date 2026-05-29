@@ -1113,6 +1113,24 @@ const Skills: React.FC = () => {
     const contractWarnings = Array.isArray(qualityContract.warnings) ? qualityContract.warnings : [];
     const research = isPlainObject(review?.research_recommendation) ? review?.research_recommendation : null;
     const safeToAutoApply = review?.safe_to_auto_apply === true;
+    const humanStrengths = Array.isArray(review?.human_strengths) ? review.human_strengths : [];
+    const humanMissingItems = Array.isArray(review?.human_missing_items) ? review.human_missing_items : [];
+    const humanNextSteps = Array.isArray(review?.human_next_steps) ? review.human_next_steps : [];
+    const humanSummary = toDisplayText(review?.human_summary, toDisplayText(review?.improvement_summary, 'No summary provided.'));
+    const boundaryLabel = review?.action_boundary_status === 'clear'
+      ? 'Skill/Action boundary is clear'
+      : 'Skill/Action boundary needs clarification';
+    const itemTitle = (item: Record<string, unknown>) => {
+      const code = toDisplayText(item.code, '');
+      if (typeof item.title === 'string' && item.title.trim()) return item.title;
+      if (code === 'clarify_skill_not_action' || code === 'missing_action_boundary_statement') {
+        return 'Clarify that this skill does not activate tools or permissions';
+      }
+      if (code === 'add_expert_role') return 'Define the expert role';
+      if (code === 'add_methodology') return 'Explain the expert methodology';
+      if (code === 'add_validation_guidance') return 'Add validation criteria';
+      return toDisplayText(item.title, toDisplayText(item.code, 'Improvement'));
+    };
 
     return (
       <Box
@@ -1154,20 +1172,51 @@ const Skills: React.FC = () => {
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 1.25 }}>
             <ReviewSection title="Summary" tone={qualityTone(review.status)}>
               <Typography sx={{ fontSize: '0.78rem', color: c.text.secondary, lineHeight: 1.5, mb: 1 }}>
-                {toDisplayText(review.improvement_summary, 'No summary provided.')}
+                {humanSummary}
               </Typography>
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.65 }}>
-                <MetaChip label={toDisplayText(review.status, 'unknown status')} tone={qualityTone(review.status)} />
-                <MetaChip label={`candidate ${toDisplayText(review.candidate_status ?? review.status, 'unknown')}`} />
+                <MetaChip label={toDisplayText(review.human_status_label, toDisplayText(review.status, 'unknown status'))} tone={qualityTone(review.status)} />
                 <MetaChip
-                  label={safeToAutoApply ? 'safe_to_auto_apply true' : 'safe_to_auto_apply false · review-only'}
+                  label={safeToAutoApply ? 'Automatic changes available' : 'Review only · No automatic changes'}
                   tone={safeToAutoApply ? 'success' : 'warning'}
                 />
                 <MetaChip
-                  label={`boundary ${toDisplayText(review.action_boundary_status, 'unknown')}`}
+                  label={boundaryLabel}
                   tone={qualityTone(review.action_boundary_status)}
                 />
               </Box>
+            </ReviewSection>
+
+            <ReviewSection title="What is already strong" tone={humanStrengths.length > 0 ? 'success' : 'default'}>
+              {humanStrengths.length > 0 ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                  {humanStrengths.map((strength, index) => (
+                    <Typography key={`quality-strength-${index}`} sx={{ fontSize: '0.74rem', color: c.text.secondary, lineHeight: 1.4 }}>
+                      {toDisplayText(strength)}
+                    </Typography>
+                  ))}
+                </Box>
+              ) : (
+                <EmptyReviewState text="No strengths detected yet." />
+              )}
+            </ReviewSection>
+
+            <ReviewSection title="What still needs work" tone={humanMissingItems.length > 0 ? 'warning' : 'success'}>
+              <ChipList values={humanMissingItems} empty="No missing expert-skill items detected" tone="warning" />
+            </ReviewSection>
+
+            <ReviewSection title="Suggested next steps" tone={humanNextSteps.length > 0 ? 'warning' : 'success'}>
+              {humanNextSteps.length > 0 ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                  {humanNextSteps.map((step, index) => (
+                    <Typography key={`quality-next-step-${index}`} sx={{ fontSize: '0.74rem', color: c.text.secondary, lineHeight: 1.4 }}>
+                      {toDisplayText(step)}
+                    </Typography>
+                  ))}
+                </Box>
+              ) : (
+                <EmptyReviewState text="No next steps suggested." tone="success" />
+              )}
             </ReviewSection>
 
             <ReviewSection title="Research recommendation" tone={qualityTone(research?.status)}>
@@ -1180,12 +1229,12 @@ const Skills: React.FC = () => {
             </ReviewSection>
 
             <Box sx={{ gridColumn: { xs: 'auto', lg: '1 / -1' } }}>
-              <ReviewSection title="Improvement items" tone={improvementItems.length > 0 ? 'warning' : 'success'}>
+              <ReviewSection title={toDisplayText(review.technical_details_label, 'Technical reviewer details')} tone={improvementItems.length > 0 ? 'warning' : 'success'}>
                 {improvementItems.length > 0 ? (
                   <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 0.85 }}>
                     {improvementItems.map((rawItem, index) => {
                       const item = isPlainObject(rawItem) ? rawItem : {};
-                      const title = toDisplayText(item.title, toDisplayText(item.code, 'Improvement'));
+                      const title = itemTitle(item);
                       const severity = toDisplayText(item.severity, 'unknown');
 
                       return (
@@ -1203,9 +1252,9 @@ const Skills: React.FC = () => {
                               {title}
                             </Typography>
                             <MetaChip label={severity} tone={qualityTone(severity)} />
-                            <MetaChip label={toDisplayText(item.code, 'no_code')} />
+                            <MetaChip label={`technical code: ${toDisplayText(item.code, 'no_code')}`} />
                             <MetaChip
-                              label={item.auto_apply_supported === true ? 'auto apply supported' : 'review-only'}
+                              label={item.auto_apply_supported === true ? 'auto apply supported' : 'review only'}
                               tone={item.auto_apply_supported === true ? 'success' : 'warning'}
                             />
                           </Box>

@@ -23,12 +23,24 @@ def _has_any(text: str, needles: tuple[str, ...]) -> bool:
     return any(needle in text for needle in needles)
 
 
+def _match_count(text: str, needles: tuple[str, ...]) -> int:
+    return sum(1 for needle in needles if needle in text)
+
+
 def _has_heading(content: str, heading_terms: tuple[str, ...]) -> bool:
     for line in content.splitlines():
         stripped = line.strip().lower()
         if not stripped.startswith("#"):
             continue
         if any(term in stripped for term in heading_terms):
+            return True
+    return False
+
+
+def _has_emphasis_rule(content: str, terms: tuple[str, ...]) -> bool:
+    for line in content.splitlines():
+        stripped = line.strip()
+        if any(term in stripped for term in terms):
             return True
     return False
 
@@ -48,49 +60,156 @@ def build_skill_knowledge_contract(spec: SkillSpec) -> dict[str, Any]:
     description = _clean_text(spec.description)
     content = _clean_text(spec.content)
     combined = _normalized(f"{name}\n{description}\n{content}")
+    content_lines = [line.strip() for line in content.splitlines() if line.strip()]
+    content_has_depth = len(content) >= 350 and len(content_lines) >= 8
+
+    methodology_terms = (
+        "methodology",
+        "workflow",
+        "step-by-step",
+        "process",
+        "approach",
+        "framework",
+        "checklist",
+        "guidelines",
+        "principles",
+        "design thinking",
+        "frontend aesthetics guidelines",
+        "aesthetics guidelines",
+        "before coding",
+        "before implementing",
+        "focus on",
+        "metodolog",
+        "proceso",
+    )
+    domain_terms = (
+        "frontend",
+        "design",
+        "aesthetics",
+        "typography",
+        "color",
+        "theme",
+        "motion",
+        "spatial",
+        "composition",
+        "background",
+        "visual",
+        "accessibility",
+        "layout",
+        "component",
+        "responsive",
+        "interaction",
+        "contrast",
+        "spacing",
+        "animation",
+        "product intent",
+        "user intent",
+        "tone",
+        "differentiation",
+    )
+    decision_terms = (
+        "decision criteria",
+        "tradeoff",
+        "trade-off",
+        "choose",
+        "prefer",
+        "when to",
+        "criteria",
+        "heuristic",
+        "constraints",
+        "purpose",
+        "tone",
+        "differentiation",
+        "criterios",
+        "decidir",
+    )
+    validation_terms = (
+        "validation",
+        "validate",
+        "verify",
+        "testing",
+        "test",
+        "check",
+        "review checklist",
+        "acceptance criteria",
+        "quality bar",
+        "quality",
+        "validaci",
+        "validar",
+        "verificar",
+    )
+    pitfall_terms = (
+        "pitfall",
+        "anti-pattern",
+        "anti pattern",
+        "gotcha",
+        "avoid",
+        "never",
+        "common mistake",
+        "mistake",
+        "risk",
+        "generic",
+        "errores",
+        "riesgo",
+        "evitar",
+    )
+    boundary_terms = (
+        "boundary",
+        "boundaries",
+        "scope",
+        "constraints",
+        "limits",
+        "non-goals",
+        "permissions",
+        "provider",
+        "portable",
+        "assumptions",
+    )
+
+    method_signal_count = _match_count(combined, methodology_terms)
+    domain_signal_count = _match_count(combined, domain_terms)
+    decision_signal_count = _match_count(combined, decision_terms)
+    validation_signal_count = _match_count(combined, validation_terms)
+    pitfall_signal_count = _match_count(combined, pitfall_terms)
+    boundary_signal_count = _match_count(combined, boundary_terms)
+    has_strong_domain_guidance = content_has_depth and domain_signal_count >= 4 and method_signal_count >= 2
 
     has_role_definition = _has_heading(content, ("role", "persona", "expert")) or _has_any(
         combined,
         (
             "act as",
+            "actua como",
             "actúa como",
-            "you are a",
+                        "you are a",
             "you are an",
             "senior",
             "expert",
             "specialist",
             "professional",
         ),
+    ) or has_strong_domain_guidance
+    has_expert_methodology = (
+        _has_heading(content, ("methodology", "workflow", "process", "approach", "framework", "checklist", "guideline", "principle", "design thinking", "aesthetics"))
+        or (method_signal_count >= 1 and content_has_depth and domain_signal_count >= 2)
+        or (method_signal_count >= 2 and len(content) >= 180)
     )
-    has_expert_methodology = _has_heading(content, ("methodology", "workflow", "process", "approach", "metodología")) or _has_any(
-        combined,
-        ("methodology", "workflow", "step-by-step", "process", "approach", "metodología", "proceso"),
+    has_decision_criteria = (
+        _has_heading(content, ("decision", "criteria", "tradeoff", "heuristic", "criterio", "constraint"))
+        or (decision_signal_count >= 2 and content_has_depth)
     )
-    has_decision_criteria = _has_heading(content, ("decision", "criteria", "tradeoff", "heuristic", "criterio")) or _has_any(
-        combined,
-        ("decision criteria", "tradeoff", "choose", "prefer", "when to", "criterios", "decidir"),
+    has_validation_guidance = (
+        _has_heading(content, ("validation", "verify", "testing", "quality", "review checklist", "validaci"))
+        or (validation_signal_count >= 2 and content_has_depth)
+        or (_has_emphasis_rule(content, ("CRITICAL", "IMPORTANT")) and validation_signal_count >= 1)
     )
-    has_validation_guidance = _has_heading(content, ("validation", "verify", "testing", "quality", "validación")) or _has_any(
-        combined,
-        ("validate", "verify", "test", "check", "acceptance criteria", "quality bar", "validar", "verificar"),
+    has_pitfalls = (
+        _has_heading(content, ("pitfall", "anti-pattern", "anti pattern", "gotcha", "risk", "avoid", "errores"))
+        or (pitfall_signal_count >= 2 and len(content) >= 180)
+        or (_has_emphasis_rule(content, ("NEVER",)) and pitfall_signal_count >= 1)
     )
-    has_pitfalls = _has_heading(content, ("pitfall", "anti-pattern", "gotcha", "risk", "avoid", "errores")) or _has_any(
-        combined,
-        ("pitfall", "anti-pattern", "gotcha", "avoid", "common mistake", "risk", "riesgo", "evitar"),
-    )
-    has_operational_boundaries = _has_heading(content, ("boundary", "boundaries", "scope", "constraints", "limits", "non-goals")) or _has_any(
-        combined,
-        (
-            "boundary",
-            "boundaries",
-            "scope",
-            "constraints",
-            "limits",
-            "non-goals",
-            "permissions",
-            "provider",
-            "portable",
-        ),
+    has_operational_boundaries = (
+        _has_heading(content, ("boundary", "boundaries", "scope", "constraints", "limits", "non-goals"))
+        or (boundary_signal_count >= 1 and content_has_depth)
     )
     has_action_boundary_statement = _has_any(
         combined,
@@ -149,5 +268,14 @@ def build_skill_knowledge_contract(spec: SkillSpec) -> dict[str, Any]:
         "contract_kind": CONTRACT_KIND,
         "skill_name": name,
         **checks,
+        "signal_summary": {
+            "domain_signal_count": domain_signal_count,
+            "methodology_signal_count": method_signal_count,
+            "decision_signal_count": decision_signal_count,
+            "validation_signal_count": validation_signal_count,
+            "pitfall_signal_count": pitfall_signal_count,
+            "boundary_signal_count": boundary_signal_count,
+            "content_has_depth": content_has_depth,
+        },
         "warnings": warnings,
     }

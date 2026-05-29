@@ -129,6 +129,12 @@ export interface SkillCandidateQualityReview {
     [key: string]: any;
   } | null;
   improvement_summary?: string;
+  human_summary?: string;
+  human_status_label?: string;
+  human_next_steps?: string[];
+  human_strengths?: string[];
+  human_missing_items?: string[];
+  technical_details_label?: string;
   improvement_items?: SkillCandidateQualityReviewItem[];
   recommended_sections?: string[];
   missing_sections?: string[];
