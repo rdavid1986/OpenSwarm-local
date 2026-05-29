@@ -432,6 +432,35 @@ const Skills: React.FC = () => {
     return { label: toDisplayText(warning.status, 'warning'), color: c.status.warning, bg: c.status.warningBg };
   };
 
+  const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+
+  const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+    !!value && typeof value === 'object' && !Array.isArray(value);
+
+  const toCompactValue = (value: unknown) => {
+    if (typeof value === 'string' && value.trim()) return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) {
+      const compact = value.map((item) => toDisplayText(item, '')).filter(Boolean).join(', ');
+      return compact || '[]';
+    }
+    if (isPlainObject(value)) {
+      try {
+        return JSON.stringify(value);
+      } catch {
+        return '[object]';
+      }
+    }
+    return '—';
+  };
+
+  const getInstallDisabledReason = (candidate: SkillSpecCandidate) => {
+    if (candidate.status === 'installed') return 'Already installed.';
+    if (candidate.status === 'rejected') return 'Rejected candidates cannot be installed.';
+    if (!candidate.install_approved) return 'Approve install before installing.';
+    return 'Ready to install.';
+  };
+
   const ReviewSection: React.FC<{
     title: string;
     tone?: 'default' | 'success' | 'warning' | 'error';
@@ -499,6 +528,35 @@ const Skills: React.FC = () => {
       />
     );
   };
+
+  const ChipList: React.FC<{ values: unknown; empty: string; tone?: 'default' | 'warning' | 'error' }> = ({ values, empty, tone = 'default' }) => {
+    const items = asArray(values).filter((item) => toDisplayText(item, '').trim());
+
+    if (items.length === 0) {
+      return <EmptyReviewState text={empty} />;
+    }
+
+    return (
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.65 }}>
+        {items.map((item, index) => (
+          <MetaChip
+            key={`chip-${index}-${toCompactValue(item)}`}
+            label={toCompactValue(item)}
+            tone={tone === 'default' ? 'default' : tone}
+          />
+        ))}
+      </Box>
+    );
+  };
+
+  const DetailRow: React.FC<{ label: string; value: unknown; tone?: 'default' | 'success' | 'warning' | 'error' }> = ({ label, value, tone = 'default' }) => (
+    <Box sx={{ minWidth: 0 }}>
+      <Typography sx={{ fontSize: '0.68rem', color: c.text.ghost, mb: 0.35, fontWeight: 600 }}>
+        {label}
+      </Typography>
+      <MetaChip label={toCompactValue(value)} tone={tone} />
+    </Box>
+  );
 
   const CandidateReview: React.FC<{ candidate: SkillSpecCandidate }> = ({ candidate }) => {
     const validationErrors = Array.isArray(candidate.validation_errors) ? candidate.validation_errors : [];
@@ -663,6 +721,180 @@ const Skills: React.FC = () => {
     );
   };
 
+  const CandidateRequirements: React.FC<{ candidate: SkillSpecCandidate }> = ({ candidate }) => {
+    const spec = candidate.skill_spec || {};
+
+    return (
+      <Box
+        sx={{
+          mb: 2,
+          p: 2,
+          borderRadius: `${c.radius.md}px`,
+          border: `1px solid ${c.border.subtle}`,
+          bgcolor: c.bg.secondary,
+          boxShadow: c.shadow.sm,
+          flexShrink: 0,
+        }}
+      >
+        <Typography sx={{ fontSize: '0.82rem', color: c.text.primary, fontWeight: 700, mb: 1.5 }}>
+          Requirements & declared metadata
+        </Typography>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 1.25 }}>
+          <ReviewSection title="Required tools">
+            <ChipList values={spec.required_tools} empty="No required tools declared" />
+          </ReviewSection>
+          <ReviewSection title="Required MCP servers">
+            <ChipList values={spec.required_mcp_servers} empty="No MCP servers declared" />
+          </ReviewSection>
+          <ReviewSection title="Compatible providers">
+            <ChipList values={spec.compatible_providers} empty="No compatible providers declared" />
+          </ReviewSection>
+          <ReviewSection title="Tested models">
+            <ChipList values={spec.tested_models} empty="No tested models declared" />
+          </ReviewSection>
+          <ReviewSection title="Recommended models">
+            <ChipList values={spec.recommended_models} empty="No recommended models declared" />
+          </ReviewSection>
+          <ReviewSection title="Unsupported models">
+            <ChipList values={spec.unsupported_models} empty="No unsupported models declared" tone="warning" />
+          </ReviewSection>
+          <ReviewSection title="Tags">
+            <ChipList values={spec.tags} empty="No tags attached" />
+          </ReviewSection>
+          <ReviewSection title="Categories">
+            <ChipList values={spec.categories} empty="No categories attached" />
+          </ReviewSection>
+          <Box sx={{ gridColumn: { xs: 'auto', lg: '1 / -1' } }}>
+            <ReviewSection title="Declared risks" tone={asArray(spec.risks).length > 0 ? 'warning' : 'success'}>
+              <ChipList values={spec.risks} empty="No risks declared" tone="warning" />
+            </ReviewSection>
+          </Box>
+        </Box>
+      </Box>
+    );
+  };
+
+  const CandidateSourcePanel: React.FC<{ candidate: SkillSpecCandidate }> = ({ candidate }) => {
+    const spec = candidate.skill_spec || {};
+    const provenance = isPlainObject(spec.provenance) ? spec.provenance : {};
+    const provenanceEntries = Object.entries(provenance);
+
+    return (
+      <Box
+        sx={{
+          mb: 2,
+          p: 2,
+          borderRadius: `${c.radius.md}px`,
+          border: `1px solid ${c.border.subtle}`,
+          bgcolor: c.bg.secondary,
+          boxShadow: c.shadow.sm,
+          flexShrink: 0,
+        }}
+      >
+        <Typography sx={{ fontSize: '0.82rem', color: c.text.primary, fontWeight: 700, mb: 1.5 }}>
+          Source & provenance
+        </Typography>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', lg: 'repeat(3, minmax(0, 1fr))' }, gap: 1.25, mb: 1.25 }}>
+          <DetailRow label="Source" value={candidate.source} />
+          <DetailRow label="Source ref" value={candidate.source_ref} />
+          <DetailRow label="Status" value={candidate.status} tone={candidate.status === 'rejected' ? 'error' : candidate.status === 'installed' ? 'success' : 'default'} />
+          <DetailRow label="Install approval" value={candidate.install_approved ? 'approved' : 'not approved'} tone={candidate.install_approved ? 'success' : 'warning'} />
+          <DetailRow label="Source format" value={spec.source_format} />
+          <DetailRow label="Metadata confidence" value={spec.metadata_confidence} />
+        </Box>
+        <ReviewSection title="Provenance metadata">
+          {provenanceEntries.length > 0 ? (
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 0.75 }}>
+              {provenanceEntries.map(([key, value]) => (
+                <Box
+                  key={key}
+                  sx={{
+                    p: 1,
+                    borderRadius: `${c.radius.xs}px`,
+                    border: `1px solid ${c.border.subtle}`,
+                    bgcolor: c.bg.elevated,
+                    minWidth: 0,
+                  }}
+                >
+                  <Typography sx={{ fontSize: '0.68rem', color: c.text.ghost, mb: 0.35, fontWeight: 650 }}>
+                    {key}
+                  </Typography>
+                  <Typography
+                    title={toCompactValue(value)}
+                    sx={{
+                      fontSize: '0.74rem',
+                      color: c.text.secondary,
+                      fontFamily: typeof value === 'object' && value !== null ? c.font.mono : c.font.sans,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {toCompactValue(value)}
+                  </Typography>
+                </Box>
+              ))}
+            </Box>
+          ) : (
+            <EmptyReviewState text="No provenance metadata attached" />
+          )}
+        </ReviewSection>
+      </Box>
+    );
+  };
+
+  const CandidateSidebarRow: React.FC<{ candidate: SkillSpecCandidate }> = ({ candidate }) => {
+    const selected = isSelected('candidate', candidate.candidate_id);
+
+    return (
+      <Box
+        onClick={() => selectCandidate(candidate.candidate_id)}
+        sx={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 1,
+          px: 1.5,
+          py: 0.75,
+          borderRadius: `${c.radius.sm}px`,
+          cursor: 'pointer',
+          bgcolor: selected ? c.bg.secondary : 'transparent',
+          transition: 'background 0.12s',
+          '&:hover': { bgcolor: selected ? c.bg.secondary : 'rgba(0,0,0,0.03)' },
+        }}
+      >
+        <AutoFixHighIcon sx={{ fontSize: 15, color: c.accent.primary, flexShrink: 0, mt: 0.2 }} />
+        <Box sx={{ minWidth: 0, flex: 1 }}>
+          <Typography
+            sx={{
+              fontSize: '0.82rem',
+              color: selected ? c.text.primary : c.text.secondary,
+              fontWeight: selected ? 600 : 400,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {candidate.skill_spec?.name || 'Untitled Skill Candidate'}
+          </Typography>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.45, mt: 0.45 }}>
+            <Chip
+              label={candidate.status || 'candidate'}
+              size="small"
+              sx={{ bgcolor: c.bg.page, color: c.text.ghost, fontSize: '0.62rem', height: 18, '& .MuiChip-label': { px: 0.55 } }}
+            />
+            {candidate.install_approved && (
+              <Chip
+                label="approved"
+                size="small"
+                sx={{ bgcolor: c.status.successBg, color: c.status.success, fontSize: '0.62rem', height: 18, '& .MuiChip-label': { px: 0.55 } }}
+              />
+            )}
+          </Box>
+        </Box>
+      </Box>
+    );
+  };
+
   return (
     <Box sx={{ display: 'flex', height: '100%', overflow: 'hidden', bgcolor: c.bg.page, position: 'relative' }}>
       {/* ─── Left Sidebar ─── */}
@@ -802,18 +1034,14 @@ const Skills: React.FC = () => {
                 <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: c.text.tertiary, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                   Skill Candidates
                 </Typography>
-                <Typography sx={{ fontSize: '0.68rem', color: c.text.ghost, ml: 0.5 }}>({filteredCandidates.length})</Typography>
+                <Typography sx={{ fontSize: '0.68rem', color: c.text.ghost, ml: 0.5 }}>
+                  ({filteredCandidates.length}{filteredCandidates.length !== skillCandidates.length ? `/${skillCandidates.length}` : ''})
+                </Typography>
               </Box>
               <Collapse in={!collapsedCats['__candidates']}>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, mt: 0.25 }}>
                   {filteredCandidates.map((candidate) => (
-                    <SidebarRow
-                      key={candidate.candidate_id}
-                      label={candidate.skill_spec.name}
-                      selected={isSelected('candidate', candidate.candidate_id)}
-                      onClick={() => selectCandidate(candidate.candidate_id)}
-                      icon={<AutoFixHighIcon sx={{ fontSize: 15, color: c.accent.primary, flexShrink: 0 }} />}
-                    />
+                    <CandidateSidebarRow key={candidate.candidate_id} candidate={candidate} />
                   ))}
                 </Box>
               </Collapse>
@@ -961,82 +1189,103 @@ const Skills: React.FC = () => {
                 Saved as <strong style={{ color: c.accent.primary, fontWeight: 600 }}>review candidate</strong>.
                 {selectedCandidate.install_approved ? ' Approved for install.' : ' Requires approval before install.'}
               </Typography>
-              <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  disabled={selectedCandidate.install_approved || selectedCandidate.status === 'installed'}
-                  onClick={handleApproveCandidateInstall}
-                  sx={{
-                    borderColor: c.border.strong,
-                    color: c.text.secondary,
-                    '&:hover': { borderColor: c.accent.primary, color: c.accent.primary, bgcolor: 'rgba(174,86,48,0.04)' },
-                    textTransform: 'none',
-                    borderRadius: `${c.radius.md}px`,
-                    px: 2,
-                    py: 0.5,
-                    fontSize: '0.8rem',
-                    fontWeight: 600,
-                  }}
-                >
-                  Approve install
-                </Button>
-                <Button
-                  variant="contained"
-                  size="small"
-                  disabled={!selectedCandidate.install_approved || selectedCandidate.status === 'installed'}
-                  onClick={handleInstallCandidate}
-                  sx={{
-                    bgcolor: c.accent.primary,
-                    '&:hover': { bgcolor: c.accent.pressed },
-                    textTransform: 'none',
-                    borderRadius: `${c.radius.md}px`,
-                    px: 2,
-                    py: 0.5,
-                    fontSize: '0.8rem',
-                    fontWeight: 600,
-                    boxShadow: 'none',
-                  }}
-                >
-                  Install
-                </Button>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  disabled={selectedCandidate.status === 'installed' || selectedCandidate.status === 'rejected'}
-                  onClick={handleRejectCandidate}
-                  sx={{
-                    borderColor: c.border.strong,
-                    color: c.status.warning,
-                    '&:hover': { borderColor: c.status.warning, bgcolor: `${c.status.warning}10` },
-                    textTransform: 'none',
-                    borderRadius: `${c.radius.md}px`,
-                    px: 2,
-                    py: 0.5,
-                    fontSize: '0.8rem',
-                    fontWeight: 600,
-                  }}
-                >
-                  Reject
-                </Button>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={handleDeleteCandidate}
-                  sx={{
-                    borderColor: c.border.strong,
-                    color: c.status.error,
-                    '&:hover': { borderColor: c.status.error, bgcolor: `${c.status.error}10` },
-                    textTransform: 'none',
-                    borderRadius: `${c.radius.md}px`,
-                    px: 2,
-                    py: 0.5,
-                    fontSize: '0.8rem',
-                    fontWeight: 600,
-                  }}
-                >
-                  Delete
-                </Button>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.45, alignItems: 'flex-end' }}>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                  <Tooltip title={selectedCandidate.install_approved ? 'Install approval is already granted.' : 'Run validation and request install approval.'}>
+                    <span>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        disabled={selectedCandidate.install_approved || selectedCandidate.status === 'installed'}
+                        onClick={handleApproveCandidateInstall}
+                        sx={{
+                          borderColor: c.border.strong,
+                          color: c.text.secondary,
+                          '&:hover': { borderColor: c.accent.primary, color: c.accent.primary, bgcolor: 'rgba(174,86,48,0.04)' },
+                          textTransform: 'none',
+                          borderRadius: `${c.radius.md}px`,
+                          px: 2,
+                          py: 0.5,
+                          fontSize: '0.8rem',
+                          fontWeight: 600,
+                        }}
+                      >
+                        Approve install
+                      </Button>
+                    </span>
+                  </Tooltip>
+                  <Tooltip title={getInstallDisabledReason(selectedCandidate)}>
+                    <span>
+                      <Button
+                        variant="contained"
+                        size="small"
+                        disabled={!selectedCandidate.install_approved || selectedCandidate.status === 'installed' || selectedCandidate.status === 'rejected'}
+                        onClick={handleInstallCandidate}
+                        sx={{
+                          bgcolor: c.accent.primary,
+                          '&:hover': { bgcolor: c.accent.pressed },
+                          textTransform: 'none',
+                          borderRadius: `${c.radius.md}px`,
+                          px: 2,
+                          py: 0.5,
+                          fontSize: '0.8rem',
+                          fontWeight: 600,
+                          boxShadow: 'none',
+                        }}
+                      >
+                        Install
+                      </Button>
+                    </span>
+                  </Tooltip>
+                  <Tooltip title={selectedCandidate.status === 'rejected' ? 'Already rejected.' : selectedCandidate.status === 'installed' ? 'Installed candidates cannot be rejected here.' : 'Reject this candidate from review.'}>
+                    <span>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        disabled={selectedCandidate.status === 'installed' || selectedCandidate.status === 'rejected'}
+                        onClick={handleRejectCandidate}
+                        sx={{
+                          borderColor: c.border.strong,
+                          color: c.status.warning,
+                          '&:hover': { borderColor: c.status.warning, bgcolor: `${c.status.warning}10` },
+                          textTransform: 'none',
+                          borderRadius: `${c.radius.md}px`,
+                          px: 2,
+                          py: 0.5,
+                          fontSize: '0.8rem',
+                          fontWeight: 600,
+                        }}
+                      >
+                        Reject
+                      </Button>
+                    </span>
+                  </Tooltip>
+                  <Tooltip title="Delete this candidate record.">
+                    <span>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={handleDeleteCandidate}
+                        sx={{
+                          borderColor: c.border.strong,
+                          color: c.status.error,
+                          '&:hover': { borderColor: c.status.error, bgcolor: `${c.status.error}10` },
+                          textTransform: 'none',
+                          borderRadius: `${c.radius.md}px`,
+                          px: 2,
+                          py: 0.5,
+                          fontSize: '0.8rem',
+                          fontWeight: 600,
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    </span>
+                  </Tooltip>
+                </Box>
+                <Typography sx={{ fontSize: '0.7rem', color: c.text.ghost, lineHeight: 1.35 }}>
+                  Install: {getInstallDisabledReason(selectedCandidate)}
+                </Typography>
               </Box>
             </Box>
 
@@ -1050,6 +1299,10 @@ const Skills: React.FC = () => {
             )}
 
             <CandidateReview candidate={selectedCandidate} />
+
+            <CandidateRequirements candidate={selectedCandidate} />
+
+            <CandidateSourcePanel candidate={selectedCandidate} />
 
             <ContentPreview content={selectedCandidate.skill_spec.content} />
           </Box>
