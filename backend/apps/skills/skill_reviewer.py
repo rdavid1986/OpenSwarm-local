@@ -105,15 +105,40 @@ EXAMPLES_GAP_CODES = {
 }
 
 
-def _split_improvement_items(improvement_items: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+DOCUMENT_WORKFLOW_SOFT_GAP_CODES = {
+    "add_expert_role",
+    "add_decision_criteria",
+    "add_boundaries",
+}
+
+
+def _split_improvement_items(
+    improvement_items: list[dict[str, Any]],
+    *,
+    skill_profile: str,
+    quality_contract: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
     quality_gap_items: list[dict[str, Any]] = []
     openswarm_adaptation_items: list[dict[str, Any]] = []
     examples_gap_items: list[dict[str, Any]] = []
     research_gap_items: list[dict[str, Any]] = []
+    profile_gap_items: list[dict[str, Any]] = []
+
+    document_workflow_is_operationally_strong = (
+        skill_profile == "document_workflow"
+        and bool(quality_contract.get("has_expert_methodology"))
+        and bool(quality_contract.get("has_validation_guidance"))
+        and bool(quality_contract.get("has_pitfalls"))
+    )
 
     for item in improvement_items:
         code = str(item.get("code") or "")
-        if code in QUALITY_GAP_CODES:
+        if (
+            document_workflow_is_operationally_strong
+            and code in DOCUMENT_WORKFLOW_SOFT_GAP_CODES
+        ):
+            profile_gap_items.append(item)
+        elif code in QUALITY_GAP_CODES:
             quality_gap_items.append(item)
         elif code in OPENSWARM_ADAPTATION_CODES:
             openswarm_adaptation_items.append(item)
@@ -129,6 +154,7 @@ def _split_improvement_items(improvement_items: list[dict[str, Any]]) -> dict[st
         "openswarm_adaptation_items": openswarm_adaptation_items,
         "examples_gap_items": examples_gap_items,
         "research_gap_items": research_gap_items,
+        "profile_gap_items": profile_gap_items,
     }
 
 
@@ -156,13 +182,18 @@ def _human_review_fields(
     research_recommendation: dict[str, Any],
 ) -> dict[str, Any]:
     strengths = _human_strengths(quality_contract)
-    taxonomy = _split_improvement_items(improvement_items)
     skill_profile = _skill_profile(spec, quality_contract)
+    taxonomy = _split_improvement_items(
+        improvement_items,
+        skill_profile=skill_profile,
+        quality_contract=quality_contract,
+    )
 
     quality_missing = [_human_item_label(item) for item in taxonomy["quality_gap_items"]]
     adaptation_missing = [_human_item_label(item) for item in taxonomy["openswarm_adaptation_items"]]
     research_missing = [_human_item_label(item) for item in taxonomy["research_gap_items"]]
     examples_missing = [_human_item_label(item) for item in taxonomy["examples_gap_items"]]
+    profile_missing = [_human_item_label(item) for item in taxonomy["profile_gap_items"]]
 
     missing_items = quality_missing + adaptation_missing + research_missing
     next_steps = quality_missing + adaptation_missing + research_missing
@@ -180,6 +211,8 @@ def _human_review_fields(
         summary += " It should also clarify that the skill does not activate tools, MCP, or permissions."
     if research_recommendation.get("status") == "web_research_recommended":
         next_steps.append("Mark time-sensitive claims for a separate, permitted web research workflow.")
+    if profile_missing and not quality_missing:
+        next_steps.append("For document workflow skills, role, decision criteria, or boundaries can be profile refinements when the operational workflow is already strong.")
     if examples_missing and not quality_missing:
         next_steps.append("Consider examples only if they would make the skill easier to apply; this is not a core quality blocker.")
     if strengths:
@@ -203,6 +236,7 @@ def _human_review_fields(
         "openswarm_adaptation_items": taxonomy["openswarm_adaptation_items"],
         "examples_gap_items": taxonomy["examples_gap_items"],
         "research_gap_items": taxonomy["research_gap_items"],
+        "profile_gap_items": taxonomy["profile_gap_items"],
         "technical_details_label": "Technical reviewer details",
     }
 

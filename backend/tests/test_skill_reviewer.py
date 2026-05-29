@@ -74,6 +74,44 @@ This guidance covers frontend visual design and implementation choices.
 """
 
 
+DOCX_STYLE_CONTENT = """
+# DOCX creation, editing, and analysis
+
+## Overview
+This guide covers creating, editing, validating, and repairing Word documents.
+
+## Quick Reference
+Use docx-js for creating documents. Use raw XML access for precise edits.
+
+## Workflow
+Follow a repeatable document workflow: inspect requirements, choose the right
+library or XML path, create or edit the document, validate output, then repair
+formatting or schema issues before delivery.
+
+## Creating New Documents
+Follow setup, document creation, style definition, table creation, image insertion,
+headers, footers, table of contents, and packaging steps.
+
+### Validation
+After creating the file, validate it. If validation fails, unpack, fix the XML,
+and repack. Check headings, tables, images, hyperlinks, tracked changes, and
+schema compliance.
+
+### Critical Rules
+CRITICAL: docx-js defaults to A4, not US Letter.
+IMPORTANT: Use exact IDs to override built-in styles.
+NEVER use unicode bullets. Use numbering config.
+NEVER use WidthType.PERCENTAGE for tables.
+
+## Editing Existing Documents
+Unpack the file, edit XML carefully, then pack the file again.
+
+## Common Pitfalls
+Avoid invalid XML, manual bullet characters, missing image type parameters, and
+comment markers inside runs.
+"""
+
+
 def _client(monkeypatch, tmp_path):
     monkeypatch.setattr(skills_module, "skill_candidate_store", SkillCandidateStore(root=tmp_path / "skill_candidates"))
     monkeypatch.setattr(skills_module, "SKILLS_DIR", str(tmp_path / "legacy_skills"))
@@ -152,6 +190,21 @@ def test_generic_candidate_keeps_quality_gap_items():
     assert "add_methodology" in quality_codes
     assert review["skill_profile"] == "general_skill"
     assert review["openswarm_adaptation_items"]
+
+
+
+def test_document_workflow_softens_profile_gaps_when_operationally_strong():
+    review = review_skill_candidate(_candidate(DOCX_STYLE_CONTENT, command="docx"))
+
+    quality_codes = {item["code"] for item in review["quality_gap_items"]}
+    profile_codes = {item["code"] for item in review["profile_gap_items"]}
+
+    assert review["skill_profile"] == "document_workflow"
+    assert "add_expert_role" not in quality_codes
+    assert "add_decision_criteria" not in quality_codes
+    assert "add_boundaries" not in quality_codes
+    assert {"add_expert_role", "add_decision_criteria", "add_boundaries"} <= profile_codes
+    assert "document workflow skills" in " ".join(review["human_next_steps"])
 
 
 
