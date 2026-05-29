@@ -42,6 +42,8 @@ import {
   createSkill,
   updateSkill,
   deleteSkill,
+  approveSkillCandidate,
+  installSkillCandidate,
   Skill,
   SkillSpecCandidate,
 } from '@/shared/state/skillsSlice';
@@ -222,6 +224,32 @@ const Skills: React.FC = () => {
       command: selectedReg.name.toLowerCase().replace(/\s+/g, '-'),
     });
     setDialogOpen(true);
+  };
+
+  const handleApproveCandidateInstall = async () => {
+    if (!selectedCandidate) return;
+    try {
+      const result = await dispatch(approveSkillCandidate({ candidateId: selectedCandidate.candidate_id, approved: true })).unwrap();
+      if (result.install_approved) {
+        setSnackbar({ open: true, message: `Candidate "${result.skill_spec.name}" approved for install` });
+      } else {
+        setSnackbar({ open: true, message: `Candidate "${result.skill_spec.name}" is blocked by validation or policy gate` });
+      }
+    } catch (err) {
+      console.error('Failed to approve skill candidate:', err);
+      setSnackbar({ open: true, message: 'Failed to approve skill candidate' });
+    }
+  };
+
+  const handleInstallCandidate = async () => {
+    if (!selectedCandidate) return;
+    try {
+      const result = await dispatch(installSkillCandidate(selectedCandidate.candidate_id)).unwrap();
+      setSnackbar({ open: true, message: `Installed "${result.skill.name}" as a local skill` });
+    } catch (err) {
+      console.error('Failed to install skill candidate:', err);
+      setSnackbar({ open: true, message: err instanceof Error ? err.message : 'Failed to install skill candidate' });
+    }
   };
 
   const isSelected = (type: 'registry' | 'local' | 'candidate', key: string) => {
@@ -619,10 +647,51 @@ const Skills: React.FC = () => {
               </Box>
             )}
 
-            <Box sx={{ mb: 1, flexShrink: 0 }}>
+            <Box sx={{ mb: 1.5, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
               <Typography sx={{ fontSize: '0.78rem', color: c.text.ghost }}>
-                Saved as <strong style={{ color: c.accent.primary, fontWeight: 600 }}>review candidate</strong>. Install approval is not implemented yet.
+                Saved as <strong style={{ color: c.accent.primary, fontWeight: 600 }}>review candidate</strong>.
+                {selectedCandidate.install_approved ? ' Approved for install.' : ' Requires approval before install.'}
               </Typography>
+              <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  disabled={selectedCandidate.install_approved || selectedCandidate.status === 'installed'}
+                  onClick={handleApproveCandidateInstall}
+                  sx={{
+                    borderColor: c.border.strong,
+                    color: c.text.secondary,
+                    '&:hover': { borderColor: c.accent.primary, color: c.accent.primary, bgcolor: 'rgba(174,86,48,0.04)' },
+                    textTransform: 'none',
+                    borderRadius: `${c.radius.md}px`,
+                    px: 2,
+                    py: 0.5,
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  Approve install
+                </Button>
+                <Button
+                  variant="contained"
+                  size="small"
+                  disabled={!selectedCandidate.install_approved || selectedCandidate.status === 'installed'}
+                  onClick={handleInstallCandidate}
+                  sx={{
+                    bgcolor: c.accent.primary,
+                    '&:hover': { bgcolor: c.accent.pressed },
+                    textTransform: 'none',
+                    borderRadius: `${c.radius.md}px`,
+                    px: 2,
+                    py: 0.5,
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    boxShadow: 'none',
+                  }}
+                >
+                  Install
+                </Button>
+              </Box>
             </Box>
 
             {selectedCandidate.skill_spec.description && (
