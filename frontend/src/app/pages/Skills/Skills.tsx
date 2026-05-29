@@ -44,6 +44,8 @@ import {
   deleteSkill,
   approveSkillCandidate,
   installSkillCandidate,
+  rejectSkillCandidate,
+  deleteSkillCandidate,
   Skill,
   SkillSpecCandidate,
 } from '@/shared/state/skillsSlice';
@@ -281,6 +283,32 @@ const Skills: React.FC = () => {
     } catch (err) {
       console.error('Failed to install skill candidate:', err);
       setSnackbar({ open: true, message: err instanceof Error ? err.message : 'Failed to install skill candidate' });
+    }
+  };
+
+  const handleRejectCandidate = async () => {
+    if (!selectedCandidate) return;
+    try {
+      const result = await dispatch(rejectSkillCandidate(selectedCandidate.candidate_id)).unwrap();
+      setSnackbar({ open: true, message: `Rejected "${result.skill_spec.name}"` });
+    } catch (err) {
+      console.error('Failed to reject skill candidate:', err);
+      setSnackbar({ open: true, message: err instanceof Error ? err.message : 'Failed to reject skill candidate' });
+    }
+  };
+
+  const handleDeleteCandidate = async () => {
+    if (!selectedCandidate) return;
+    const candidateName = selectedCandidate.skill_spec.name || 'Untitled Skill Candidate';
+    try {
+      await dispatch(deleteSkillCandidate(selectedCandidate.candidate_id)).unwrap();
+      if (selection?.type === 'candidate' && selection.id === selectedCandidate.candidate_id) {
+        setSelection(null);
+      }
+      setSnackbar({ open: true, message: `Deleted "${candidateName}"` });
+    } catch (err) {
+      console.error('Failed to delete skill candidate:', err);
+      setSnackbar({ open: true, message: err instanceof Error ? err.message : 'Failed to delete skill candidate' });
     }
   };
 
@@ -722,6 +750,43 @@ const Skills: React.FC = () => {
                   }}
                 >
                   Install
+                </Button>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  disabled={selectedCandidate.status === 'installed' || selectedCandidate.status === 'rejected'}
+                  onClick={handleRejectCandidate}
+                  sx={{
+                    borderColor: c.border.strong,
+                    color: c.status.warning,
+                    '&:hover': { borderColor: c.status.warning, bgcolor: `${c.status.warning}10` },
+                    textTransform: 'none',
+                    borderRadius: `${c.radius.md}px`,
+                    px: 2,
+                    py: 0.5,
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  Reject
+                </Button>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={handleDeleteCandidate}
+                  sx={{
+                    borderColor: c.border.strong,
+                    color: c.status.error,
+                    '&:hover': { borderColor: c.status.error, bgcolor: `${c.status.error}10` },
+                    textTransform: 'none',
+                    borderRadius: `${c.radius.md}px`,
+                    px: 2,
+                    py: 0.5,
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  Delete
                 </Button>
               </Box>
             </Box>
