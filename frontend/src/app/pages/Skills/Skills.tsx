@@ -117,6 +117,14 @@ const Skills: React.FC = () => {
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string }>({ open: false, message: '' });
   const [builderPreview, setBuilderPreview] = useState<SkillPreviewData | null>(null);
   const [builderOpen, setBuilderOpen] = useState(false);
+  const [candidateDetailExpanded, setCandidateDetailExpanded] = useState<Record<string, boolean>>({
+    validation: false,
+    requirements: false,
+    contract: false,
+    source: false,
+    content: false,
+  });
+
 
   const handleBuilderPreview = useCallback((data: SkillPreviewData | null) => {
     setBuilderPreview(data);
@@ -566,6 +574,61 @@ const Skills: React.FC = () => {
           '& .MuiChip-label': { px: 0.8 },
         }}
       />
+    );
+  };
+
+  const CollapsibleCandidatePanel: React.FC<{
+    id: string;
+    title: string;
+    summary: string;
+    defaultTone?: 'default' | 'success' | 'warning' | 'error';
+    children: React.ReactNode;
+  }> = ({ id, title, summary, defaultTone = 'default', children }) => {
+    const expanded = !!candidateDetailExpanded[id];
+
+    return (
+      <Box
+        sx={{
+          mb: 1.25,
+          borderRadius: `${c.radius.md}px`,
+          border: `1px solid ${c.border.subtle}`,
+          bgcolor: c.bg.secondary,
+          boxShadow: c.shadow.sm,
+          overflow: 'hidden',
+          flexShrink: 0,
+        }}
+      >
+        <Box
+          onClick={() => setCandidateDetailExpanded((prev) => ({ ...prev, [id]: !expanded }))}
+          sx={{
+            px: 2,
+            py: 1.25,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 1.5,
+            '&:hover': { bgcolor: c.bg.elevated },
+          }}
+        >
+          <Box sx={{ minWidth: 0 }}>
+            <Typography sx={{ fontSize: '0.82rem', color: c.text.primary, fontWeight: 700 }}>
+              {title}
+            </Typography>
+            <Typography sx={{ fontSize: '0.72rem', color: c.text.ghost, mt: 0.25, lineHeight: 1.35 }}>
+              {summary}
+            </Typography>
+          </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.65, flexShrink: 0 }}>
+            <MetaChip label={expanded ? 'Hide details' : 'Show details'} tone={defaultTone} />
+          </Box>
+        </Box>
+        <Collapse in={expanded}>
+          <Box sx={{ px: 2, pb: 2 }}>
+            {children}
+          </Box>
+        </Collapse>
+      </Box>
     );
   };
 
@@ -1722,25 +1785,57 @@ const Skills: React.FC = () => {
               </Box>
             </Box>
 
-            <CandidateReview candidate={selectedCandidate} />
-
-            <CandidateRequirements candidate={selectedCandidate} />
-
-            <RequirementsContractPanel
-              contract={selectedRequirementsContract}
-              loading={selectedRequirementsContractLoading}
-              error={selectedRequirementsContractError}
-            />
-
             <SkillQualityReviewPanel
               review={selectedQualityReview}
               loading={selectedQualityReviewLoading}
               error={selectedQualityReviewError}
             />
 
-            <CandidateSourcePanel candidate={selectedCandidate} />
+            <CollapsibleCandidatePanel
+              id="validation"
+              title="Validation, gate and evidence details"
+              summary="Technical validation details, evidence refs and policy refs."
+              defaultTone={(selectedCandidate.validation_errors || []).length > 0 || (selectedCandidate.warnings || []).length > 0 ? 'warning' : 'success'}
+            >
+              <CandidateReview candidate={selectedCandidate} />
+            </CollapsibleCandidatePanel>
 
-            <ContentPreview content={selectedCandidate.skill_spec.content} />
+            <CollapsibleCandidatePanel
+              id="requirements"
+              title="Declared requirements and metadata"
+              summary="Tools, MCP servers, providers, models, tags, categories and risks declared by this skill."
+            >
+              <CandidateRequirements candidate={selectedCandidate} />
+            </CollapsibleCandidatePanel>
+
+            <CollapsibleCandidatePanel
+              id="contract"
+              title="Requirements contract"
+              summary="Read-only diagnostic map. Requirements do not grant permissions or activate tools."
+              defaultTone={selectedRequirementsContractError ? 'error' : 'default'}
+            >
+              <RequirementsContractPanel
+                contract={selectedRequirementsContract}
+                loading={selectedRequirementsContractLoading}
+                error={selectedRequirementsContractError}
+              />
+            </CollapsibleCandidatePanel>
+
+            <CollapsibleCandidatePanel
+              id="source"
+              title="Source and provenance"
+              summary="Origin, source format, metadata confidence and provenance details."
+            >
+              <CandidateSourcePanel candidate={selectedCandidate} />
+            </CollapsibleCandidatePanel>
+
+            <CollapsibleCandidatePanel
+              id="content"
+              title="SKILL.md content"
+              summary="Full candidate skill content."
+            >
+              <ContentPreview content={selectedCandidate.skill_spec.content} />
+            </CollapsibleCandidatePanel>
             </Box>
           </Box>
         ) : !selection ? (
