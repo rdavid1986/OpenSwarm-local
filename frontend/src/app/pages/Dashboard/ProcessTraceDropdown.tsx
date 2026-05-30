@@ -213,7 +213,20 @@ function StatusIcon({ status, color }: { status: ProcessTraceStatus; color: stri
   if (status === 'completed') return <CheckCircleOutlineIcon sx={sx} />;
   if (status === 'failed') return <ErrorOutlineIcon sx={sx} />;
   if (status === 'blocked' || status === 'warning') return <WarningAmberIcon sx={sx} />;
-  if (status === 'running') return <HourglassEmptyIcon sx={sx} />;
+  if (status === 'running') {
+    return (
+      <HourglassEmptyIcon
+        sx={{
+          ...sx,
+          animation: 'processTraceHourglassClockwise 1.1s linear infinite',
+          '@keyframes processTraceHourglassClockwise': {
+            '0%': { transform: 'rotate(0deg)' },
+            '100%': { transform: 'rotate(360deg)' },
+          },
+        }}
+      />
+    );
+  }
   if (status === 'cancelled' || status === 'skipped') return <PauseCircleOutlineIcon sx={sx} />;
   return <RadioButtonUncheckedIcon sx={sx} />;
 }

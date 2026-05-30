@@ -50,6 +50,7 @@ import { ContextPath } from '@/app/components/DirectoryBrowser';
 import DiffViewer from './DiffViewer';
 import { setGlowingBrowserCards, fadeGlowingBrowserCards, clearGlowingBrowserCards } from '@/shared/state/dashboardLayoutSlice';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
+import ProcessTraceDropdown from '../Dashboard/ProcessTraceDropdown';
 
 const CONTEXT_WINDOWS: Record<string, number> = {
   sonnet: 200_000,
@@ -1166,9 +1167,37 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
               }
               if (isToolPair(item)) {
                 const isPending = item.result === null && sessionRunning;
+                const toolContent = (item.call as any)?.content || {};
+                const toolName = toolContent.tool || (item.call as any)?.tool_name || 'tool';
                 return (
                   <React.Fragment key={item.id}>
                     <ToolCallBubble call={item.call} result={item.result} isPending={isPending} sessionId={session.id} />
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.65, mt: 0.65, mb: 0.75 }}>
+                      <ProcessTraceDropdown
+                        compact
+                        defaultExpanded={isPending}
+                        item={{
+                          trace_id: `agent-tool-trace-${item.id}`,
+                          kind: 'tool',
+                          subsystem: 'ActionCore',
+                          icon_id: 'action-core',
+                          title: isPending ? 'Tool action live' : 'Tool action',
+                          summary: isPending ? `Running ${toolName}.` : `Tool ${toolName} completed or returned a result.`,
+                          status: isPending ? 'running' : 'completed',
+                          badge: isPending ? 'running' : 'tool',
+                          related_agent_id: session.id,
+                          related_action_id: toolName,
+                          details: {
+                            mode,
+                            model,
+                            tool: toolName,
+                            pending: isPending,
+                            result_available: item.result !== null,
+                            branch_id: (item.call as any)?.branch_id || null,
+                          },
+                        }}
+                      />
+                    </Box>
                     {compactionChip}
                   </React.Fragment>
                 );
@@ -1191,6 +1220,33 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                     onCancelEdit={handleCancelEdit}
                     animateText={msg.role === 'assistant' && msg.id === latestAssistantMessageId}
                   />
+                  {msg.role === 'assistant' && (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.65, mt: 0.65, mb: 0.75 }}>
+                      <ProcessTraceDropdown
+                        compact
+                        item={{
+                          trace_id: `agent-message-trace-${msg.id}`,
+                          kind: 'message',
+                          subsystem: 'TraceCore',
+                          icon_id: 'trace-core',
+                          title: 'Agent response action',
+                          summary: rawText.length > 180 ? `${rawText.slice(0, 180).trimEnd()}…` : rawText || 'Agent response recorded.',
+                          status: 'completed',
+                          badge: 'message',
+                          related_agent_id: session.id,
+                          details: {
+                            mode,
+                            model,
+                            role: msg.role,
+                            message_id: msg.id,
+                            branch_id: (msg as any).branch_id || null,
+                            latest_assistant_message: msg.id === latestAssistantMessageId,
+                            preview: rawText.length > 240 ? `${rawText.slice(0, 240).trimEnd()}…` : rawText,
+                          },
+                        }}
+                      />
+                    </Box>
+                  )}
                   {!isEditing && (msg.role === 'user' || (msg.role === 'assistant' && lastAssistantIdsInTurn.has(msg.id))) && (
                     <MessageActionBar
                       role={msg.role as 'user' | 'assistant'}
@@ -1254,10 +1310,38 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
               )
             )}
             {(awaitingResponse || (session.status === 'running' && !session.streamingMessage)) && (
-              <ThinkingBubble
-                label={session.turn_label?.label}
-                seedKey={`${session.id}:${session.messages?.length ?? 0}`}
-              />
+              <>
+                <ThinkingBubble
+                  label={session.turn_label?.label}
+                  seedKey={`${session.id}:${session.messages?.length ?? 0}`}
+                />
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.65, mt: -0.15, mb: 0.75 }}>
+                  <ProcessTraceDropdown
+                    compact
+                    defaultExpanded
+                    item={{
+                      trace_id: `agent-live-thinking-${session.id}`,
+                      kind: 'thinking',
+                      subsystem: 'ModelCore',
+                      icon_id: 'model-core',
+                      title: session.turn_label?.label ? `${session.turn_label.label} live` : 'Thinking live',
+                      summary: `Agent is working with ${model} in ${modeConf.label}.`,
+                      status: 'running',
+                      badge: 'running',
+                      related_agent_id: session.id,
+                      details: {
+                        mode: modeConf.label,
+                        model,
+                        status: session.status,
+                        awaiting_response: awaitingResponse,
+                        streaming_message: Boolean(session.streamingMessage),
+                        queue_length: queueLength,
+                        active_branch_id: session.active_branch_id || null,
+                      },
+                    }}
+                  />
+                </Box>
+              </>
             )}
             {showResumeBubble && session.status === 'stopped' && (
               <Box sx={{ display: 'flex', justifyContent: 'flex-start', my: 0.75 }}>

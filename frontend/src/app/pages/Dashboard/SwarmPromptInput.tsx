@@ -195,7 +195,18 @@ const SwarmPromptInput: React.FC<Props> = ({
               '&.Mui-disabled': { bgcolor: c.bg.secondary, color: c.text.ghost },
             }}
           >
-            {loading ? <HourglassEmptyIcon sx={{ fontSize: 16 }} /> : <ArrowUpwardIcon sx={{ fontSize: 16 }} />}
+            {loading ? (
+              <HourglassEmptyIcon
+                sx={{
+                  fontSize: 16,
+                  animation: 'swarmComposerHourglassClockwise 1.1s linear infinite',
+                  '@keyframes swarmComposerHourglassClockwise': {
+                    '0%': { transform: 'rotate(0deg)' },
+                    '100%': { transform: 'rotate(360deg)' },
+                  },
+                }}
+              />
+            ) : <ArrowUpwardIcon sx={{ fontSize: 16 }} />}
           </IconButton>
         </Box>
       </Box>

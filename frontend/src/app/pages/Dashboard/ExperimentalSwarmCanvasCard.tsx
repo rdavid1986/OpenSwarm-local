@@ -1310,7 +1310,6 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const isImplementationActionRunning = isStartingImplementation || (swarmState.actionLoading && startImplementationInFlightRef.current);
   const [swarmActionStartedAt, setSwarmActionStartedAt] = useState<number | null>(null);
   const [swarmActionElapsedMs, setSwarmActionElapsedMs] = useState(0);
-  const [processTraceExpanded, setProcessTraceExpanded] = useState(false);
   const [lastSwarmActionDurationMs, setLastSwarmActionDurationMs] = useState<number | null>(null);
   const [lastSwarmActionWasImplementation, setLastSwarmActionWasImplementation] = useState(false);
   const isImplementationActionRunningRef = useRef(false);
@@ -1409,24 +1408,6 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       chatMessages.length,
     ],
   );
-  const compactSwarmProcessTraceItems = useMemo(() => {
-    if (swarmProcessTraceItems.length <= 3) return swarmProcessTraceItems;
-    const criticalItems = swarmProcessTraceItems.filter((item) =>
-      ['running', 'blocked', 'failed', 'warning'].includes(String(item.status || '').toLowerCase()),
-    );
-    const ordered: ProcessTraceItem[] = [];
-    [...criticalItems, ...swarmProcessTraceItems].forEach((item) => {
-      if (ordered.length >= 3) return;
-      const key = item.trace_id || `${item.kind}-${item.title}`;
-      const exists = ordered.some((existing) => (existing.trace_id || `${existing.kind}-${existing.title}`) === key);
-      if (!exists) ordered.push(item);
-    });
-    return ordered;
-  }, [swarmProcessTraceItems]);
-
-  const visibleSwarmProcessTraceItems = processTraceExpanded ? swarmProcessTraceItems : compactSwarmProcessTraceItems;
-  const hiddenSwarmProcessTraceCount = Math.max(0, swarmProcessTraceItems.length - compactSwarmProcessTraceItems.length);
-
   const finalRoute = typeof finalResult === 'object' && finalResult ? (finalResult as any).route : null;
   const finalAnswerGuardApplied = typeof finalResult === 'object' && finalResult ? (finalResult as any).answer_guard_applied : null;
   const showFinalResultDebugMetadata = false;
@@ -2218,68 +2199,6 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             sx={{ flex: '1 1 0', height: 0, overflowY: 'auto', overflowX: 'hidden', p: 2, minHeight: 0 }}
           >
             <Box sx={{ maxWidth: 860, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-              {visibleSwarmProcessTraceItems.length > 0 && (
-                <Box
-                  onClick={(e) => e.stopPropagation()}
-                  sx={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 0.75,
-                    mb: 0.5,
-                  }}
-                >
-                  <Box
-                    component="button"
-                    type="button"
-                    onClick={() => setProcessTraceExpanded((value) => !value)}
-                    sx={{
-                      border: `1px solid ${c.border.subtle}`,
-                      borderRadius: `${c.radius.md}px`,
-                      bgcolor: c.bg.surface,
-                      color: c.text.secondary,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 1,
-                      px: 1,
-                      py: 0.65,
-                      fontFamily: c.font.sans,
-                      textAlign: 'left',
-                      '&:hover': { bgcolor: c.bg.secondary },
-                    }}
-                  >
-                    <Typography sx={{ fontSize: '0.76rem', fontWeight: 700, color: c.text.secondary }}>
-                      Process trace
-                    </Typography>
-                    <Typography sx={{ fontSize: '0.68rem', color: c.text.tertiary, flex: 1 }}>
-                      {processTraceExpanded
-                        ? `${swarmProcessTraceItems.length} item${swarmProcessTraceItems.length === 1 ? '' : 's'} shown`
-                        : hiddenSwarmProcessTraceCount > 0
-                          ? `${compactSwarmProcessTraceItems.length} key item${compactSwarmProcessTraceItems.length === 1 ? '' : 's'} · ${hiddenSwarmProcessTraceCount} more`
-                          : `${compactSwarmProcessTraceItems.length} item${compactSwarmProcessTraceItems.length === 1 ? '' : 's'}`}
-                    </Typography>
-                    <ExpandMoreIcon
-                      sx={{
-                        fontSize: 18,
-                        color: c.text.tertiary,
-                        transform: processTraceExpanded ? 'rotate(0deg)' : 'rotate(-90deg)',
-                        transition: 'transform 0.2s ease',
-                      }}
-                    />
-                  </Box>
-
-                  {visibleSwarmProcessTraceItems.map((item) => (
-                    <ProcessTraceDropdown
-                      key={item.trace_id || `${item.kind}-${item.title}`}
-                      item={item}
-                      compact
-                      defaultExpanded={item.status === 'running' || item.status === 'blocked'}
-                    />
-                  ))}
-                </Box>
-              )}
-
               {chatMessages.length === 0 && events.length === 0 && (
                 <Box sx={{ alignSelf: 'stretch', maxWidth: '100%', bgcolor: 'transparent', border: 'none', px: 0.5, py: 1.25 }}>
                   <style>{`@keyframes swarm-text-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }`}</style>
@@ -2340,6 +2259,59 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                   metadata.availableActions.length ? `actions: ${metadata.availableActions.join(', ')}` : '',
                 ].filter(Boolean).join(' · ');
                 const showMessageDebugMetadata = false;
+                const messagePreview = body.length > 180 ? `${body.slice(0, 180).trimEnd()}…` : body;
+                const isLiveMessageTrace = !isUser && isLatestChatMessage && swarmState.actionLoading;
+                const messageTraceItems: ProcessTraceItem[] = [];
+                if (!isUser) {
+                  messageTraceItems.push({
+                    trace_id: `swarm-message-${message.id || idx}`,
+                    kind: 'message',
+                    subsystem: 'TraceCore',
+                    icon_id: 'trace-core',
+                    title: isLiveMessageTrace ? `${swarmActionStatusLabel} live` : 'Swarm response action',
+                    summary: isLiveMessageTrace
+                      ? `Model is working on this turn with ${activeSwarmModel || 'selected model'} in ${getSwarmModeOption(activeSwarmMode).label}.`
+                      : (messagePreview || 'Swarm response recorded.'),
+                    status: isLiveMessageTrace ? 'running' : 'completed',
+                    duration_ms: isLiveMessageTrace ? swarmActionElapsedMs : undefined,
+                    badge: isLiveMessageTrace ? 'running' : 'message',
+                    related_task_id: activeSwarmId || undefined,
+                    details: {
+                      mode: getSwarmModeOption(activeSwarmMode).label,
+                      model: activeSwarmModel || null,
+                      route: metadata.route || null,
+                      source: metadata.source || null,
+                      guard: metadata.guard || null,
+                      pending_action: metadata.pendingAction || null,
+                      target_output_id: metadata.targetOutputId || null,
+                      available_actions: metadata.availableActions,
+                      message_preview: messagePreview || null,
+                      visible_message_index: idx,
+                      process_trace_items_available: swarmProcessTraceItems.length,
+                    },
+                  });
+                  if (projectIntake.options.length > 0 || currentProjectIntakeAction?.type) {
+                    messageTraceItems.push({
+                      trace_id: `swarm-intake-${message.id || idx}`,
+                      kind: 'intake',
+                      subsystem: 'ActionCore',
+                      icon_id: 'action-core',
+                      title: 'Intake action',
+                      summary: projectIntake.question || currentProjectIntakeAction?.label || 'Waiting for a structured user choice.',
+                      status: isLiveMessageTrace ? 'running' : 'planned',
+                      duration_ms: isLiveMessageTrace ? swarmActionElapsedMs : undefined,
+                      badge: projectIntake.options.length > 0 ? `${projectIntake.options.length} options` : 'action',
+                      related_action_id: currentProjectIntakeAction?.type || undefined,
+                      details: {
+                        question: projectIntake.question || null,
+                        options: projectIntake.options.map((option: any) => renderText(option?.label ?? option?.value, '')).filter(Boolean),
+                        action_type: currentProjectIntakeAction?.type || null,
+                        provider_health_ok: localProviderHealth?.ok ?? null,
+                        provider_unavailable: localProviderUnavailable,
+                      },
+                    });
+                  }
+                }
 
                 return (
                   <Box
@@ -2375,6 +2347,18 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                     >
                       {isLatestChatMessage ? renderAnimatedText(body) : body}
                     </Typography>
+                    {messageTraceItems.length > 0 && (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.65, mt: 1 }}>
+                        {messageTraceItems.map((item) => (
+                          <ProcessTraceDropdown
+                            key={item.trace_id || `${item.kind}-${item.title}`}
+                            item={item}
+                            compact
+                            defaultExpanded={item.status === 'running' || item.status === 'blocked'}
+                          />
+                        ))}
+                      </Box>
+                    )}
                     {shouldShowIntakeTrace && (
                       <Box
                         sx={{
