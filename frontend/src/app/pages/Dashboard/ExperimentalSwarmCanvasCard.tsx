@@ -1310,6 +1310,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const isImplementationActionRunning = isStartingImplementation || (swarmState.actionLoading && startImplementationInFlightRef.current);
   const [swarmActionStartedAt, setSwarmActionStartedAt] = useState<number | null>(null);
   const [swarmActionElapsedMs, setSwarmActionElapsedMs] = useState(0);
+  const [processTraceExpanded, setProcessTraceExpanded] = useState(false);
   const [lastSwarmActionDurationMs, setLastSwarmActionDurationMs] = useState<number | null>(null);
   const [lastSwarmActionWasImplementation, setLastSwarmActionWasImplementation] = useState(false);
   const isImplementationActionRunningRef = useRef(false);
@@ -1408,6 +1409,23 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       chatMessages.length,
     ],
   );
+  const compactSwarmProcessTraceItems = useMemo(() => {
+    if (swarmProcessTraceItems.length <= 3) return swarmProcessTraceItems;
+    const criticalItems = swarmProcessTraceItems.filter((item) =>
+      ['running', 'blocked', 'failed', 'warning'].includes(String(item.status || '').toLowerCase()),
+    );
+    const ordered: ProcessTraceItem[] = [];
+    [...criticalItems, ...swarmProcessTraceItems].forEach((item) => {
+      if (ordered.length >= 3) return;
+      const key = item.trace_id || `${item.kind}-${item.title}`;
+      const exists = ordered.some((existing) => (existing.trace_id || `${existing.kind}-${existing.title}`) === key);
+      if (!exists) ordered.push(item);
+    });
+    return ordered;
+  }, [swarmProcessTraceItems]);
+
+  const visibleSwarmProcessTraceItems = processTraceExpanded ? swarmProcessTraceItems : compactSwarmProcessTraceItems;
+  const hiddenSwarmProcessTraceCount = Math.max(0, swarmProcessTraceItems.length - compactSwarmProcessTraceItems.length);
 
   const finalRoute = typeof finalResult === 'object' && finalResult ? (finalResult as any).route : null;
   const finalAnswerGuardApplied = typeof finalResult === 'object' && finalResult ? (finalResult as any).answer_guard_applied : null;
@@ -2200,7 +2218,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             sx={{ flex: '1 1 0', height: 0, overflowY: 'auto', overflowX: 'hidden', p: 2, minHeight: 0 }}
           >
             <Box sx={{ maxWidth: 860, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-              {swarmProcessTraceItems.length > 0 && (
+              {visibleSwarmProcessTraceItems.length > 0 && (
                 <Box
                   onClick={(e) => e.stopPropagation()}
                   sx={{
@@ -2210,7 +2228,48 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                     mb: 0.5,
                   }}
                 >
-                  {swarmProcessTraceItems.map((item) => (
+                  <Box
+                    component="button"
+                    type="button"
+                    onClick={() => setProcessTraceExpanded((value) => !value)}
+                    sx={{
+                      border: `1px solid ${c.border.subtle}`,
+                      borderRadius: `${c.radius.md}px`,
+                      bgcolor: c.bg.surface,
+                      color: c.text.secondary,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 1,
+                      px: 1,
+                      py: 0.65,
+                      fontFamily: c.font.sans,
+                      textAlign: 'left',
+                      '&:hover': { bgcolor: c.bg.secondary },
+                    }}
+                  >
+                    <Typography sx={{ fontSize: '0.76rem', fontWeight: 700, color: c.text.secondary }}>
+                      Process trace
+                    </Typography>
+                    <Typography sx={{ fontSize: '0.68rem', color: c.text.tertiary, flex: 1 }}>
+                      {processTraceExpanded
+                        ? `${swarmProcessTraceItems.length} item${swarmProcessTraceItems.length === 1 ? '' : 's'} shown`
+                        : hiddenSwarmProcessTraceCount > 0
+                          ? `${compactSwarmProcessTraceItems.length} key item${compactSwarmProcessTraceItems.length === 1 ? '' : 's'} · ${hiddenSwarmProcessTraceCount} more`
+                          : `${compactSwarmProcessTraceItems.length} item${compactSwarmProcessTraceItems.length === 1 ? '' : 's'}`}
+                    </Typography>
+                    <ExpandMoreIcon
+                      sx={{
+                        fontSize: 18,
+                        color: c.text.tertiary,
+                        transform: processTraceExpanded ? 'rotate(0deg)' : 'rotate(-90deg)',
+                        transition: 'transform 0.2s ease',
+                      }}
+                    />
+                  </Box>
+
+                  {visibleSwarmProcessTraceItems.map((item) => (
                     <ProcessTraceDropdown
                       key={item.trace_id || `${item.kind}-${item.title}`}
                       item={item}
