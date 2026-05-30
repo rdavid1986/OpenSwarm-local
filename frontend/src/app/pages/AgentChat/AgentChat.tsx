@@ -1245,15 +1245,18 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                 ? siblings.indexOf(session.active_branch_id || 'main')
                 : 0;
               const rawText = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-              const previousUserText = msg.role === 'assistant' ? getPreviousVisibleUserMessage(renderItems, itemIndex) : '';
-              const reasoningSummary = msg.role === 'assistant' ? getAgentReasoningSummary(previousUserText, mode, model) : '';
+              const backendProcessTraceTurn = msg.role === 'assistant' && (msg as any).process_trace_turn && typeof (msg as any).process_trace_turn === 'object'
+                ? (msg as any).process_trace_turn
+                : null;
+              const previousUserText = msg.role === 'assistant' && !backendProcessTraceTurn ? getPreviousVisibleUserMessage(renderItems, itemIndex) : '';
+              const reasoningSummary = msg.role === 'assistant' && !backendProcessTraceTurn ? getAgentReasoningSummary(previousUserText, mode, model) : '';
 
               return (
                 <Box key={msg.id} sx={{ '&:hover .msg-actions': { opacity: 1 } }}>
                   {msg.role === 'assistant' && (
                     <Box sx={{ mb: 0.75 }}>
                       <ProcessTraceTurnDropdown
-                        container={{
+                        container={backendProcessTraceTurn || {
                           turn_trace_kind: 'process_trace_turn_container',
                           turn_trace_version: 'openswarm.process_trace_turn_container.v1',
                           turn_trace_id: `agent-assistant-turn-${msg.id}`,

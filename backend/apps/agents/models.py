@@ -60,6 +60,10 @@ class Message(BaseModel):
     tool_count: Optional[int] = None
     # combined input + output + children tokens for the turn (overloaded name).
     input_tokens: Optional[int] = None
+    # Privacy-safe Work Trace turn container. Groups ReasoningCore,
+    # ModelCore, ToolCore, FileCore and Debug JSON items for this message.
+    # Optional for back-compat with legacy messages.
+    process_trace_turn: Optional[dict[str, Any]] = None
 
 class MessageBranch(BaseModel):
     id: str = Field(default_factory=lambda: uuid4().hex)

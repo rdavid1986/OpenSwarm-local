@@ -37,6 +37,8 @@ export interface AgentMessage {
   input_tokens?: number;
   // tool count drives the "3 tools used" segment on the thinking pill.
   tool_count?: number;
+  // Server-stamped privacy-safe Work Trace turn container.
+  process_trace_turn?: Record<string, any>;
 }
 
 export interface ApprovalRequest {

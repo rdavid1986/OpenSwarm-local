@@ -31,8 +31,23 @@ from backend.apps.tools_lib.tools_lib import (
 )
 from backend.config.paths import SESSIONS_DIR
 from backend.apps.service.client import sync as _sync
+from backend.apps.swarms.process_trace_builder import build_process_trace_turn_container_from_sources
 
 logger = logging.getLogger(__name__)
+
+
+def _build_agent_operational_reasoning_summary(user_text: str, mode_value: str | None, model_value: str | None) -> str:
+    normalized = re.sub(r"\s+", " ", (user_text or "").strip())
+    mode_label = mode_value or "agent"
+    model_label = model_value or "the selected model"
+    if not normalized:
+        return f"Reasoning summary: no visible user request was available. The agent prepared a response in {mode_label} mode using {model_label}."
+    if re.match(r"^(hola|hello|hi|hey|buenas|buenos dias|buenas tardes|buenas noches)[!?.\s]*$", normalized, re.I):
+        return "Reasoning summary: the user sent a greeting. The agent should answer briefly, acknowledge the greeting, and wait for the user's next instruction."
+    if "?" in normalized:
+        return "Reasoning summary: the user asked a question. The agent should answer directly using the available workspace context and avoid exposing internal debug data as user-facing text."
+    preview = normalized[:120] + ("…" if len(normalized) > 120 else "")
+    return f'Reasoning summary: the user requested: "{preview}". The agent should interpret the request, use available context, and return a clear human-readable answer.'
 
 
 def _extract_visible_final_content(raw_content: str) -> str:
@@ -4783,11 +4798,39 @@ Formato para respuesta final:
                                     "message": _err_msg.model_dump(mode="json"),
                                 })
                             else:
+                                _asst_msg_id = stream_text_msg_id or uuid4().hex
+                                _thinking_level = getattr(session, "thinking_level", "auto") or "auto"
+                                _process_trace_turn = build_process_trace_turn_container_from_sources(
+                                    [{
+                                        "reasoning_summary_kind": "humanized_reasoning_summary",
+                                        "reasoning_trace_id": f"agent-reasoning-summary-{_asst_msg_id}",
+                                        "reasoning_summary": _build_agent_operational_reasoning_summary(prompt, getattr(session, "mode", None), getattr(session, "model", None)),
+                                        "summary_source": "operational_summary",
+                                        "requested_reasoning_level": _thinking_level,
+                                        "applied_reasoning_level": _thinking_level,
+                                        "provider": getattr(session, "provider", None),
+                                        "model": getattr(session, "model", None),
+                                        "capability_supported": None,
+                                        "duration_ms": _turn_total_ms or None,
+                                        "agent_id": getattr(session, "id", None),
+                                        "output_message_id": _asst_msg_id,
+                                    }],
+                                    turn_trace_id=f"agent-assistant-turn-{_asst_msg_id}",
+                                    title="Thought",
+                                    status="completed",
+                                    output_message_id=_asst_msg_id,
+                                    duration_ms=_turn_total_ms or None,
+                                    metadata={
+                                        "source": "agent_assistant_message",
+                                        "reasoning_summary_source": "operational_summary",
+                                    },
+                                )
                                 asst_msg = Message(
-                                    id=stream_text_msg_id or uuid4().hex,
+                                    id=_asst_msg_id,
                                     role="assistant",
                                     content=_asst_text,
                                     branch_id=session.active_branch_id,
+                                    process_trace_turn=_process_trace_turn,
                                 )
                                 _maybe_persist_plan_from_plan_mode(session, _asst_text)
                                 session.messages.append(asst_msg)
