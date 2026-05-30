@@ -91,6 +91,7 @@ class SkillSpecCandidate(BaseModel):
     policy_refs: list[str] = Field(default_factory=list)
     install_approved: bool = False
     research_approved: bool = False
+    research_evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SkillCandidateApprovalRequest(BaseModel):

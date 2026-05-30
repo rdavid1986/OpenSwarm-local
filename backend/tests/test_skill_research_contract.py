@@ -7,6 +7,7 @@ from backend.apps.skills import skills as skills_module
 from backend.apps.skills.candidate_store import SkillCandidateStore
 from backend.apps.skills.models import SkillSpec, SkillSpecCandidate
 from backend.apps.skills.research_contract import build_skill_candidate_research_contract
+from backend.apps.skills.research_execution import execute_skill_candidate_research
 
 
 def _client(monkeypatch, tmp_path):
@@ -170,3 +171,72 @@ def test_candidate_without_research_approved_loads_as_false(tmp_path):
 
     assert loaded.research_approved is False
     assert build_skill_candidate_research_contract(loaded)["research_allowed"] is False
+
+
+async def _fake_search(query: str, num_results: int) -> dict:
+    return {
+        "query": query,
+        "backend": "test",
+        "results": f"[1] Official docs for {query}\n    https://example.com/docs/{query.replace(' ', '-')}",
+    }
+
+
+def test_execute_research_requires_permission():
+    candidate = _candidate("Build Claude API apps using current SDK documentation.")
+
+    import pytest
+    with pytest.raises(ValueError) as exc:
+        import asyncio
+        asyncio.run(execute_skill_candidate_research(candidate, search_fn=_fake_search))
+
+    assert str(exc.value) == "skill_research_requires_explicit_approval"
+
+
+def test_execute_research_records_evidence_without_mutating_content_or_install():
+    import asyncio
+
+    candidate = _candidate("Build Claude API apps using current SDK documentation.")
+    candidate = candidate.model_copy(update={"research_approved": True, "install_approved": True})
+    before_content = candidate.skill_spec.content
+
+    updated, result = asyncio.run(execute_skill_candidate_research(candidate, search_fn=_fake_search))
+
+    assert updated.skill_spec.content == before_content
+    assert updated.install_approved is True
+    assert updated.research_approved is True
+    assert updated.research_evidence
+    assert result["audit"]["event"] == "skill_candidate_web_research_executed"
+    assert result["audit"]["can_mutate_candidate"] is False
+    assert result["audit"]["can_install_skill"] is False
+    assert result["audit"]["can_activate_tools"] is False
+    assert result["audit"]["can_activate_mcp"] is False
+    assert result["contract"]["web_research_executed"] is True
+    assert result["contract"]["research_evidence_count"] >= 1
+
+
+def test_research_execute_endpoint_requires_approval(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    created = client.post("/api/skills/candidates/create", json={
+        "skill_spec": {
+            "name": "Claude API Skill",
+            "content": "Build Claude API apps using current SDK documentation.",
+            "source_format": "unknown",
+            "metadata_confidence": "unknown",
+        },
+        "source": "skill_builder",
+    })
+    candidate_id = created.json()["candidate"]["candidate_id"]
+
+    response = client.post(f"/api/skills/candidates/{candidate_id}/research-execute")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Skill research requires explicit approval"
+
+
+def test_research_execute_endpoint_missing_candidate_returns_404(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    response = client.post("/api/skills/candidates/missing/research-execute")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Skill candidate not found"

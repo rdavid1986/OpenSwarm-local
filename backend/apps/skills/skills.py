@@ -14,6 +14,7 @@ from backend.apps.skills.candidate_validation import apply_skill_candidate_valid
 from backend.apps.skills.models import Skill, SkillCandidateApprovalRequest, SkillCandidateImprovementApplyRequest, SkillCandidateResearchApprovalRequest, SkillCreate, SkillSpecCandidate, SkillUpdate, SkillWorkspaceSeedRequest
 from backend.apps.skills.requirements_contract import build_skill_candidate_requirements_contract
 from backend.apps.skills.research_contract import build_skill_candidate_research_contract
+from backend.apps.skills.research_execution import execute_skill_candidate_research
 from backend.apps.skills.skill_reviewer import review_skill_candidate
 from backend.apps.skills.skill_improvement_proposal import build_skill_candidate_improvement_proposal, apply_skill_candidate_improvement_proposal
 from backend.apps.tools_lib.models import BUILTIN_TOOLS
@@ -324,6 +325,36 @@ async def get_skill_candidate_research_contract(candidate_id: str):
         raise HTTPException(status_code=400, detail=str(exc))
 
     return build_skill_candidate_research_contract(candidate)
+
+
+@skills.router.post("/candidates/{candidate_id}/research-execute")
+async def execute_skill_candidate_research_route(candidate_id: str):
+    try:
+        candidate = skill_candidate_store.load(candidate_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Skill candidate not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    try:
+        updated_candidate, result = await execute_skill_candidate_research(candidate)
+    except ValueError as exc:
+        if str(exc) == "skill_research_requires_explicit_approval":
+            raise HTTPException(status_code=409, detail="Skill research requires explicit approval")
+        if str(exc) == "skill_research_not_required":
+            raise HTTPException(status_code=409, detail="Skill research is not required for this candidate")
+        if str(exc) == "skill_research_has_no_queries":
+            raise HTTPException(status_code=409, detail="Skill research has no queries to execute")
+        raise
+
+    saved = skill_candidate_store.save(updated_candidate)
+    return {
+        "ok": True,
+        "candidate": saved.model_dump(mode="json"),
+        "research_contract": result["contract"],
+        "evidence": result["evidence"],
+        "audit": result["audit"],
+    }
 
 
 @skills.router.get("/candidates/{candidate_id}/improvement-proposal")

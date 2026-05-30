@@ -99,6 +99,7 @@ def build_skill_research_contract_from_review(
     *,
     candidate_id: str | None = None,
     research_allowed: bool = False,
+    research_evidence: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     research_items = [item for item in review.get("research_gap_items", []) or [] if isinstance(item, dict)]
     research_codes = {str(item.get("code") or "") for item in research_items}
@@ -109,6 +110,8 @@ def build_skill_research_contract_from_review(
 
     queries = _suggest_queries(spec) if requires_research else []
     expected_source_types = _expected_source_types(spec, requires_research)
+    evidence = [item for item in (research_evidence or []) if isinstance(item, dict)]
+    web_research_executed = bool(evidence)
     if requires_research and not research_allowed:
         next_step = "Request explicit research permission before any future web research workflow."
     elif requires_research and research_allowed:
@@ -122,7 +125,8 @@ def build_skill_research_contract_from_review(
         "skill_name": spec.name,
         "requires_web_research": requires_research,
         "research_allowed": bool(research_allowed),
-        "web_research_executed": False,
+        "web_research_executed": web_research_executed,
+        "research_evidence_count": len(evidence),
         "can_mutate_candidate": False,
         "can_install_skill": False,
         "can_activate_tools": False,
@@ -160,4 +164,5 @@ def build_skill_candidate_research_contract(candidate: SkillSpecCandidate) -> di
         review,
         candidate_id=candidate.candidate_id,
         research_allowed=bool(getattr(candidate, "research_approved", False)),
+        research_evidence=list(getattr(candidate, "research_evidence", []) or []),
     )
