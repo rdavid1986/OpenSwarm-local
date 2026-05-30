@@ -9,6 +9,7 @@ from backend.apps.swarms.process_trace_builder import (
     build_process_trace_item_from_source,
     build_process_trace_items_from_sources,
     build_process_trace_panel_from_sources,
+    build_process_trace_turn_container_from_sources,
     normalize_process_trace_source_kind,
     redact_process_trace_source,
 )
@@ -171,3 +172,67 @@ def test_builder_from_generic_evidence_dict():
     assert item["evidence_refs"] == ["ev1"]
     assert item["artifact_refs"] == ["art1"]
     assert item["related_task_id"] == "task1"
+
+
+def test_turn_container_from_sources_preserves_order_and_aggregates_refs():
+    timer = finish_runtime_timer(
+        start_runtime_timer(scope="model_call", label="Model", timer_id="timer1", started_at=START),
+        finished_at=FINISH,
+    )
+    evidence = {"evidence_id": "ev1", "artifact_id": "art1", "title": "Evidence", "task_id": "task1", "agent_id": "agent1"}
+    sources = [evidence, timer]
+    original = deepcopy(sources)
+
+    container = build_process_trace_turn_container_from_sources(
+        sources,
+        turn_trace_id="turn1",
+        title="Thought",
+        message_id="user1",
+        output_message_id="assistant1",
+        duration_ms=1000,
+    )
+
+    assert container["turn_trace_kind"] == "process_trace_turn_container"
+    assert container["turn_trace_id"] == "turn1"
+    assert container["title"] == "Thought"
+    assert container["status"] == "completed"
+    assert container["message_id"] == "user1"
+    assert container["output_message_id"] == "assistant1"
+    assert container["duration_ms"] == 1000
+    assert container["item_count"] == 2
+    assert container["child_trace_ids"] == ["ev1", "timer1"]
+    assert container["evidence_refs"] == ["ev1"]
+    assert container["artifact_refs"] == ["art1"]
+    assert container["related_task_ids"] == ["task1"]
+    assert container["related_agent_ids"] == ["agent1"]
+    assert container["metadata"]["source_kind"] == "process_trace_turn_sources"
+    assert container["metadata"]["source_kinds"] == ["evidence", "runtime_timer"]
+    assert sources == original
+
+
+def test_turn_container_from_sources_infers_failed_status():
+    failed = {
+        "event_id": "event1",
+        "event_type": "validation",
+        "title": "Validation failed",
+        "summary": "A validation failed.",
+        "severity": "error",
+    }
+
+    container = build_process_trace_turn_container_from_sources([failed], turn_trace_id="turn1")
+
+    assert container["status"] == "failed"
+    assert container["items"][0]["status"] == "failed"
+
+
+def test_turn_container_from_sources_honors_explicit_status():
+    failed = {
+        "event_id": "event1",
+        "event_type": "validation",
+        "severity": "error",
+    }
+
+    container = build_process_trace_turn_container_from_sources([failed], status="warning")
+
+    assert container["status"] == "warning"
+    assert container["items"][0]["status"] == "failed"

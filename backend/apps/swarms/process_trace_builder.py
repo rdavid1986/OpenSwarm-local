@@ -10,6 +10,7 @@ from backend.apps.swarms.process_trace_item import (
     _safe,
     build_process_trace_item,
     build_process_trace_panel,
+    build_process_trace_turn_container,
     process_trace_item_from_runtime_metric,
     process_trace_item_from_timeline_event,
 )
@@ -245,6 +246,100 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
 
 def build_process_trace_items_from_sources(sources: list[Any] | None) -> list[dict[str, Any]]:
     return [build_process_trace_item_from_source(source) for source in (sources or [])]
+
+
+
+
+def _unique_refs_from_items(items: list[dict[str, Any]], key: str) -> list[Any]:
+    refs: list[Any] = []
+    for item in items:
+        for ref in _refs(item.get(key)):
+            if ref not in refs:
+                refs.append(ref)
+    return refs
+
+
+def _unique_related_from_items(items: list[dict[str, Any]], key: str) -> list[Any]:
+    refs: list[Any] = []
+    for item in items:
+        value = item.get(key)
+        if value not in (None, "") and value not in refs:
+            refs.append(value)
+    return refs
+
+
+def _status_from_trace_items(items: list[dict[str, Any]]) -> str:
+    statuses = [str(item.get("status") or "").strip().lower() for item in items]
+    if not statuses:
+        return "planned"
+    if "failed" in statuses:
+        return "failed"
+    if "blocked" in statuses:
+        return "blocked"
+    if "running" in statuses:
+        return "running"
+    if "warning" in statuses:
+        return "warning"
+    if all(status == "completed" for status in statuses):
+        return "completed"
+    return "planned"
+
+
+def build_process_trace_turn_container_from_sources(
+    sources: list[Any] | None,
+    *,
+    turn_trace_id: Any = None,
+    title: Any = "Thought",
+    status: Any = None,
+    turn_id: Any = None,
+    message_id: Any = None,
+    action_id: Any = None,
+    started_at: Any = None,
+    finished_at: Any = None,
+    duration_ms: Any = None,
+    output_message_id: Any = None,
+    default_collapsed_after_finish: bool = True,
+    default_expanded_while_running: bool = False,
+    visible_to_user: bool = True,
+    internal_only: bool = False,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a privacy-safe turn container from existing traceable sources."""
+
+    source_list = sources or []
+    items = build_process_trace_items_from_sources(source_list)
+    source_kinds = [normalize_process_trace_source_kind(source) for source in source_list]
+    effective_status = status or _status_from_trace_items(items)
+    merged_metadata = {
+        "source_kind": "process_trace_turn_sources",
+        "source_count": len(source_list),
+        "source_kinds": source_kinds,
+        **dict(metadata or {}),
+    }
+
+    return build_process_trace_turn_container(
+        items=items,
+        turn_trace_id=turn_trace_id,
+        title=title,
+        status=effective_status,
+        turn_id=turn_id,
+        message_id=message_id,
+        action_id=action_id,
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_ms=duration_ms,
+        output_message_id=output_message_id,
+        related_task_ids=_unique_related_from_items(items, "related_task_id"),
+        related_agent_ids=_unique_related_from_items(items, "related_agent_id"),
+        related_miniagent_ids=_unique_related_from_items(items, "related_miniagent_id"),
+        evidence_refs=_unique_refs_from_items(items, "evidence_refs"),
+        artifact_refs=_unique_refs_from_items(items, "artifact_refs"),
+        default_collapsed_after_finish=default_collapsed_after_finish,
+        default_expanded_while_running=default_expanded_while_running,
+        visible_to_user=visible_to_user,
+        internal_only=internal_only,
+        metadata=merged_metadata,
+    )
 
 
 def build_process_trace_panel_from_sources(sources: list[Any] | None, panel_title: str = "Process Trace") -> dict[str, Any]:
