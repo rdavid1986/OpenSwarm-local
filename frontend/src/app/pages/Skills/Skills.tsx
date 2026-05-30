@@ -41,6 +41,7 @@ import {
   fetchSkillCandidates,
   fetchSkillCandidateRequirementsContract,
   fetchSkillCandidateQualityReview,
+  fetchSkillCandidateResearchContract,
   fetchSkillCandidateImprovementProposal,
   applySkillCandidateImprovementProposal,
   createSkillCandidate,
@@ -54,6 +55,7 @@ import {
   Skill,
   SkillCandidateRequirementsContract,
   SkillCandidateQualityReview,
+  SkillCandidateResearchContract,
   SkillCandidateImprovementProposal,
   SkillSpecCandidate,
 } from '@/shared/state/skillsSlice';
@@ -97,6 +99,9 @@ const Skills: React.FC = () => {
     candidateQualityReviews,
     candidateQualityReviewsLoading,
     candidateQualityReviewsError,
+    candidateResearchContracts,
+    candidateResearchContractsLoading,
+    candidateResearchContractsError,
     candidateImprovementProposals,
     candidateImprovementProposalsLoading,
     candidateImprovementProposalsError,
@@ -129,6 +134,7 @@ const Skills: React.FC = () => {
     validation: false,
     requirements: false,
     contract: false,
+    research: true,
     source: false,
     content: false,
     improvement: true,
@@ -221,6 +227,12 @@ const Skills: React.FC = () => {
     selectedCandidate ? !!candidateQualityReviewsLoading[selectedCandidate.candidate_id] : false;
   const selectedQualityReviewError =
     selectedCandidate ? candidateQualityReviewsError[selectedCandidate.candidate_id] ?? null : null;
+  const selectedResearchContract: SkillCandidateResearchContract | null =
+    selectedCandidate ? candidateResearchContracts[selectedCandidate.candidate_id] ?? null : null;
+  const selectedResearchContractLoading =
+    selectedCandidate ? !!candidateResearchContractsLoading[selectedCandidate.candidate_id] : false;
+  const selectedResearchContractError =
+    selectedCandidate ? candidateResearchContractsError[selectedCandidate.candidate_id] ?? null : null;
   const selectedImprovementProposal: SkillCandidateImprovementProposal | null =
     selectedCandidate ? candidateImprovementProposals[selectedCandidate.candidate_id] ?? null : null;
   const selectedImprovementProposalLoading =
@@ -247,6 +259,13 @@ const Skills: React.FC = () => {
     if (candidateQualityReviewsLoading[selectedCandidate.candidate_id]) return;
     dispatch(fetchSkillCandidateQualityReview(selectedCandidate.candidate_id));
   }, [candidateQualityReviews, candidateQualityReviewsLoading, dispatch, selectedCandidate]);
+
+  useEffect(() => {
+    if (!selectedCandidate) return;
+    if (candidateResearchContracts[selectedCandidate.candidate_id]) return;
+    if (candidateResearchContractsLoading[selectedCandidate.candidate_id]) return;
+    dispatch(fetchSkillCandidateResearchContract(selectedCandidate.candidate_id));
+  }, [candidateResearchContracts, candidateResearchContractsLoading, dispatch, selectedCandidate]);
 
   useEffect(() => {
     if (!selectedCandidate) return;
@@ -618,6 +637,99 @@ const Skills: React.FC = () => {
           '& .MuiChip-label': { px: 0.8 },
         }}
       />
+    );
+  };
+
+
+  const SkillResearchContractPanel: React.FC<{
+    contract: SkillCandidateResearchContract | null;
+    loading: boolean;
+    error: string | null;
+  }> = ({ contract, loading, error }) => {
+    const requiresResearch = contract?.requires_web_research === true;
+    const researchAllowed = contract?.research_allowed === true;
+    const webExecuted = contract?.web_research_executed === true;
+    const readOnly = contract?.can_mutate_candidate !== true
+      && contract?.can_install_skill !== true
+      && contract?.can_activate_tools !== true
+      && contract?.can_activate_mcp !== true;
+    const queries = Array.isArray(contract?.research_queries) ? contract.research_queries : [];
+    const sourceTypes = Array.isArray(contract?.expected_source_types) ? contract.expected_source_types : [];
+    const gaps = Array.isArray(contract?.research_gap_items) ? contract.research_gap_items : [];
+    const guardrails = Array.isArray(contract?.guardrails) ? contract.guardrails : [];
+    const summary = requiresResearch
+      ? 'This skill may need current external documentation before finalizing.'
+      : 'No current-information dependency detected.';
+
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+        {error ? (
+          <ReviewSection title="Research contract unavailable" tone="error">
+            <EmptyReviewState text={error} />
+          </ReviewSection>
+        ) : !contract && loading ? (
+          <ReviewSection title="Loading research contract">
+            <EmptyReviewState text="Checking whether this candidate depends on current external information..." />
+          </ReviewSection>
+        ) : !contract ? (
+          <ReviewSection title="No research contract loaded">
+            <EmptyReviewState text="No research contract is available for this candidate." />
+          </ReviewSection>
+        ) : (
+          <>
+            <ReviewSection title="Summary" tone={requiresResearch ? 'warning' : 'success'}>
+              <Typography sx={{ fontSize: '0.78rem', color: c.text.secondary, lineHeight: 1.5, mb: 1 }}>
+                {toDisplayText(contract.summary, summary)}
+              </Typography>
+              <Typography sx={{ fontSize: '0.74rem', color: c.text.secondary, lineHeight: 1.45, mb: 1 }}>
+                {summary}
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.65 }}>
+                <MetaChip label={requiresResearch ? 'Research needed' : 'No research needed'} tone={requiresResearch ? 'warning' : 'success'} />
+                {!researchAllowed && <MetaChip label="Research not allowed yet" tone="warning" />}
+                {!webExecuted && <MetaChip label="Web not executed" tone={requiresResearch ? 'warning' : 'default'} />}
+                {readOnly && <MetaChip label="Read-only" tone="success" />}
+              </Box>
+            </ReviewSection>
+
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 1.25 }}>
+              <ReviewSection title="Research queries" tone={queries.length > 0 ? 'warning' : 'default'}>
+                <ChipList values={queries} empty="No research queries suggested." tone="warning" />
+              </ReviewSection>
+
+              <ReviewSection title="Expected source types" tone={sourceTypes.length > 0 ? 'warning' : 'default'}>
+                <ChipList values={sourceTypes} empty="No source types specified." />
+              </ReviewSection>
+
+              <ReviewSection title="Next step" tone={requiresResearch ? 'warning' : 'success'}>
+                <Typography sx={{ fontSize: '0.74rem', color: c.text.secondary, lineHeight: 1.45 }}>
+                  {toDisplayText(contract.next_step, requiresResearch ? 'Review the suggested sources before finalizing this skill.' : 'No external research step is required.')}
+                </Typography>
+              </ReviewSection>
+
+              <ReviewSection title="Research gaps" tone={gaps.length > 0 ? 'warning' : 'success'}>
+                <ChipList values={gaps} empty="No research gaps detected." tone="warning" />
+              </ReviewSection>
+
+              <Box sx={{ gridColumn: { xs: 'auto', lg: '1 / -1' } }}>
+                <ReviewSection title="Guardrails" tone="success">
+                  {guardrails.length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                      {guardrails.map((guardrail, index) => (
+                        <Typography key={`research-guardrail-${index}`} sx={{ fontSize: '0.74rem', color: c.text.secondary, lineHeight: 1.4 }}>
+                          {toDisplayText(guardrail)}
+                        </Typography>
+                      ))}
+                    </Box>
+                  ) : (
+                    <EmptyReviewState text="Read-only contract: no candidate mutation, install, tool activation, or MCP activation." tone="success" />
+                  )}
+                </ReviewSection>
+              </Box>
+            </Box>
+          </>
+        )}
+      </Box>
     );
   };
 
@@ -2028,6 +2140,20 @@ const Skills: React.FC = () => {
               loading={selectedQualityReviewLoading}
               error={selectedQualityReviewError}
             />
+
+
+            <CollapsibleCandidatePanel
+              id="research"
+              title="Research contract"
+              summary="Read-only check for current-information dependency before finalizing this candidate."
+              defaultTone={selectedResearchContractError ? 'error' : selectedResearchContract?.requires_web_research ? 'warning' : 'success'}
+            >
+              <SkillResearchContractPanel
+                contract={selectedResearchContract}
+                loading={selectedResearchContractLoading}
+                error={selectedResearchContractError}
+              />
+            </CollapsibleCandidatePanel>
 
             <CollapsibleCandidatePanel
               id="improvement"

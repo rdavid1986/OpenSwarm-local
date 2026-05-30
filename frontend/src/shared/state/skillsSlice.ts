@@ -148,6 +148,26 @@ export interface SkillCandidateQualityReview {
   safe_to_auto_apply?: boolean;
 }
 
+
+export interface SkillCandidateResearchContract {
+  contract_kind?: 'skill_candidate_research_contract' | string;
+  candidate_id: string;
+  skill_name?: string;
+  requires_web_research?: boolean;
+  research_allowed?: boolean;
+  web_research_executed?: boolean;
+  can_mutate_candidate?: boolean;
+  can_install_skill?: boolean;
+  can_activate_tools?: boolean;
+  can_activate_mcp?: boolean;
+  research_queries?: string[];
+  expected_source_types?: string[];
+  research_gap_items?: string[];
+  summary?: string;
+  next_step?: string;
+  guardrails?: string[];
+}
+
 export interface SkillCandidateImprovementProposalItem {
   source?: string;
   code?: string;
@@ -196,6 +216,9 @@ interface SkillsState {
   candidateQualityReviews: Record<string, SkillCandidateQualityReview>;
   candidateQualityReviewsLoading: Record<string, boolean>;
   candidateQualityReviewsError: Record<string, string | null>;
+  candidateResearchContracts: Record<string, SkillCandidateResearchContract>;
+  candidateResearchContractsLoading: Record<string, boolean>;
+  candidateResearchContractsError: Record<string, string | null>;
   candidateImprovementProposals: Record<string, SkillCandidateImprovementProposal>;
   candidateImprovementProposalsLoading: Record<string, boolean>;
   candidateImprovementProposalsError: Record<string, string | null>;
@@ -216,6 +239,9 @@ const initialState: SkillsState = {
   candidateQualityReviews: {},
   candidateQualityReviewsLoading: {},
   candidateQualityReviewsError: {},
+  candidateResearchContracts: {},
+  candidateResearchContractsLoading: {},
+  candidateResearchContractsError: {},
   candidateImprovementProposals: {},
   candidateImprovementProposalsLoading: {},
   candidateImprovementProposalsError: {},
@@ -290,6 +316,19 @@ export const fetchSkillCandidateQualityReview = createAsyncThunk(
       throw new Error(data.detail || 'Failed to fetch skill candidate quality review');
     }
     return await res.json() as SkillCandidateQualityReview;
+  },
+);
+
+
+export const fetchSkillCandidateResearchContract = createAsyncThunk(
+  'skills/fetchCandidateResearchContract',
+  async (candidateId: string) => {
+    const res = await fetch(`${SKILLS_API}/candidates/${candidateId}/research-contract`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Failed to fetch skill candidate research contract');
+    }
+    return await res.json() as SkillCandidateResearchContract;
   },
 );
 
@@ -456,6 +495,19 @@ const skillsSlice = createSlice({
       .addCase(fetchSkillCandidateQualityReview.rejected, (state, action) => {
         state.candidateQualityReviewsLoading[action.meta.arg] = false;
         state.candidateQualityReviewsError[action.meta.arg] = action.error.message || 'Failed to fetch quality review';
+      })
+
+      .addCase(fetchSkillCandidateResearchContract.pending, (state, action) => {
+        state.candidateResearchContractsLoading[action.meta.arg] = true;
+        state.candidateResearchContractsError[action.meta.arg] = null;
+      })
+      .addCase(fetchSkillCandidateResearchContract.fulfilled, (state, action) => {
+        state.candidateResearchContractsLoading[action.payload.candidate_id] = false;
+        state.candidateResearchContracts[action.payload.candidate_id] = action.payload;
+      })
+      .addCase(fetchSkillCandidateResearchContract.rejected, (state, action) => {
+        state.candidateResearchContractsLoading[action.meta.arg] = false;
+        state.candidateResearchContractsError[action.meta.arg] = action.error.message || 'Failed to fetch research contract';
       })
       .addCase(fetchSkillCandidateImprovementProposal.pending, (state, action) => {
         state.candidateImprovementProposalsLoading[action.meta.arg] = true;
