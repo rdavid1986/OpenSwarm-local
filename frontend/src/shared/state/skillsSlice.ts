@@ -148,6 +148,37 @@ export interface SkillCandidateQualityReview {
   safe_to_auto_apply?: boolean;
 }
 
+export interface SkillCandidateImprovementProposalItem {
+  source?: string;
+  code?: string;
+  severity?: 'low' | 'medium' | 'high' | string;
+  title?: string;
+  target_section?: string;
+  rationale?: string;
+  proposed_change?: string;
+  auto_apply_supported?: boolean;
+}
+
+export interface SkillCandidateImprovementProposal {
+  proposal_kind?: 'skill_improvement_proposal' | string;
+  candidate_id: string;
+  skill_name?: string;
+  review_kind?: string;
+  status?: string;
+  summary?: string;
+  proposal_items?: SkillCandidateImprovementProposalItem[];
+  item_count?: number;
+  requires_user_approval?: boolean;
+  requires_web_research?: boolean;
+  safe_to_auto_apply?: boolean;
+  can_generate_diff?: boolean;
+  can_update_candidate?: boolean;
+  proposed_content?: string;
+  preview_diff?: string;
+  next_step?: string;
+  guardrails?: string[];
+}
+
 export type SkillCandidateCreateBody = Partial<Omit<SkillSpecCandidate, 'skill_spec'>> & {
   skill_spec: Partial<SkillSpec> & Pick<SkillSpec, 'name'>;
 };
@@ -165,6 +196,11 @@ interface SkillsState {
   candidateQualityReviews: Record<string, SkillCandidateQualityReview>;
   candidateQualityReviewsLoading: Record<string, boolean>;
   candidateQualityReviewsError: Record<string, string | null>;
+  candidateImprovementProposals: Record<string, SkillCandidateImprovementProposal>;
+  candidateImprovementProposalsLoading: Record<string, boolean>;
+  candidateImprovementProposalsError: Record<string, string | null>;
+  candidateImprovementApplyLoading: Record<string, boolean>;
+  candidateImprovementApplyError: Record<string, string | null>;
 }
 
 const initialState: SkillsState = {
@@ -180,6 +216,11 @@ const initialState: SkillsState = {
   candidateQualityReviews: {},
   candidateQualityReviewsLoading: {},
   candidateQualityReviewsError: {},
+  candidateImprovementProposals: {},
+  candidateImprovementProposalsLoading: {},
+  candidateImprovementProposalsError: {},
+  candidateImprovementApplyLoading: {},
+  candidateImprovementApplyError: {},
 };
 
 export const fetchSkills = createAsyncThunk(
@@ -249,6 +290,39 @@ export const fetchSkillCandidateQualityReview = createAsyncThunk(
       throw new Error(data.detail || 'Failed to fetch skill candidate quality review');
     }
     return await res.json() as SkillCandidateQualityReview;
+  },
+);
+
+export const fetchSkillCandidateImprovementProposal = createAsyncThunk(
+  'skills/fetchCandidateImprovementProposal',
+  async (candidateId: string) => {
+    const res = await fetch(`${SKILLS_API}/candidates/${candidateId}/improvement-proposal`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Failed to fetch skill candidate improvement proposal');
+    }
+    return await res.json() as SkillCandidateImprovementProposal;
+  },
+);
+
+export const applySkillCandidateImprovementProposal = createAsyncThunk(
+  'skills/applyCandidateImprovementProposal',
+  async ({ candidateId, approved }: { candidateId: string; approved: boolean }) => {
+    const res = await fetch(`${SKILLS_API}/candidates/${candidateId}/improvement-proposal/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Failed to apply skill candidate improvement proposal');
+    }
+    const data = await res.json();
+    return {
+      candidate: data.candidate as SkillSpecCandidate,
+      proposal: data.proposal as SkillCandidateImprovementProposal,
+      audit: data.audit as Record<string, any>,
+    };
   },
 );
 
@@ -382,6 +456,31 @@ const skillsSlice = createSlice({
       .addCase(fetchSkillCandidateQualityReview.rejected, (state, action) => {
         state.candidateQualityReviewsLoading[action.meta.arg] = false;
         state.candidateQualityReviewsError[action.meta.arg] = action.error.message || 'Failed to fetch quality review';
+      })
+      .addCase(fetchSkillCandidateImprovementProposal.pending, (state, action) => {
+        state.candidateImprovementProposalsLoading[action.meta.arg] = true;
+        state.candidateImprovementProposalsError[action.meta.arg] = null;
+      })
+      .addCase(fetchSkillCandidateImprovementProposal.fulfilled, (state, action) => {
+        state.candidateImprovementProposalsLoading[action.payload.candidate_id] = false;
+        state.candidateImprovementProposals[action.payload.candidate_id] = action.payload;
+      })
+      .addCase(fetchSkillCandidateImprovementProposal.rejected, (state, action) => {
+        state.candidateImprovementProposalsLoading[action.meta.arg] = false;
+        state.candidateImprovementProposalsError[action.meta.arg] = action.error.message || 'Failed to fetch improvement proposal';
+      })
+      .addCase(applySkillCandidateImprovementProposal.pending, (state, action) => {
+        state.candidateImprovementApplyLoading[action.meta.arg.candidateId] = true;
+        state.candidateImprovementApplyError[action.meta.arg.candidateId] = null;
+      })
+      .addCase(applySkillCandidateImprovementProposal.fulfilled, (state, action) => {
+        state.candidateImprovementApplyLoading[action.payload.candidate.candidate_id] = false;
+        state.candidates[action.payload.candidate.candidate_id] = action.payload.candidate;
+        state.candidateImprovementProposals[action.payload.candidate.candidate_id] = action.payload.proposal;
+      })
+      .addCase(applySkillCandidateImprovementProposal.rejected, (state, action) => {
+        state.candidateImprovementApplyLoading[action.meta.arg.candidateId] = false;
+        state.candidateImprovementApplyError[action.meta.arg.candidateId] = action.error.message || 'Failed to apply improvement proposal';
       })
       .addCase(createSkillCandidate.fulfilled, (state, action) => {
         state.candidates[action.payload.candidate_id] = action.payload;

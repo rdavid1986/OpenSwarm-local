@@ -41,6 +41,8 @@ import {
   fetchSkillCandidates,
   fetchSkillCandidateRequirementsContract,
   fetchSkillCandidateQualityReview,
+  fetchSkillCandidateImprovementProposal,
+  applySkillCandidateImprovementProposal,
   createSkillCandidate,
   createSkill,
   updateSkill,
@@ -52,6 +54,7 @@ import {
   Skill,
   SkillCandidateRequirementsContract,
   SkillCandidateQualityReview,
+  SkillCandidateImprovementProposal,
   SkillSpecCandidate,
 } from '@/shared/state/skillsSlice';
 import {
@@ -94,6 +97,11 @@ const Skills: React.FC = () => {
     candidateQualityReviews,
     candidateQualityReviewsLoading,
     candidateQualityReviewsError,
+    candidateImprovementProposals,
+    candidateImprovementProposalsLoading,
+    candidateImprovementProposalsError,
+    candidateImprovementApplyLoading,
+    candidateImprovementApplyError,
   } = useAppSelector((s) => s.skills);
   const {
     skills: regSkills,
@@ -123,6 +131,8 @@ const Skills: React.FC = () => {
     contract: false,
     source: false,
     content: false,
+    improvement: true,
+    improvementDiff: false,
   });
 
 
@@ -211,6 +221,16 @@ const Skills: React.FC = () => {
     selectedCandidate ? !!candidateQualityReviewsLoading[selectedCandidate.candidate_id] : false;
   const selectedQualityReviewError =
     selectedCandidate ? candidateQualityReviewsError[selectedCandidate.candidate_id] ?? null : null;
+  const selectedImprovementProposal: SkillCandidateImprovementProposal | null =
+    selectedCandidate ? candidateImprovementProposals[selectedCandidate.candidate_id] ?? null : null;
+  const selectedImprovementProposalLoading =
+    selectedCandidate ? !!candidateImprovementProposalsLoading[selectedCandidate.candidate_id] : false;
+  const selectedImprovementProposalError =
+    selectedCandidate ? candidateImprovementProposalsError[selectedCandidate.candidate_id] ?? null : null;
+  const selectedImprovementApplyLoading =
+    selectedCandidate ? !!candidateImprovementApplyLoading[selectedCandidate.candidate_id] : false;
+  const selectedImprovementApplyError =
+    selectedCandidate ? candidateImprovementApplyError[selectedCandidate.candidate_id] ?? null : null;
   const selectedReg: RegistrySkillDetail | null =
     selection?.type === 'registry' && regDetail?.name === selection.name ? regDetail : null;
 
@@ -227,6 +247,13 @@ const Skills: React.FC = () => {
     if (candidateQualityReviewsLoading[selectedCandidate.candidate_id]) return;
     dispatch(fetchSkillCandidateQualityReview(selectedCandidate.candidate_id));
   }, [candidateQualityReviews, candidateQualityReviewsLoading, dispatch, selectedCandidate]);
+
+  useEffect(() => {
+    if (!selectedCandidate) return;
+    if (candidateImprovementProposals[selectedCandidate.candidate_id]) return;
+    if (candidateImprovementProposalsLoading[selectedCandidate.candidate_id]) return;
+    dispatch(fetchSkillCandidateImprovementProposal(selectedCandidate.candidate_id));
+  }, [candidateImprovementProposals, candidateImprovementProposalsLoading, dispatch, selectedCandidate]);
 
   // CRUD
   const openCreate = () => {
@@ -358,6 +385,23 @@ const Skills: React.FC = () => {
     } catch (err) {
       console.error('Failed to delete skill candidate:', err);
       setSnackbar({ open: true, message: err instanceof Error ? err.message : 'Failed to delete skill candidate' });
+    }
+  };
+
+
+  const handleApplyCandidateImprovement = async () => {
+    if (!selectedCandidate) return;
+    try {
+      const result = await dispatch(applySkillCandidateImprovementProposal({
+        candidateId: selectedCandidate.candidate_id,
+        approved: true,
+      })).unwrap();
+      setSnackbar({ open: true, message: `Applied improvement proposal to "${result.candidate.skill_spec.name}"` });
+      dispatch(fetchSkillCandidateQualityReview(selectedCandidate.candidate_id));
+      dispatch(fetchSkillCandidateImprovementProposal(selectedCandidate.candidate_id));
+    } catch (err) {
+      console.error('Failed to apply skill candidate improvement proposal:', err);
+      setSnackbar({ open: true, message: err instanceof Error ? err.message : 'Failed to apply improvement proposal' });
     }
   };
 
@@ -574,6 +618,151 @@ const Skills: React.FC = () => {
           '& .MuiChip-label': { px: 0.8 },
         }}
       />
+    );
+  };
+
+  const SkillImprovementProposalPanel: React.FC<{
+    proposal: SkillCandidateImprovementProposal | null;
+    loading: boolean;
+    error: string | null;
+    applyLoading: boolean;
+    applyError: string | null;
+    onApply: () => void;
+  }> = ({ proposal, loading, error, applyLoading, applyError, onApply }) => {
+    const items = asArray(proposal?.proposal_items) as Record<string, unknown>[];
+    const canGenerateDiff = !!proposal?.can_generate_diff;
+    const requiresWebResearch = !!proposal?.requires_web_research;
+    const diff = toDisplayText(proposal?.preview_diff, '');
+    const proposedContent = toDisplayText(proposal?.proposed_content, '');
+
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+        {error ? (
+          <ReviewSection title="Improvement proposal unavailable" tone="error">
+            <EmptyReviewState text={error} />
+          </ReviewSection>
+        ) : !proposal && loading ? (
+          <ReviewSection title="Loading improvement proposal">
+            <EmptyReviewState text="Building review-based improvement proposal..." />
+          </ReviewSection>
+        ) : !proposal ? (
+          <ReviewSection title="No proposal loaded">
+            <EmptyReviewState text="No improvement proposal is available for this candidate." />
+          </ReviewSection>
+        ) : (
+          <>
+            <ReviewSection title="Proposal summary" tone={items.length > 0 ? 'warning' : 'success'}>
+              <Typography sx={{ fontSize: '0.78rem', color: c.text.secondary, lineHeight: 1.5, mb: 1 }}>
+                {toDisplayText(proposal.summary, 'No proposal summary available.')}
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.65, mb: 1 }}>
+                <MetaChip label={`${proposal.item_count ?? items.length} proposed changes`} tone={items.length > 0 ? 'warning' : 'success'} />
+                <MetaChip label={canGenerateDiff ? 'Diff preview ready' : 'No diff'} tone={canGenerateDiff ? 'success' : 'default'} />
+                <MetaChip label="Apply requires explicit action" tone="warning" />
+                {requiresWebResearch && <MetaChip label="Research recommended" tone="warning" />}
+              </Box>
+              <Typography sx={{ fontSize: '0.72rem', color: c.text.ghost, lineHeight: 1.45 }}>
+                Applying this proposal updates only the candidate content. It does not install, approve install, activate tools, activate MCP, or grant permissions.
+              </Typography>
+            </ReviewSection>
+
+            <ReviewSection title="Proposed improvements" tone={items.length > 0 ? 'warning' : 'success'}>
+              {items.length > 0 ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                  {items.slice(0, 8).map((item, index) => (
+                    <Box
+                      key={`proposal-item-${index}`}
+                      sx={{
+                        p: 1,
+                        borderRadius: `${c.radius.sm}px`,
+                        border: `1px solid ${c.border.subtle}`,
+                        bgcolor: c.bg.page,
+                      }}
+                    >
+                      <Typography sx={{ fontSize: '0.76rem', color: c.text.primary, fontWeight: 700 }}>
+                        {toDisplayText(item.title, toDisplayText(item.code, 'Improvement'))}
+                      </Typography>
+                      <Typography sx={{ fontSize: '0.7rem', color: c.text.ghost, mt: 0.35 }}>
+                        {toDisplayText(item.source, 'review')} · {toDisplayText(item.target_section, 'SKILL.md')}
+                      </Typography>
+                      <Typography sx={{ fontSize: '0.73rem', color: c.text.secondary, mt: 0.5, lineHeight: 1.45 }}>
+                        {toDisplayText(item.proposed_change, 'No proposed change text.')}
+                      </Typography>
+                    </Box>
+                  ))}
+                </Box>
+              ) : (
+                <EmptyReviewState text="No improvements proposed." tone="success" />
+              )}
+            </ReviewSection>
+
+            <CollapsibleCandidatePanel
+              id="improvementDiff"
+              title="Improvement diff preview"
+              summary="Read-only proposed SKILL.md changes. Nothing is applied until you confirm."
+              defaultTone={canGenerateDiff ? 'warning' : 'default'}
+            >
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <Typography
+                  component="pre"
+                  sx={{
+                    m: 0,
+                    p: 1.25,
+                    maxHeight: 280,
+                    overflow: 'auto',
+                    borderRadius: `${c.radius.sm}px`,
+                    border: `1px solid ${c.border.subtle}`,
+                    bgcolor: c.bg.page,
+                    color: c.text.secondary,
+                    fontFamily: c.font.mono,
+                    fontSize: '0.7rem',
+                    whiteSpace: 'pre-wrap',
+                    lineHeight: 1.45,
+                  }}
+                >
+                  {diff || 'No diff available.'}
+                </Typography>
+                <Typography sx={{ fontSize: '0.72rem', color: c.text.ghost }}>
+                  Proposed content length: {proposedContent.length} characters.
+                </Typography>
+              </Box>
+            </CollapsibleCandidatePanel>
+
+            {applyError && (
+              <Alert severity="error" sx={{ borderRadius: `${c.radius.md}px` }}>
+                {applyError}
+              </Alert>
+            )}
+
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <Tooltip title={canGenerateDiff ? 'Apply proposed content to this candidate only. This does not install the skill.' : 'No diff available to apply.'}>
+                <span>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    disabled={!canGenerateDiff || applyLoading}
+                    onClick={onApply}
+                    startIcon={applyLoading ? <CircularProgress size={14} sx={{ color: 'inherit' }} /> : <AutoFixHighIcon sx={{ fontSize: 16 }} />}
+                    sx={{
+                      bgcolor: c.accent.primary,
+                      '&:hover': { bgcolor: c.accent.pressed },
+                      textTransform: 'none',
+                      borderRadius: `${c.radius.md}px`,
+                      px: 2,
+                      py: 0.6,
+                      fontSize: '0.78rem',
+                      fontWeight: 700,
+                      boxShadow: 'none',
+                    }}
+                  >
+                    Apply improvement to candidate
+                  </Button>
+                </span>
+              </Tooltip>
+            </Box>
+          </>
+        )}
+      </Box>
     );
   };
 
@@ -1839,6 +2028,22 @@ const Skills: React.FC = () => {
               loading={selectedQualityReviewLoading}
               error={selectedQualityReviewError}
             />
+
+            <CollapsibleCandidatePanel
+              id="improvement"
+              title="Improvement proposal"
+              summary="Review-based proposal and diff preview. Applying updates only this candidate."
+              defaultTone={selectedImprovementProposalError ? 'error' : selectedImprovementProposal?.can_generate_diff ? 'warning' : 'default'}
+            >
+              <SkillImprovementProposalPanel
+                proposal={selectedImprovementProposal}
+                loading={selectedImprovementProposalLoading}
+                error={selectedImprovementProposalError}
+                applyLoading={selectedImprovementApplyLoading}
+                applyError={selectedImprovementApplyError}
+                onApply={handleApplyCandidateImprovement}
+              />
+            </CollapsibleCandidatePanel>
 
             <CollapsibleCandidatePanel
               id="validation"
