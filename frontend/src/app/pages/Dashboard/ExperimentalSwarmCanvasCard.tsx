@@ -686,6 +686,190 @@ function isTerminalImplementationState(status: string): boolean {
   return status === 'completed' || status === 'failed';
 }
 
+
+function buildMiniAgentInspectorProcessTraceItems(task: any, idx: number): ProcessTraceItem[] {
+  const taskId = renderText(task?.id || task?.task_id || task?.name, `task-${idx + 1}`);
+  const miniagentId = renderText(task?.miniagent_id || task?.mini_agent_id || task?.miniagent || task?.agent_id || task?.agent, '');
+  const statusRaw = normalizeStatusValue(task?.status || task?.state || 'planned');
+  const status: ProcessTraceItem['status'] =
+    statusRaw === 'failed'
+      ? 'failed'
+      : statusRaw === 'blocked'
+        ? 'blocked'
+        : statusRaw === 'running'
+          ? 'running'
+          : statusRaw === 'completed'
+            ? 'completed'
+            : statusRaw === 'skipped'
+              ? 'skipped'
+              : 'planned';
+
+  const title = renderText(task?.title || task?.name, `Task ${idx + 1}`);
+  const description = renderText(task?.description || task?.summary || task?.goal, '').trim();
+  const skillId = renderText(task?.skill_id || task?.assigned_skill_id || task?.skill?.id, '').trim();
+  const skillName = renderText(task?.skill_name || task?.assigned_skill || task?.skill?.name || task?.skill, '').trim();
+  const modeId = renderText(task?.mode_id || task?.mode, '').trim();
+  const model = renderText(task?.model || task?.model_id || task?.provider_model, '').trim();
+  const contextSummary = renderText(task?.context_summary || task?.context_packet?.summary || task?.context?.summary, '').trim();
+  const microplan = renderText(task?.microplan || task?.plan || task?.steps, '').trim();
+  const validation = renderText(task?.validation || task?.validation_summary || task?.validation_result, '').trim();
+  const handoff = renderText(task?.handoff || task?.handoff_summary || task?.completed_work_summary, '').trim();
+  const keyLearnings = renderText(task?.key_learnings || task?.learnings || task?.lessons, '').trim();
+
+  const evidenceRefs = Array.isArray(task?.evidence_refs)
+    ? task.evidence_refs.filter(Boolean)
+    : Array.isArray(task?.evidence)
+      ? task.evidence.map((item: any) => item?.id || item?.evidence_id || item?.ref || item?.path || item?.summary).filter(Boolean)
+      : [];
+
+  const artifactRefs = Array.isArray(task?.artifact_refs)
+    ? task.artifact_refs.filter(Boolean)
+    : Array.isArray(task?.artifacts)
+      ? task.artifacts.map((item: any) => item?.id || item?.artifact_id || item?.path || item?.name).filter(Boolean)
+      : [];
+
+  const durationMs = typeof task?.duration_ms === 'number'
+    ? task.duration_ms
+    : typeof task?.runtime_ms === 'number'
+      ? task.runtime_ms
+      : typeof task?.elapsed_ms === 'number'
+        ? task.elapsed_ms
+        : null;
+
+  const items: ProcessTraceItem[] = [
+    {
+      trace_id: `miniagent-task-${taskId}`,
+      kind: 'summary',
+      subsystem: 'TraceCore',
+      title: 'MiniAgent task packet',
+      summary: description || title,
+      status,
+      duration_ms: durationMs,
+      icon_id: 'TraceCore',
+      badge: humanizeStatus(statusRaw, 'planned'),
+      related_task_id: taskId,
+      related_miniagent_id: miniagentId || undefined,
+      details: {
+        task_id: taskId,
+        miniagent_id: miniagentId || null,
+        assignee: renderText(task?.agent || task?.assignee, '') || null,
+        mode: modeId || null,
+        model: model || null,
+      },
+    },
+  ];
+
+  if (contextSummary) {
+    items.push({
+      trace_id: `miniagent-context-${taskId}`,
+      kind: 'context',
+      subsystem: 'MemoryCore',
+      title: 'Context packet',
+      summary: contextSummary,
+      status: 'completed',
+      icon_id: 'MemoryCore',
+      related_task_id: taskId,
+      related_miniagent_id: miniagentId || undefined,
+    });
+  }
+
+  if (skillId || skillName) {
+    items.push({
+      trace_id: `miniagent-skill-${taskId}`,
+      kind: 'skill',
+      subsystem: 'SkillCore',
+      title: skillName || 'Assigned skill',
+      summary: skillName ? `Assigned skill: ${skillName}` : `Assigned skill id: ${skillId}`,
+      status: 'completed',
+      icon_id: 'SkillCore',
+      related_task_id: taskId,
+      related_miniagent_id: miniagentId || undefined,
+      related_skill_id: skillId || undefined,
+      details: {
+        skill_id: skillId || null,
+        skill_name: skillName || null,
+      },
+    });
+  }
+
+  if (microplan) {
+    items.push({
+      trace_id: `miniagent-microplan-${taskId}`,
+      kind: 'planning',
+      subsystem: 'TraceCore',
+      title: 'Microplan',
+      summary: microplan,
+      status: status === 'planned' ? 'planned' : 'completed',
+      icon_id: 'TraceCore',
+      related_task_id: taskId,
+      related_miniagent_id: miniagentId || undefined,
+    });
+  }
+
+  if (evidenceRefs.length > 0 || artifactRefs.length > 0) {
+    items.push({
+      trace_id: `miniagent-evidence-${taskId}`,
+      kind: 'evidence',
+      subsystem: 'EvidenceCore',
+      title: 'Evidence and artifacts',
+      summary: `${artifactRefs.length} artifacts · ${evidenceRefs.length} evidence refs.`,
+      status: 'completed',
+      icon_id: 'EvidenceCore',
+      badge: 'evidence',
+      related_task_id: taskId,
+      related_miniagent_id: miniagentId || undefined,
+      evidence_refs: evidenceRefs,
+      artifact_refs: artifactRefs,
+    });
+  }
+
+  if (validation) {
+    items.push({
+      trace_id: `miniagent-validation-${taskId}`,
+      kind: 'validation',
+      subsystem: 'ReviewCore',
+      title: 'Validation',
+      summary: validation,
+      status: status === 'failed' ? 'failed' : 'completed',
+      icon_id: 'ReviewCore',
+      related_task_id: taskId,
+      related_miniagent_id: miniagentId || undefined,
+    });
+  }
+
+  if (handoff) {
+    items.push({
+      trace_id: `miniagent-handoff-${taskId}`,
+      kind: 'handoff',
+      subsystem: 'HandoffCore',
+      title: 'Handoff',
+      summary: handoff,
+      status: 'completed',
+      icon_id: 'HandoffCore',
+      related_task_id: taskId,
+      related_miniagent_id: miniagentId || undefined,
+      evidence_refs: evidenceRefs,
+    });
+  }
+
+  if (keyLearnings) {
+    items.push({
+      trace_id: `miniagent-learnings-${taskId}`,
+      kind: 'review',
+      subsystem: 'ReviewCore',
+      title: 'Key learnings',
+      summary: keyLearnings,
+      status: 'completed',
+      icon_id: 'ReviewCore',
+      related_task_id: taskId,
+      related_miniagent_id: miniagentId || undefined,
+    });
+  }
+
+  return items.slice(0, 8);
+}
+
+
 function buildSwarmCardProcessTraceItems(params: {
   activeSwarm: any | null;
   activeSwarmId: string | null;
@@ -2820,6 +3004,17 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                   {renderText(task.agent || task.assignee || task.description)}
                 </Typography>
               )}
+
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.65, mt: 0.85 }}>
+                {buildMiniAgentInspectorProcessTraceItems(task, idx).map((item) => (
+                  <ProcessTraceDropdown
+                    key={item.trace_id || `${item.kind}-${item.title}`}
+                    item={item}
+                    compact
+                    defaultExpanded={item.status === 'running' || item.status === 'blocked'}
+                  />
+                ))}
+              </Box>
             </Box>
           )))}
 
