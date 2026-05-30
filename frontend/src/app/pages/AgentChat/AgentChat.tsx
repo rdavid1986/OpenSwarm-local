@@ -50,7 +50,7 @@ import { ContextPath } from '@/app/components/DirectoryBrowser';
 import DiffViewer from './DiffViewer';
 import { setGlowingBrowserCards, fadeGlowingBrowserCards, clearGlowingBrowserCards } from '@/shared/state/dashboardLayoutSlice';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
-import { ProcessTraceTurnDropdown } from '../Dashboard/ProcessTraceDropdown';
+import { ProcessTraceTurnDropdown, normalizeProcessTraceTurnContainer } from '../Dashboard/ProcessTraceDropdown';
 
 const CONTEXT_WINDOWS: Record<string, number> = {
   sonnet: 200_000,
@@ -87,31 +87,6 @@ function streamingLabelFor(seedKey: string | undefined): string {
     h = ((h << 5) - h + seedKey.charCodeAt(i)) | 0;
   }
   return STREAMING_LABELS[Math.abs(h) % STREAMING_LABELS.length];
-}
-
-function getAgentReasoningSummary(userText: string, modeValue: string, modelValue: string): string {
-  const normalized = String(userText || '').trim();
-  const lower = normalized.toLowerCase();
-  if (!normalized) {
-    return `Reasoning summary: no visible user request was available. The agent prepared a response in ${modeValue || 'agent'} mode using ${modelValue || 'the selected model'}.`;
-  }
-  if (/^(hola|hello|hi|hey|buenas|buenos dias|buenas tardes|buenas noches)[!?.\s]*$/i.test(lower)) {
-    return `Reasoning summary: the user sent a greeting. The agent should answer briefly, acknowledge the greeting, and wait for the user's next instruction.`;
-  }
-  if (lower.includes('?')) {
-    return `Reasoning summary: the user asked a question. The agent should answer directly using the available workspace context and avoid exposing internal debug data as user-facing text.`;
-  }
-  return `Reasoning summary: the user requested: "${normalized.slice(0, 120)}${normalized.length > 120 ? '…' : ''}". The agent should interpret the request, use available context, and return a clear human-readable answer.`;
-}
-
-function getPreviousVisibleUserMessage(items: RenderItem[], currentIndex: number): string {
-  for (let i = currentIndex - 1; i >= 0; i -= 1) {
-    const item = items[i];
-    if (isToolGroup(item) || isToolPair(item)) continue;
-    const msg = item as AgentMessage;
-    if (msg.role === 'user' && typeof msg.content === 'string') return msg.content;
-  }
-  return '';
 }
 
 const ThinkingBubble: React.FC<{ label?: string | null; seedKey?: string }> = ({ label, seedKey }) => {
@@ -1245,67 +1220,29 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                 ? siblings.indexOf(session.active_branch_id || 'main')
                 : 0;
               const rawText = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-              const backendProcessTraceTurn = msg.role === 'assistant' && (msg as any).process_trace_turn && typeof (msg as any).process_trace_turn === 'object'
-                ? (msg as any).process_trace_turn
+              const rawProcessTraceTurn = msg.role === 'assistant'
+                ? ((msg as any).process_trace_turn
+                  || (msg as any).process_trace_turn_container
+                  || (msg as any).trace_turn
+                  || (msg as any).turnTrace
+                  || (((msg as any).traceItems || (msg as any).process_trace_items) ? {
+                    turn_trace_kind: 'process_trace_turn_container',
+                    turn_trace_id: `agent-message-turn-${msg.id}`,
+                    title: 'Thought',
+                    status: (msg as any).status || 'completed',
+                    output_message_id: msg.id,
+                    items: (msg as any).traceItems || (msg as any).process_trace_items,
+                  } : null))
                 : null;
-              const previousUserText = msg.role === 'assistant' && !backendProcessTraceTurn ? getPreviousVisibleUserMessage(renderItems, itemIndex) : '';
-              const reasoningSummary = msg.role === 'assistant' && !backendProcessTraceTurn ? getAgentReasoningSummary(previousUserText, mode, model) : '';
-
+              const backendProcessTraceTurn = normalizeProcessTraceTurnContainer(rawProcessTraceTurn);
               return (
                 <Box key={msg.id} sx={{ '&:hover .msg-actions': { opacity: 1 } }}>
-                  {msg.role === 'assistant' && (
+                  {msg.role === 'assistant' && backendProcessTraceTurn && (
                     <Box sx={{ mb: 0.75 }}>
                       <ProcessTraceTurnDropdown
-                        container={backendProcessTraceTurn || {
-                          turn_trace_kind: 'process_trace_turn_container',
-                          turn_trace_version: 'openswarm.process_trace_turn_container.v1',
-                          turn_trace_id: `agent-assistant-turn-${msg.id}`,
-                          title: 'Thought',
-                          status: 'completed',
-                          output_message_id: msg.id,
-                          duration_ms: (msg as any).elapsed_ms || null,
-                          default_collapsed_after_finish: true,
-                          default_expanded_while_running: false,
-                          child_trace_ids: [`agent-reasoning-summary-${msg.id}`, `agent-message-trace-${msg.id}`],
-                          related_agent_ids: [session.id],
-                          items: [
-                            {
-                              trace_id: `agent-reasoning-summary-${msg.id}`,
-                              kind: 'reasoning',
-                              subsystem: 'ReasoningCore',
-                              icon_id: 'reasoning-core',
-                              title: 'Reasoning summary',
-                              summary: reasoningSummary,
-                              status: 'completed',
-                              badge: 'summary',
-                              related_agent_id: session.id,
-                            },
-                            {
-                              trace_id: `agent-message-trace-${msg.id}`,
-                              kind: 'debug',
-                              subsystem: 'TraceCore',
-                              icon_id: 'trace-core',
-                              title: 'Debug JSON',
-                              summary: 'Technical response metadata for developers.',
-                              status: 'completed',
-                              badge: 'JSON',
-                              metadata: { display_mode: 'debug_json' },
-                              details: {
-                                mode,
-                                model,
-                                role: msg.role,
-                                message_id: msg.id,
-                                branch_id: (msg as any).branch_id || null,
-                                latest_assistant_message: msg.id === latestAssistantMessageId,
-                              },
-                            },
-                          ],
-                          metadata: {
-                            source: 'agent_assistant_message',
-                            reasoning_summary_source: 'operational_summary',
-                          },
-                        }}
+                        container={backendProcessTraceTurn}
                         bare
+                        defaultExpanded={backendProcessTraceTurn.status === 'running' || backendProcessTraceTurn.status === 'failed' || backendProcessTraceTurn.status === 'warning'}
                       />
                     </Box>
                   )}

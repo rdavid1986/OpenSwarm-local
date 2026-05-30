@@ -256,6 +256,125 @@ function stringifyDetail(value: unknown): string {
   }
 }
 
+function traceText(value: unknown, fallback = 'not provided'): string {
+  const text = stringifyDetail(value).trim();
+  return text ? text : fallback;
+}
+
+function getDetailValue(details: Record<string, unknown>, ...keys: string[]): unknown {
+  for (const key of keys) {
+    const value = details[key];
+    if (value !== undefined && value !== null && value !== '') return value;
+  }
+  return undefined;
+}
+
+function compactTraceList(value: unknown, limit = 5): string {
+  const rawItems = Array.isArray(value) ? value : (value == null || value === '' ? [] : [value]);
+  const items = rawItems.map((item) => traceText(item, '')).filter(Boolean);
+  if (items.length === 0) return 'not provided';
+  const visible = items.slice(0, limit).map((item) => (item.length > 96 ? `${item.slice(0, 96).trimEnd()}…` : item));
+  const extra = items.length - visible.length;
+  return extra > 0 ? `${visible.join('\n')} (+${extra} more)` : visible.join('\n');
+}
+
+function pushDetailRow(rows: Array<[string, unknown]>, label: string, value: unknown, options?: { list?: boolean }) {
+  if (value === undefined || value === null || value === '') return;
+  rows.push([label, options?.list ? compactTraceList(value) : traceText(value)]);
+}
+
+function buildSubsystemDetailRows(item: ProcessTraceItem, durationLabel: string | null): Array<[string, unknown]> {
+  const rows: Array<[string, unknown]> = [];
+  const details = item.details || {};
+  const subsystem = String(item.subsystem || '').toLowerCase();
+  const kind = String(item.kind || '').toLowerCase();
+  const isToolOrAction = subsystem === 'toolcore' || subsystem === 'actioncore' || kind === 'tool' || kind === 'action';
+  const isSkill = subsystem === 'skillcore' || kind === 'skill';
+  const isFileOutput = ['filecore', 'outputcore'].includes(subsystem) || ['file', 'diff', 'workspace', 'output', 'artifact'].includes(kind);
+  const isMiniAgentOrHandoff = ['miniagentcore', 'handoffcore'].includes(subsystem) || ['miniagent', 'handoff'].includes(kind);
+
+  if (isToolOrAction) {
+    pushDetailRow(rows, 'Tool', getDetailValue(details, 'tool_name', 'tool'));
+    pushDetailRow(rows, 'Action', getDetailValue(details, 'action_name'));
+    pushDetailRow(rows, 'Approval', getDetailValue(details, 'approval_status', 'approval_state'));
+    pushDetailRow(rows, 'Policy', getDetailValue(details, 'permission_policy', 'policy'));
+    pushDetailRow(rows, 'Input', getDetailValue(details, 'input_summary', 'input'));
+    pushDetailRow(rows, 'Result', getDetailValue(details, 'result_summary', 'output_summary', 'result', 'output'));
+    pushDetailRow(rows, 'Error', getDetailValue(details, 'error'));
+    pushDetailRow(rows, 'Affected files', getDetailValue(details, 'affected_files', 'affected_paths'), { list: true });
+    pushDetailRow(rows, 'Duration', durationLabel);
+    pushDetailRow(rows, 'Evidence', item.evidence_refs, { list: true });
+    pushDetailRow(rows, 'Action id', item.related_action_id);
+    pushDetailRow(rows, 'Source', getDetailValue(details, 'source_kind') || item.metadata?.source_kind);
+    return rows;
+  }
+
+  if (isSkill) {
+    pushDetailRow(rows, 'Skill id', getDetailValue(details, 'skill_id') || item.related_skill_id);
+    pushDetailRow(rows, 'Skill name', getDetailValue(details, 'skill_name'));
+    pushDetailRow(rows, 'Use', getDetailValue(details, 'usage_reason', 'assignment_reason', 'reason'));
+    pushDetailRow(rows, 'Scope', getDetailValue(details, 'scope'));
+    pushDetailRow(rows, 'Input', getDetailValue(details, 'input_context', 'context', 'input'));
+    pushDetailRow(rows, 'Output', getDetailValue(details, 'output_summary', 'output'));
+    pushDetailRow(rows, 'Risk', getDetailValue(details, 'risk', 'risk_level'));
+    pushDetailRow(rows, 'Install', getDetailValue(details, 'installation_status', 'install_status'));
+    pushDetailRow(rows, 'Approval', getDetailValue(details, 'approval_status'));
+    pushDetailRow(rows, 'Provenance', getDetailValue(details, 'provenance', 'source'));
+    pushDetailRow(rows, 'Status', item.status);
+    return rows;
+  }
+
+  if (isFileOutput) {
+    pushDetailRow(rows, 'Read', getDetailValue(details, 'read_files'), { list: true });
+    pushDetailRow(rows, 'Created', getDetailValue(details, 'created_files'), { list: true });
+    pushDetailRow(rows, 'Modified', getDetailValue(details, 'modified_files'), { list: true });
+    pushDetailRow(rows, 'Deleted', getDetailValue(details, 'deleted_files'), { list: true });
+    pushDetailRow(rows, 'Affected', getDetailValue(details, 'affected_paths', 'affected_files'), { list: true });
+    pushDetailRow(rows, 'Workspace', getDetailValue(details, 'workspace_path'));
+    pushDetailRow(rows, 'Diff', getDetailValue(details, 'diff_summary'));
+    pushDetailRow(rows, 'Output id', getDetailValue(details, 'output_id'));
+    pushDetailRow(rows, 'Candidate', getDetailValue(details, 'candidate_id'));
+    pushDetailRow(rows, 'Stable', getDetailValue(details, 'stable_output_id'));
+    pushDetailRow(rows, 'Validation', getDetailValue(details, 'validation_state'));
+    pushDetailRow(rows, 'Operation', getDetailValue(details, 'file_operation_kind'));
+    pushDetailRow(rows, 'Artifacts', item.artifact_refs, { list: true });
+    return rows;
+  }
+
+  if (isMiniAgentOrHandoff) {
+    pushDetailRow(rows, 'MiniAgent', getDetailValue(details, 'miniagent_name'));
+    pushDetailRow(rows, 'MiniAgent id', getDetailValue(details, 'miniagent_id') || item.related_miniagent_id);
+    pushDetailRow(rows, 'Task', getDetailValue(details, 'task_id') || item.related_task_id);
+    pushDetailRow(rows, 'From', getDetailValue(details, 'source_agent_id', 'source'));
+    pushDetailRow(rows, 'To', getDetailValue(details, 'target_agent_id', 'target'));
+    pushDetailRow(rows, 'Status', item.status);
+    pushDetailRow(rows, 'Duration', durationLabel);
+    pushDetailRow(rows, 'Input', getDetailValue(details, 'input_summary', 'input'));
+    pushDetailRow(rows, 'Output', getDetailValue(details, 'output_summary', 'output'));
+    pushDetailRow(rows, 'Evidence', item.evidence_refs, { list: true });
+    pushDetailRow(rows, 'Artifacts', item.artifact_refs, { list: true });
+    pushDetailRow(rows, 'Validation', getDetailValue(details, 'validation', 'validation_summary'));
+    pushDetailRow(rows, 'Failure', getDetailValue(details, 'failure_reason', 'error'));
+    return rows;
+  }
+
+  return rows;
+}
+
+export function normalizeProcessTraceTurnContainer(value: unknown): ProcessTraceTurnContainer | null {
+  if (!value || typeof value !== 'object') return null;
+  const data = value as Record<string, unknown>;
+  const directItems = Array.isArray(data.items) ? data.items : undefined;
+  const traceItems = Array.isArray(data.traceItems) ? data.traceItems : undefined;
+  const processTraceItems = Array.isArray(data.process_trace_items) ? data.process_trace_items : undefined;
+  const items = directItems || traceItems || processTraceItems;
+
+  if (data.turn_trace_kind === 'process_trace_turn_container' || data.process_trace_turn === true || items) {
+    return { ...(data as ProcessTraceTurnContainer), items: items as ProcessTraceItem[] | undefined };
+  }
+  return null;
+}
+
 function StatusIcon({ status, color }: { status: ProcessTraceStatus; color: string }) {
   const sx = { fontSize: 19, color, flexShrink: 0 };
   if (status === 'completed') return null;
@@ -378,20 +497,21 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
   }, [c, status]);
 
   const detailRows = useMemo(() => {
-    const rows: Array<[string, unknown]> = [];
+    const rows: Array<[string, unknown]> = buildSubsystemDetailRows(item, durationLabel);
     const showInternalRefs = item.metadata?.show_internal_refs === true;
     if (showInternalRefs && item.related_task_id) rows.push(['Task', redactTraceText(item.related_task_id)]);
     if (showInternalRefs && item.related_agent_id) rows.push(['Agent', redactTraceText(item.related_agent_id)]);
     if (showInternalRefs && item.related_miniagent_id) rows.push(['MiniAgent', redactTraceText(item.related_miniagent_id)]);
-    if (item.related_skill_id) rows.push(['Skill', redactTraceText(item.related_skill_id)]);
-    if (item.related_action_id) rows.push(['Action', redactTraceText(item.related_action_id)]);
+    if (item.related_skill_id && !rows.some(([label]) => label === 'Skill id' || label === 'Skill')) rows.push(['Skill', redactTraceText(item.related_skill_id)]);
+    if (item.related_action_id && !rows.some(([label]) => label === 'Action id' || label === 'Action')) rows.push(['Action', redactTraceText(item.related_action_id)]);
     if (item.started_at) rows.push(['Started', item.started_at]);
     if (item.finished_at) rows.push(['Finished', item.finished_at]);
-    if (durationLabel && !isDebugJsonTrace) rows.push(['Duration', durationLabel]);
-    if (evidenceCount > 0) rows.push(['Evidence refs', evidenceCount]);
-    if (artifactCount > 0) rows.push(['Artifact refs', artifactCount]);
+    if (durationLabel && !isDebugJsonTrace && !rows.some(([label]) => label === 'Duration')) rows.push(['Duration', durationLabel]);
+    if (evidenceCount > 0 && !rows.some(([label]) => label === 'Evidence')) rows.push(['Evidence refs', compactTraceList(item.evidence_refs)]);
+    if (artifactCount > 0 && !rows.some(([label]) => label === 'Artifacts')) rows.push(['Artifact refs', compactTraceList(item.artifact_refs)]);
+    if (rows.length === 0 && !hasDebugDetails) rows.push(['Status', STATUS_LABELS[status] || status]);
     return rows;
-  }, [item, durationLabel, evidenceCount, artifactCount, isDebugJsonTrace]);
+  }, [item, durationLabel, evidenceCount, artifactCount, isDebugJsonTrace, hasDebugDetails, status]);
 
   if (shouldHideTraceItem) {
     return null;
@@ -690,7 +810,11 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
   const containerHidden = Boolean(container?.internal_only || container?.visible_to_user === false);
   const normalizedStatus = normalizeStatus(effectiveStatus);
   const durationLabel = formatDurationMs(effectiveDurationMs);
-  const [expanded, setExpanded] = useState(defaultExpanded ?? container?.default_expanded_while_running ?? normalizedStatus === 'running');
+  const [expanded, setExpanded] = useState(
+    defaultExpanded
+    ?? container?.default_expanded_while_running
+    ?? (normalizedStatus === 'running' || normalizedStatus === 'failed' || normalizedStatus === 'warning'),
+  );
 
   const visibleItems = useMemo(
     () => effectiveItems.filter((item) => !item.internal_only && item.visible_to_user !== false),

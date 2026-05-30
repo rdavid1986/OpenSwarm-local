@@ -40,7 +40,7 @@ import SwarmPromptInput from './SwarmPromptInput';
 import { DEFAULT_SWARM_MODE, getSwarmModeOption } from './SwarmModePicker';
 import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
 import { API_BASE } from '@/shared/config';
-import ProcessTraceDropdown, { ProcessTraceItem, ProcessTraceTurnDropdown } from './ProcessTraceDropdown';
+import ProcessTraceDropdown, { ProcessTraceItem, ProcessTraceTurnDropdown, normalizeProcessTraceTurnContainer } from './ProcessTraceDropdown';
 import { buildCardVisualTokens } from './cardVisualTokens';
 
 type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
@@ -2261,53 +2261,21 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                   metadata.availableActions.length ? `actions: ${metadata.availableActions.join(', ')}` : '',
                 ].filter(Boolean).join(' · ');
                 const showMessageDebugMetadata = false;
-                const messagePreview = body.length > 180 ? `${body.slice(0, 180).trimEnd()}…` : body;
-                const isLatestCompletedAssistantTrace = !isUser && isLatestChatMessage && !swarmState.actionLoading;
-                const messageTraceItems: ProcessTraceItem[] = [];
-                if (!isUser) {
-                  messageTraceItems.push({
-                    trace_id: `swarm-message-${message.id || idx}`,
-                    kind: 'message',
-                    subsystem: 'ReasoningCore',
-                    icon_id: 'reasoning-core',
-                    title: 'Respuesta del Swarm',
-                    summary: messagePreview || 'Respuesta del Swarm registrada.',
-                    status: 'completed',
-                    duration_ms: isLatestCompletedAssistantTrace ? lastSwarmActionDurationMs : undefined,
-                    badge: 'message',
-                    related_task_id: activeSwarmId || undefined,
-                    details: {
-                      route: metadata.route || null,
-                      source: metadata.source || null,
-                      guard: metadata.guard || null,
-                      pending_action: metadata.pendingAction || null,
-                      target_output_id: metadata.targetOutputId || null,
-                      available_actions: metadata.availableActions,
-                      message_preview: messagePreview || null,
-                      visible_message_index: idx,
-                    },
-                  });
-                  if (projectIntake.options.length > 0 || currentProjectIntakeAction?.type) {
-                    messageTraceItems.push({
-                      trace_id: `swarm-intake-${message.id || idx}`,
-                      kind: 'intake',
-                      subsystem: 'ActionCore',
-                      icon_id: 'action-core',
-                      title: 'Acción de intake',
-                      summary: projectIntake.question || currentProjectIntakeAction?.label || 'Esperando una elección estructurada del usuario.',
-                      status: 'planned',
-                      badge: projectIntake.options.length > 0 ? `${projectIntake.options.length} opciones` : 'action',
-                      related_action_id: currentProjectIntakeAction?.type || undefined,
-                      details: {
-                        question: projectIntake.question || null,
-                        options: projectIntake.options.map((option: any) => renderText(option?.label ?? option?.value, '')).filter(Boolean),
-                        action_type: currentProjectIntakeAction?.type || null,
-                        provider_health_ok: localProviderHealth?.ok ?? null,
-                        provider_unavailable: localProviderUnavailable,
-                      },
-                    });
-                  }
-                }
+                const backendProcessTraceTurn = !isUser ? normalizeProcessTraceTurnContainer(
+                  message.process_trace_turn
+                  || message.process_trace_turn_container
+                  || message.trace_turn
+                  || message.turnTrace
+                  || ((message.traceItems || message.process_trace_items) ? {
+                    turn_trace_kind: 'process_trace_turn_container',
+                    turn_trace_id: `swarm-backend-turn-${message.id || idx}`,
+                    title: 'Pensado',
+                    status: message.status || 'completed',
+                    message_id: String(message.id || idx),
+                    output_message_id: String(message.id || idx),
+                    items: message.traceItems || message.process_trace_items,
+                  } : null),
+                ) : null;
 
                 return (
                   <Box
@@ -2331,30 +2299,12 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         Swarm
                       </Typography>
                     )}
-                    {messageTraceItems.length > 0 && (
+                    {backendProcessTraceTurn && (
                       <Box sx={{ mb: 1 }}>
                         <ProcessTraceTurnDropdown
-                          container={{
-                            turn_trace_kind: 'process_trace_turn_container',
-                            turn_trace_version: 'openswarm.process_trace_turn_container.v1',
-                            turn_trace_id: `swarm-message-turn-${message.id || idx}`,
-                            title: 'Pensado',
-                            status: 'completed',
-                            message_id: String(message.id || idx),
-                            output_message_id: String(message.id || idx),
-                            duration_ms: isLatestCompletedAssistantTrace ? lastSwarmActionDurationMs : undefined,
-                            default_collapsed_after_finish: true,
-                            default_expanded_while_running: false,
-                            child_trace_ids: messageTraceItems.map((trace) => trace.trace_id).filter(Boolean),
-                            related_task_ids: activeSwarmId ? [activeSwarmId] : [],
-                            items: messageTraceItems,
-                            metadata: {
-                              source: 'swarm_chat_message',
-                              visible_message_index: idx,
-                            },
-                          }}
+                          container={backendProcessTraceTurn}
                           compact
-                          defaultExpanded={false}
+                          defaultExpanded={backendProcessTraceTurn?.status === 'running' || backendProcessTraceTurn?.status === 'failed' || backendProcessTraceTurn?.status === 'warning'}
                         />
                       </Box>
                     )}
