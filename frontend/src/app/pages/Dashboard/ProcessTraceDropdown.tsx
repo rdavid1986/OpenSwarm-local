@@ -11,6 +11,19 @@ import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import PauseCircleOutlineIcon from '@mui/icons-material/PauseCircleOutline';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
+import MemoryOutlinedIcon from '@mui/icons-material/MemoryOutlined';
+import ExtensionOutlinedIcon from '@mui/icons-material/ExtensionOutlined';
+import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
+import AdsClickOutlinedIcon from '@mui/icons-material/AdsClickOutlined';
+import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
+import TimelineOutlinedIcon from '@mui/icons-material/TimelineOutlined';
+import SpeedOutlinedIcon from '@mui/icons-material/SpeedOutlined';
+import CallSplitOutlinedIcon from '@mui/icons-material/CallSplitOutlined';
+import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined';
+import LanguageIcon from '@mui/icons-material/Language';
+import SettingsSuggestOutlinedIcon from '@mui/icons-material/SettingsSuggestOutlined';
+import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
 
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 
@@ -128,6 +141,58 @@ function StatusIcon({ status, color }: { status: ProcessTraceStatus; color: stri
   return <RadioButtonUncheckedIcon sx={sx} />;
 }
 
+function normalizeIconKey(value?: string): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, '-');
+}
+
+function SubsystemIcon({
+  iconId,
+  subsystem,
+  label,
+  color,
+}: {
+  iconId?: string;
+  subsystem?: string;
+  label: string;
+  color: string;
+}) {
+  const sx = { fontSize: 14, color };
+  const iconKey = normalizeIconKey(iconId || subsystem);
+
+  if (iconKey === 'swarm-core' || iconKey === 'swarmcore') return <AccountTreeOutlinedIcon sx={sx} />;
+  if (iconKey === 'memory-core' || iconKey === 'memorycore') return <MemoryOutlinedIcon sx={sx} />;
+  if (iconKey === 'skill-core' || iconKey === 'skillcore') return <ExtensionOutlinedIcon sx={sx} />;
+  if (iconKey === 'mode-core' || iconKey === 'modecore') return <TuneOutlinedIcon sx={sx} />;
+  if (iconKey === 'action-core' || iconKey === 'actioncore') return <AdsClickOutlinedIcon sx={sx} />;
+  if (iconKey === 'evidence-core' || iconKey === 'evidencecore') return <FactCheckOutlinedIcon sx={sx} />;
+  if (iconKey === 'trace-core' || iconKey === 'tracecore') return <TimelineOutlinedIcon sx={sx} />;
+  if (iconKey === 'metric-core' || iconKey === 'metriccore') return <SpeedOutlinedIcon sx={sx} />;
+  if (iconKey === 'handoff-core' || iconKey === 'handoffcore') return <CallSplitOutlinedIcon sx={sx} />;
+  if (iconKey === 'review-core' || iconKey === 'reviewcore') return <VerifiedOutlinedIcon sx={sx} />;
+  if (iconKey === 'browser-core' || iconKey === 'browsercore') return <LanguageIcon sx={sx} />;
+  if (iconKey === 'config-core' || iconKey === 'configcore') return <SettingsSuggestOutlinedIcon sx={sx} />;
+  if (iconKey === 'model-core' || iconKey === 'modelcore') return <SmartToyOutlinedIcon sx={sx} />;
+
+  return (
+    <Typography
+      component="span"
+      sx={{
+        color,
+        fontFamily: 'inherit',
+        fontSize: '0.58rem',
+        fontWeight: 800,
+        letterSpacing: '-0.03em',
+        lineHeight: 1,
+      }}
+    >
+      {label}
+    </Typography>
+  );
+}
+
 export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
   item,
   defaultExpanded = false,
@@ -140,6 +205,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
   const status = normalizeStatus(item.status);
   const durationLabel = formatDurationMs(item.duration_ms);
   const subsystem = item.subsystem || 'TraceCore';
+  const iconId = item.icon_id || subsystem;
   const iconLabel = SUBSYSTEM_INITIALS[subsystem] || subsystem.slice(0, 2).toUpperCase() || 'TR';
   const title = item.title || item.kind || 'Process trace';
   const summary = item.summary || 'No process summary recorded.';
@@ -207,13 +273,9 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
               bgcolor: `${statusColor}18`,
               border: `1px solid ${statusColor}45`,
               color: statusColor,
-              fontFamily: c.font.mono,
-              fontSize: '0.62rem',
-              fontWeight: 800,
-              letterSpacing: '-0.03em',
             }}
           >
-            {iconLabel}
+            <SubsystemIcon iconId={iconId} subsystem={subsystem} label={iconLabel} color={statusColor} />
           </Box>
         </Tooltip>
 
