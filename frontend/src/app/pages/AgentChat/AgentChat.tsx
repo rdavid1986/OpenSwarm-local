@@ -50,7 +50,7 @@ import { ContextPath } from '@/app/components/DirectoryBrowser';
 import DiffViewer from './DiffViewer';
 import { setGlowingBrowserCards, fadeGlowingBrowserCards, clearGlowingBrowserCards } from '@/shared/state/dashboardLayoutSlice';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
-import ProcessTraceDropdown from '../Dashboard/ProcessTraceDropdown';
+import { ProcessTraceTurnDropdown } from '../Dashboard/ProcessTraceDropdown';
 
 const CONTEXT_WINDOWS: Record<string, number> = {
   sonnet: 200_000,
@@ -1172,15 +1172,16 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                 return (
                   <React.Fragment key={item.id}>
                     <ToolCallBubble call={item.call} result={item.result} isPending={isPending} sessionId={session.id} />
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.65, mt: 0.65, mb: 0.75 }}>
-                      <ProcessTraceDropdown
-                        compact
+                    <Box sx={{ mt: 0.65, mb: 0.75 }}>
+                      <ProcessTraceTurnDropdown
+                        title={isPending ? 'Ejecutando' : 'Ejecutado'}
+                        status={isPending ? 'running' : 'completed'}
                         defaultExpanded={isPending}
-                        item={{
+                        items={[{
                           trace_id: `agent-tool-trace-${item.id}`,
                           kind: 'tool',
-                          subsystem: 'ActionCore',
-                          icon_id: 'action-core',
+                          subsystem: 'ToolCore',
+                          icon_id: 'tool-core',
                           title: isPending ? 'Tool action live' : 'Tool action',
                           summary: isPending ? `Running ${toolName}.` : `Tool ${toolName} completed or returned a result.`,
                           status: isPending ? 'running' : 'completed',
@@ -1195,7 +1196,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                             result_available: item.result !== null,
                             branch_id: (item.call as any)?.branch_id || null,
                           },
-                        }}
+                        }]}
                       />
                     </Box>
                     {compactionChip}
@@ -1213,22 +1214,16 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
 
               return (
                 <Box key={msg.id} sx={{ '&:hover .msg-actions': { opacity: 1 } }}>
-                  <MessageBubble
-                    message={msg}
-                    editing={isEditing}
-                    onSaveEdit={handleSaveEdit}
-                    onCancelEdit={handleCancelEdit}
-                    animateText={msg.role === 'assistant' && msg.id === latestAssistantMessageId}
-                  />
                   {msg.role === 'assistant' && (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.65, mt: 0.65, mb: 0.75 }}>
-                      <ProcessTraceDropdown
-                        compact
-                        item={{
+                    <Box sx={{ mb: 0.75 }}>
+                      <ProcessTraceTurnDropdown
+                        title="Pensado"
+                        status="completed"
+                        items={[{
                           trace_id: `agent-message-trace-${msg.id}`,
                           kind: 'message',
-                          subsystem: 'TraceCore',
-                          icon_id: 'trace-core',
+                          subsystem: 'ReasoningCore',
+                          icon_id: 'reasoning-core',
                           title: 'Agent response action',
                           summary: rawText.length > 180 ? `${rawText.slice(0, 180).trimEnd()}…` : rawText || 'Agent response recorded.',
                           status: 'completed',
@@ -1243,10 +1238,17 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                             latest_assistant_message: msg.id === latestAssistantMessageId,
                             preview: rawText.length > 240 ? `${rawText.slice(0, 240).trimEnd()}…` : rawText,
                           },
-                        }}
+                        }]}
                       />
                     </Box>
                   )}
+                  <MessageBubble
+                    message={msg}
+                    editing={isEditing}
+                    onSaveEdit={handleSaveEdit}
+                    onCancelEdit={handleCancelEdit}
+                    animateText={msg.role === 'assistant' && msg.id === latestAssistantMessageId}
+                  />
                   {!isEditing && (msg.role === 'user' || (msg.role === 'assistant' && lastAssistantIdsInTurn.has(msg.id))) && (
                     <MessageActionBar
                       role={msg.role as 'user' | 'assistant'}
@@ -1315,11 +1317,12 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                   label={session.turn_label?.label}
                   seedKey={`${session.id}:${session.messages?.length ?? 0}`}
                 />
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.65, mt: -0.15, mb: 0.75 }}>
-                  <ProcessTraceDropdown
-                    compact
+                <Box sx={{ mt: -0.15, mb: 0.75 }}>
+                  <ProcessTraceTurnDropdown
+                    title="Pensando"
+                    status="running"
                     defaultExpanded
-                    item={{
+                    items={[{
                       trace_id: `agent-live-thinking-${session.id}`,
                       kind: 'thinking',
                       subsystem: 'ModelCore',
@@ -1338,7 +1341,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                         queue_length: queueLength,
                         active_branch_id: session.active_branch_id || null,
                       },
-                    }}
+                    }]}
                   />
                 </Box>
               </>

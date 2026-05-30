@@ -40,7 +40,7 @@ import SwarmPromptInput from './SwarmPromptInput';
 import { DEFAULT_SWARM_MODE, getSwarmModeOption } from './SwarmModePicker';
 import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
 import { API_BASE } from '@/shared/config';
-import ProcessTraceDropdown, { ProcessTraceItem } from './ProcessTraceDropdown';
+import ProcessTraceDropdown, { ProcessTraceItem, ProcessTraceTurnDropdown } from './ProcessTraceDropdown';
 
 type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 type ImplementationVisualState =
@@ -2335,6 +2335,18 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         Swarm
                       </Typography>
                     )}
+                    {messageTraceItems.length > 0 && (
+                      <Box sx={{ mb: 1 }}>
+                        <ProcessTraceTurnDropdown
+                          title={isLiveMessageTrace ? 'Pensando' : 'Pensado'}
+                          status={isLiveMessageTrace ? 'running' : 'completed'}
+                          duration_ms={isLiveMessageTrace ? swarmActionElapsedMs : (isLatestChatMessage ? lastSwarmActionDurationMs : undefined)}
+                          items={messageTraceItems}
+                          compact
+                          defaultExpanded={isLiveMessageTrace}
+                        />
+                      </Box>
+                    )}
                     <Typography
                       sx={{
                         fontSize: '0.88rem',
@@ -2347,18 +2359,6 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                     >
                       {isLatestChatMessage ? renderAnimatedText(body) : body}
                     </Typography>
-                    {messageTraceItems.length > 0 && (
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.65, mt: 1 }}>
-                        {messageTraceItems.map((item) => (
-                          <ProcessTraceDropdown
-                            key={item.trace_id || `${item.kind}-${item.title}`}
-                            item={item}
-                            compact
-                            defaultExpanded={item.status === 'running' || item.status === 'blocked'}
-                          />
-                        ))}
-                      </Box>
-                    )}
                     {shouldShowIntakeTrace && (
                       <Box
                         sx={{

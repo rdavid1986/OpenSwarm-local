@@ -24,6 +24,13 @@ import VerifiedOutlinedIcon from '@mui/icons-material/VerifiedOutlined';
 import LanguageIcon from '@mui/icons-material/Language';
 import SettingsSuggestOutlinedIcon from '@mui/icons-material/SettingsSuggestOutlined';
 import SmartToyOutlinedIcon from '@mui/icons-material/SmartToyOutlined';
+import PsychologyOutlinedIcon from '@mui/icons-material/PsychologyOutlined';
+import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
+import InsertDriveFileOutlinedIcon from '@mui/icons-material/InsertDriveFileOutlined';
+import LayersOutlinedIcon from '@mui/icons-material/LayersOutlined';
+import HubOutlinedIcon from '@mui/icons-material/HubOutlined';
+import RuleOutlinedIcon from '@mui/icons-material/RuleOutlined';
+import OutputOutlinedIcon from '@mui/icons-material/OutputOutlined';
 
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 
@@ -85,6 +92,10 @@ const STATUS_LABELS: Record<string, string> = {
 
 const SUBSYSTEM_INITIALS: Record<string, string> = {
   SwarmCore: 'SW',
+  ReasoningCore: 'RS',
+  ToolCore: 'TL',
+  FileCore: 'FL',
+  ContextCore: 'CX',
   MemoryCore: 'ME',
   SkillCore: 'SK',
   ModeCore: 'MO',
@@ -93,6 +104,9 @@ const SUBSYSTEM_INITIALS: Record<string, string> = {
   TraceCore: 'TR',
   MetricCore: 'MT',
   HandoffCore: 'HF',
+  MiniAgentCore: 'MA',
+  ValidationCore: 'VA',
+  OutputCore: 'OU',
   ReviewCore: 'RV',
   BrowserCore: 'BR',
   ConfigCore: 'CF',
@@ -253,6 +267,10 @@ function SubsystemIcon({
   const iconKey = normalizeIconKey(iconId || subsystem);
 
   if (iconKey === 'swarm-core' || iconKey === 'swarmcore') return <AccountTreeOutlinedIcon sx={sx} />;
+  if (iconKey === 'reasoning-core' || iconKey === 'reasoningcore') return <PsychologyOutlinedIcon sx={sx} />;
+  if (iconKey === 'tool-core' || iconKey === 'toolcore') return <BuildOutlinedIcon sx={sx} />;
+  if (iconKey === 'file-core' || iconKey === 'filecore') return <InsertDriveFileOutlinedIcon sx={sx} />;
+  if (iconKey === 'context-core' || iconKey === 'contextcore') return <LayersOutlinedIcon sx={sx} />;
   if (iconKey === 'memory-core' || iconKey === 'memorycore') return <MemoryOutlinedIcon sx={sx} />;
   if (iconKey === 'skill-core' || iconKey === 'skillcore') return <ExtensionOutlinedIcon sx={sx} />;
   if (iconKey === 'mode-core' || iconKey === 'modecore') return <TuneOutlinedIcon sx={sx} />;
@@ -261,6 +279,9 @@ function SubsystemIcon({
   if (iconKey === 'trace-core' || iconKey === 'tracecore') return <TimelineOutlinedIcon sx={sx} />;
   if (iconKey === 'metric-core' || iconKey === 'metriccore') return <SpeedOutlinedIcon sx={sx} />;
   if (iconKey === 'handoff-core' || iconKey === 'handoffcore') return <CallSplitOutlinedIcon sx={sx} />;
+  if (iconKey === 'miniagent-core' || iconKey === 'miniagentcore') return <HubOutlinedIcon sx={sx} />;
+  if (iconKey === 'validation-core' || iconKey === 'validationcore') return <RuleOutlinedIcon sx={sx} />;
+  if (iconKey === 'output-core' || iconKey === 'outputcore') return <OutputOutlinedIcon sx={sx} />;
   if (iconKey === 'review-core' || iconKey === 'reviewcore') return <VerifiedOutlinedIcon sx={sx} />;
   if (iconKey === 'browser-core' || iconKey === 'browsercore') return <LanguageIcon sx={sx} />;
   if (iconKey === 'config-core' || iconKey === 'configcore') return <SettingsSuggestOutlinedIcon sx={sx} />;
@@ -568,6 +589,143 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
               </Collapse>
             </Box>
           )}
+        </Box>
+      </Collapse>
+    </Box>
+  );
+};
+
+export type ProcessTraceTurnDropdownProps = {
+  title: string;
+  status?: ProcessTraceStatus | string;
+  duration_ms?: number | null;
+  items: ProcessTraceItem[];
+  defaultExpanded?: boolean;
+  compact?: boolean;
+};
+
+export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> = ({
+  title,
+  status = 'completed',
+  duration_ms = null,
+  items,
+  defaultExpanded,
+  compact = true,
+}) => {
+  const c = useClaudeTokens();
+  const normalizedStatus = normalizeStatus(status);
+  const durationLabel = formatDurationMs(duration_ms);
+  const [expanded, setExpanded] = useState(defaultExpanded ?? normalizedStatus === 'running');
+
+  const visibleItems = useMemo(
+    () => items.filter((item) => !item.internal_only && item.visible_to_user !== false),
+    [items],
+  );
+
+  const statusColor = useMemo(() => {
+    if (normalizedStatus === 'completed') return c.status.success;
+    if (normalizedStatus === 'failed') return c.status.error;
+    if (normalizedStatus === 'blocked' || normalizedStatus === 'warning') return c.status.warning;
+    if (normalizedStatus === 'running') return c.accent.primary;
+    return c.text.tertiary;
+  }, [c, normalizedStatus]);
+
+  if (visibleItems.length === 0) return null;
+
+  const headerTitle = durationLabel
+    ? `${redactTraceText(title)} durante ${durationLabel}`
+    : redactTraceText(title);
+
+  return (
+    <Box
+      sx={{
+        bgcolor: c.bg.surface,
+        border: `1px solid ${normalizedStatus === 'running' ? `${c.accent.primary}80` : c.border.subtle}`,
+        borderRadius: `${c.radius.lg}px`,
+        overflow: 'hidden',
+        boxShadow: normalizedStatus === 'running' ? `0 0 0 1px ${c.accent.primary}20, 0 0 18px ${c.accent.primary}12` : c.shadow.sm,
+      }}
+    >
+      <Box
+        onClick={() => setExpanded((value) => !value)}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.75,
+          px: compact ? 1 : 1.25,
+          py: compact ? 0.7 : 0.9,
+          cursor: 'pointer',
+          userSelect: 'none',
+          '&:hover': { bgcolor: c.bg.secondary },
+        }}
+      >
+        <Tooltip title="Turn work trace" arrow>
+          <Box
+            sx={{
+              width: 24,
+              height: 24,
+              borderRadius: '50%',
+              display: 'grid',
+              placeItems: 'center',
+              flexShrink: 0,
+              bgcolor: `${statusColor}18`,
+              border: `1px solid ${statusColor}45`,
+            }}
+          >
+            <TimelineOutlinedIcon sx={{ fontSize: 14, color: statusColor }} />
+          </Box>
+        </Tooltip>
+
+        <StatusIcon status={normalizedStatus} color={statusColor} />
+
+        <Typography
+          noWrap
+          sx={{
+            color: c.text.primary,
+            fontSize: compact ? '0.78rem' : '0.84rem',
+            fontWeight: 700,
+            minWidth: 0,
+            flex: 1,
+          }}
+        >
+          {headerTitle}
+        </Typography>
+
+        <Typography
+          noWrap
+          sx={{
+            color: c.text.tertiary,
+            fontSize: '0.66rem',
+            fontWeight: 650,
+            flexShrink: 0,
+          }}
+        >
+          {visibleItems.length} paso{visibleItems.length === 1 ? '' : 's'}
+        </Typography>
+
+        <IconButton size="small" sx={{ color: c.text.tertiary, p: 0.2, flexShrink: 0 }}>
+          <ExpandMoreIcon
+            sx={{
+              fontSize: 18,
+              transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)',
+              transition: 'transform 0.2s ease',
+            }}
+          />
+        </IconButton>
+      </Box>
+
+      <Collapse in={expanded} timeout={180}>
+        <Box sx={{ borderTop: `1px solid ${c.border.subtle}`, p: compact ? 0.75 : 1, bgcolor: c.bg.elevated }}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.65 }}>
+            {visibleItems.map((item) => (
+              <ProcessTraceDropdown
+                key={item.trace_id || `${item.kind}-${item.title}`}
+                item={item}
+                compact
+                defaultExpanded={item.status === 'running' || item.status === 'blocked'}
+              />
+            ))}
+          </Box>
         </Box>
       </Collapse>
     </Box>
