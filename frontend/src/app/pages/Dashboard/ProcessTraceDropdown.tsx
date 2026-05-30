@@ -31,6 +31,10 @@ import LayersOutlinedIcon from '@mui/icons-material/LayersOutlined';
 import HubOutlinedIcon from '@mui/icons-material/HubOutlined';
 import RuleOutlinedIcon from '@mui/icons-material/RuleOutlined';
 import OutputOutlinedIcon from '@mui/icons-material/OutputOutlined';
+import ContentCopyOutlinedIcon from '@mui/icons-material/ContentCopyOutlined';
+import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined';
+import AttachFileOutlinedIcon from '@mui/icons-material/AttachFileOutlined';
+import DifferenceOutlinedIcon from '@mui/icons-material/DifferenceOutlined';
 
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import { buildCardVisualTokens } from './cardVisualTokens';
@@ -375,6 +379,171 @@ export function normalizeProcessTraceTurnContainer(value: unknown): ProcessTrace
   return null;
 }
 
+function formatTraceTimestamp(value: unknown): string | null {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return redactTraceText(text);
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function copySafeText(value: unknown) {
+  const text = traceText(value, '').slice(0, 4000);
+  if (!text || typeof navigator === 'undefined' || !navigator.clipboard) return;
+  void navigator.clipboard.writeText(text);
+}
+
+function TraceChip({ label }: { label: string }) {
+  const c = useClaudeTokens();
+  return (
+    <Typography
+      component="span"
+      sx={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        maxWidth: 180,
+        px: 0.55,
+        py: 0.18,
+        borderRadius: 999,
+        bgcolor: `${c.text.primary}0A`,
+        border: `1px solid ${c.border.subtle}`,
+        color: c.text.tertiary,
+        fontSize: '0.62rem',
+        fontWeight: 650,
+        lineHeight: 1.25,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {redactTraceText(label)}
+    </Typography>
+  );
+}
+
+function FileGlyph({ type }: { type: 'file' | 'folder' | 'diff' | 'output' | 'attachment' | 'workspace' }) {
+  const c = useClaudeTokens();
+  const sx = { fontSize: 13, color: c.text.tertiary, flexShrink: 0 };
+  if (type === 'folder' || type === 'workspace') return <FolderOutlinedIcon sx={sx} />;
+  if (type === 'diff') return <DifferenceOutlinedIcon sx={sx} />;
+  if (type === 'output') return <OutputOutlinedIcon sx={sx} />;
+  if (type === 'attachment') return <AttachFileOutlinedIcon sx={sx} />;
+  return <InsertDriveFileOutlinedIcon sx={sx} />;
+}
+
+function TracePathList({ title, value, type = 'file' }: { title: string; value: unknown; type?: 'file' | 'folder' | 'diff' | 'output' | 'attachment' | 'workspace' }) {
+  const c = useClaudeTokens();
+  const items = (Array.isArray(value) ? value : (value ? [value] : []))
+    .map((item) => traceText(item, ''))
+    .filter(Boolean);
+  if (items.length === 0) return null;
+  const visible = items.slice(0, 6);
+  const extra = items.length - visible.length;
+  return (
+    <Box sx={{ display: 'grid', gap: 0.35 }}>
+      <Typography sx={{ color: c.text.ghost, fontSize: '0.66rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+        {title}
+      </Typography>
+      {visible.map((path, idx) => (
+        <Box key={`${title}-${idx}-${path}`} sx={{ display: 'flex', alignItems: 'center', gap: 0.55, minWidth: 0 }}>
+          <FileGlyph type={type} />
+          <Typography
+            noWrap
+            title={path}
+            sx={{ color: c.text.tertiary, fontSize: '0.68rem', fontFamily: c.font.mono, minWidth: 0 }}
+          >
+            {path.length > 140 ? `${path.slice(0, 140).trimEnd()}…` : path}
+          </Typography>
+        </Box>
+      ))}
+      {extra > 0 && <Typography sx={{ color: c.text.ghost, fontSize: '0.64rem' }}>+{extra} more</Typography>}
+    </Box>
+  );
+}
+
+function SummaryList({ title, value }: { title: string; value: unknown }) {
+  const c = useClaudeTokens();
+  const items = (Array.isArray(value) ? value : (value ? [value] : []))
+    .map((item) => traceText(item, ''))
+    .filter(Boolean)
+    .slice(0, 6);
+  if (items.length === 0) return null;
+  return (
+    <Box sx={{ display: 'grid', gap: 0.35 }}>
+      <Typography sx={{ color: c.text.ghost, fontSize: '0.66rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+        {title}
+      </Typography>
+      {items.map((item, idx) => (
+        <Typography key={`${title}-${idx}`} sx={{ color: c.text.tertiary, fontSize: '0.7rem', lineHeight: 1.4, overflowWrap: 'anywhere' }}>
+          • {item.length > 220 ? `${item.slice(0, 220).trimEnd()}…` : item}
+        </Typography>
+      ))}
+    </Box>
+  );
+}
+
+function RichTraceSections({ item }: { item: ProcessTraceItem }) {
+  const c = useClaudeTokens();
+  const details = item.details || {};
+  const subsystem = String(item.subsystem || '').toLowerCase();
+  const kind = String(item.kind || '').toLowerCase();
+  const isFileOutput = ['filecore', 'outputcore'].includes(subsystem) || ['file', 'diff', 'workspace', 'output', 'artifact'].includes(kind);
+  const summaryFields = [
+    ['Session summary', getDetailValue(details, 'session_summary')],
+    ['Key learnings', getDetailValue(details, 'key_learnings', 'learnings')],
+    ['Decisions', getDetailValue(details, 'decisions')],
+    ['Blockers', getDetailValue(details, 'blockers')],
+    ['Next steps', getDetailValue(details, 'next_steps')],
+    ['Validation', getDetailValue(details, 'validation_summary', 'validation')],
+  ] as Array<[string, unknown]>;
+  const hasSummary = summaryFields.some(([, value]) => value !== undefined && value !== null && value !== '');
+  if (!isFileOutput && !hasSummary) return null;
+
+  return (
+    <Box sx={{ display: 'grid', gap: 0.85, mb: 1 }}>
+      {isFileOutput && (
+        <Box
+          sx={{
+            display: 'grid',
+            gap: 0.75,
+            p: 0.75,
+            borderRadius: 1,
+            border: `1px solid ${c.border.subtle}`,
+            bgcolor: `${c.bg.elevated}66`,
+          }}
+        >
+          <TracePathList title="Read" value={getDetailValue(details, 'read_files')} />
+          <TracePathList title="Created" value={getDetailValue(details, 'created_files')} />
+          <TracePathList title="Modified" value={getDetailValue(details, 'modified_files')} type="diff" />
+          <TracePathList title="Deleted" value={getDetailValue(details, 'deleted_files')} />
+          <TracePathList title="Affected" value={getDetailValue(details, 'affected_paths', 'affected_files')} type="diff" />
+          <TracePathList title="Attachments" value={getDetailValue(details, 'attachments', 'attachment_refs') || item.artifact_refs} type="attachment" />
+          <TracePathList title="Workspace" value={getDetailValue(details, 'workspace_path')} type="workspace" />
+          {getDetailValue(details, 'diff_summary') && (
+            <Typography sx={{ color: c.text.secondary, fontSize: '0.72rem', lineHeight: 1.45, overflowWrap: 'anywhere' }}>
+              {traceText(getDetailValue(details, 'diff_summary'))}
+            </Typography>
+          )}
+        </Box>
+      )}
+      {hasSummary && (
+        <Box
+          sx={{
+            display: 'grid',
+            gap: 0.75,
+            p: 0.75,
+            borderRadius: 1,
+            border: `1px solid ${c.border.subtle}`,
+            bgcolor: `${c.bg.elevated}66`,
+          }}
+        >
+          {summaryFields.map(([label, value]) => <SummaryList key={label} title={label} value={value} />)}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
 function StatusIcon({ status, color }: { status: ProcessTraceStatus; color: string }) {
   const sx = { fontSize: 19, color, flexShrink: 0 };
   if (status === 'completed') return null;
@@ -513,6 +682,38 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
     return rows;
   }, [item, durationLabel, evidenceCount, artifactCount, isDebugJsonTrace, hasDebugDetails, status]);
 
+  const metadataChips = useMemo(() => {
+    const details = item.details || {};
+    const metadata = item.metadata || {};
+    const raw = [
+      ['time', formatTraceTimestamp(item.created_at || item.started_at)],
+      ['status', STATUS_LABELS[status] || status],
+      ['model', getDetailValue(details, 'model') || metadata.model],
+      ['mode', getDetailValue(details, 'mode') || metadata.mode],
+      ['provider', getDetailValue(details, 'provider') || metadata.provider],
+      ['route', getDetailValue(details, 'route', 'flow') || metadata.route || metadata.flow],
+      ['output', getDetailValue(details, 'created_output', 'output_id') || metadata.created_output],
+    ] as Array<[string, unknown]>;
+    const counts = [
+      ['tools', getDetailValue(details, 'used_tools', 'tool_count')],
+      ['actions', getDetailValue(details, 'used_actions', 'action_count')],
+      ['skills', getDetailValue(details, 'used_skills', 'skill_count')],
+    ] as Array<[string, unknown]>;
+    counts.forEach(([label, value]) => {
+      if (Array.isArray(value) && value.length > 0) raw.push([label, value.length]);
+      else if (typeof value === 'number' && value > 0) raw.push([label, value]);
+    });
+    return raw
+      .filter(([, value]) => value !== undefined && value !== null && value !== '')
+      .map(([label, value]) => `${label}: ${traceText(value)}`)
+      .slice(0, 7);
+  }, [item, status]);
+
+  const copyDetailsText = useMemo(() => {
+    const detailText = detailRows.map(([label, value]) => `${label}: ${traceText(value, '')}`).join('\n');
+    return [title, summary, detailText].filter(Boolean).join('\n');
+  }, [detailRows, summary, title]);
+
   if (shouldHideTraceItem) {
     return null;
   }
@@ -602,6 +803,11 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
               {summary}
             </Typography>
           )}
+          {!compact && metadataChips.length > 0 && (
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.35, mt: 0.45 }}>
+              {metadataChips.map((chip) => <TraceChip key={chip} label={chip} />)}
+            </Box>
+          )}
         </Box>
 
         {durationLabel && (
@@ -617,7 +823,24 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
           </Typography>
         )}
 
-        <IconButton size="small" sx={{ color: c.text.tertiary, p: 0.2, flexShrink: 0 }}>
+        {evidenceCount > 0 && (
+          <TraceChip label={`${evidenceCount} evidence`} />
+        )}
+
+        <Tooltip title="Copy safe summary" arrow>
+          <IconButton
+            size="small"
+            onClick={(event) => {
+              event.stopPropagation();
+              copySafeText(`${title}\n${summary}`);
+            }}
+            sx={{ color: c.text.tertiary, p: 0.2, flexShrink: 0 }}
+          >
+            <ContentCopyOutlinedIcon sx={{ fontSize: 12 }} />
+          </IconButton>
+        </Tooltip>
+
+        <IconButton size="small" sx={{ color: c.text.tertiary, p: 0.2, flexShrink: 0 }} aria-label={expanded ? 'Collapse trace' : 'Expand trace'}>
           <ExpandMoreIcon
             sx={{
               fontSize: 11.2,
@@ -651,6 +874,8 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
               {summary}
             </Typography>
           )}
+
+          {!isDebugJsonTrace && <RichTraceSections item={item} />}
 
           {isDebugJsonTrace && hasDebugDetails && (
             <Typography
@@ -706,6 +931,36 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
                   </Typography>
                 </Box>
               ))}
+            </Box>
+          )}
+
+          {!isDebugJsonTrace && (detailRows.length > 0 || summary) && (
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 0.85 }}>
+              <Box
+                component="button"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  copySafeText(copyDetailsText);
+                }}
+                sx={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 0.4,
+                  border: 'none',
+                  bgcolor: 'transparent',
+                  color: c.text.ghost,
+                  cursor: 'pointer',
+                  fontFamily: c.font.sans,
+                  fontSize: '0.64rem',
+                  fontWeight: 700,
+                  p: 0.2,
+                  '&:hover': { color: c.text.tertiary },
+                }}
+              >
+                <ContentCopyOutlinedIcon sx={{ fontSize: 11 }} />
+                Copy details
+              </Box>
             </Box>
           )}
 
@@ -815,6 +1070,7 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
     ?? container?.default_expanded_while_running
     ?? (normalizedStatus === 'running' || normalizedStatus === 'failed' || normalizedStatus === 'warning'),
   );
+  const [childExpandedOverride, setChildExpandedOverride] = useState<boolean | null>(null);
 
   const visibleItems = useMemo(
     () => effectiveItems.filter((item) => !item.internal_only && item.visible_to_user !== false),
@@ -834,6 +1090,20 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
   const headerTitle = durationLabel
     ? `${redactTraceText(effectiveTitle)} durante ${durationLabel}`
     : redactTraceText(effectiveTitle);
+  const turnMetaChips = [
+    formatTraceTimestamp(container?.created_at || container?.started_at),
+    STATUS_LABELS[normalizedStatus] || normalizedStatus,
+    durationLabel,
+    container?.metadata?.model ? `model: ${traceText(container.metadata.model)}` : '',
+    container?.metadata?.mode ? `mode: ${traceText(container.metadata.mode)}` : '',
+    container?.metadata?.provider ? `provider: ${traceText(container.metadata.provider)}` : '',
+  ].filter(Boolean).slice(0, 5) as string[];
+  const turnCopyText = [
+    headerTitle,
+    `Status: ${STATUS_LABELS[normalizedStatus] || normalizedStatus}`,
+    durationLabel ? `Duration: ${durationLabel}` : '',
+    ...visibleItems.map((item) => `- ${traceText(item.title || item.kind, 'Trace item')}: ${traceText(item.summary, '')}`),
+  ].filter(Boolean).join('\n');
 
   return (
     <Box
@@ -904,7 +1174,22 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
           {visibleItems.length} paso{visibleItems.length === 1 ? '' : 's'}
         </Typography>
 
-        <IconButton size="small" sx={{ color: c.text.tertiary, p: 0.2, flexShrink: 0 }}>
+        {!compact && turnMetaChips.map((chip) => <TraceChip key={chip} label={chip} />)}
+
+        <Tooltip title="Copy safe turn summary" arrow>
+          <IconButton
+            size="small"
+            onClick={(event) => {
+              event.stopPropagation();
+              copySafeText(turnCopyText);
+            }}
+            sx={{ color: c.text.tertiary, p: 0.2, flexShrink: 0 }}
+          >
+            <ContentCopyOutlinedIcon sx={{ fontSize: 12 }} />
+          </IconButton>
+        </Tooltip>
+
+        <IconButton size="small" sx={{ color: c.text.tertiary, p: 0.2, flexShrink: 0 }} aria-label={expanded ? 'Collapse turn trace' : 'Expand turn trace'}>
           <ExpandMoreIcon
             sx={{
               fontSize: 11.2,
@@ -917,13 +1202,44 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
 
       <Collapse in={expanded} timeout={180}>
         <Box sx={{ borderTop: bare ? 'none' : `1px solid ${cardTokens.trace.border}`, p: compact ? cardTokens.trace.compactPanelPadding : cardTokens.trace.panelPadding, bgcolor: bare ? 'transparent' : cardTokens.trace.background }}>
+          {visibleItems.length > 1 && (
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 0.8, mb: 0.65 }}>
+              {[
+                ['Expand all', true],
+                ['Collapse all', false],
+              ].map(([label, value]) => (
+                <Box
+                  key={String(label)}
+                  component="button"
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setChildExpandedOverride(Boolean(value));
+                  }}
+                  sx={{
+                    border: 'none',
+                    bgcolor: 'transparent',
+                    color: c.text.ghost,
+                    cursor: 'pointer',
+                    fontFamily: c.font.sans,
+                    fontSize: '0.64rem',
+                    fontWeight: 700,
+                    p: 0.1,
+                    '&:hover': { color: c.text.tertiary },
+                  }}
+                >
+                  {String(label)}
+                </Box>
+              ))}
+            </Box>
+          )}
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: cardTokens.trace.itemGap }}>
             {visibleItems.map((item) => (
               <ProcessTraceDropdown
-                key={item.trace_id || `${item.kind}-${item.title}`}
+                key={`${item.trace_id || `${item.kind}-${item.title}`}-${childExpandedOverride}`}
                 item={item}
                 compact
-                defaultExpanded={item.status === 'running' || item.status === 'blocked'}
+                defaultExpanded={childExpandedOverride ?? (item.status === 'running' || item.status === 'blocked' || item.status === 'failed' || item.status === 'warning')}
                 bare={bare}
               />
             ))}
