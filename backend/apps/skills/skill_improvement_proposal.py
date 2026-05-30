@@ -35,6 +35,41 @@ def _proposal_item(source: str, item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _compact_text(value: str, limit: int = 900) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) > limit:
+        return text[:limit].rstrip() + "..."
+    return text
+
+
+def _research_evidence_item(item: dict[str, Any], index: int) -> dict[str, Any]:
+    query = str(item.get("query") or "research query").strip()
+    backend = str(item.get("backend") or "unknown").strip()
+    urls = [str(url) for url in (item.get("urls") or []) if str(url).startswith(("http://", "https://"))]
+    result_summary = _compact_text(str(item.get("results") or ""))
+
+    proposed_lines = [
+        f"Use the approved research evidence for `{query}` as grounding before finalizing this skill.",
+        f"Backend: {backend}.",
+    ]
+    if urls:
+        proposed_lines.append("Source URLs:")
+        proposed_lines.extend(f"- {url}" for url in urls[:5])
+    if result_summary:
+        proposed_lines.extend(["", f"Evidence summary: {result_summary}"])
+
+    return {
+        "source": "research_evidence",
+        "code": "integrate_research_evidence",
+        "severity": "medium",
+        "title": f"Integrate approved research evidence #{index}",
+        "target_section": "Research grounding",
+        "rationale": "Approved web research evidence is available and should inform the candidate improvement diff without directly mutating or installing the skill.",
+        "proposed_change": "\n".join(proposed_lines).strip(),
+        "auto_apply_supported": False,
+    }
+
+
 def _section_block(item: dict[str, Any]) -> str:
     title = str(item.get("target_section") or item.get("title") or "Improvement").strip()
     proposed_change = str(item.get("proposed_change") or "").strip()
@@ -86,6 +121,7 @@ def build_skill_improvement_proposal_from_review(
     candidate_id: str | None = None,
     skill_name: str = "",
     current_content: str = "",
+    research_evidence: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-safe improvement proposal from an existing review."""
 
@@ -101,7 +137,12 @@ def build_skill_improvement_proposal_from_review(
             if isinstance(item, dict):
                 proposal_items.append(_proposal_item(source, item))
 
+    evidence_items = [item for item in (research_evidence or []) if isinstance(item, dict)]
+    for index, item in enumerate(evidence_items, start=1):
+        proposal_items.append(_research_evidence_item(item, index))
+
     requires_web_research = any(item["source"] == "research_gap" for item in proposal_items)
+    uses_research_evidence = bool(evidence_items)
     requires_user_approval = bool(proposal_items)
     proposed_content = _build_proposed_content(current_content, proposal_items)
     preview_diff = _build_preview_diff(current_content, proposed_content)
@@ -121,6 +162,8 @@ def build_skill_improvement_proposal_from_review(
         "item_count": len(proposal_items),
         "requires_user_approval": requires_user_approval,
         "requires_web_research": requires_web_research,
+        "uses_research_evidence": uses_research_evidence,
+        "research_evidence_count": len(evidence_items),
         "safe_to_auto_apply": False,
         "can_generate_diff": bool(preview_diff),
         "can_update_candidate": False,
@@ -137,6 +180,7 @@ def build_skill_improvement_proposal_from_review(
             "It does not install or approve the skill.",
             "It does not activate tools, MCP, or permissions.",
             "It does not browse the web.",
+            "It may reference previously approved research evidence if already attached to the candidate.",
             "The diff preview is not applied automatically.",
         ],
     }
@@ -149,6 +193,7 @@ def build_skill_improvement_proposal(spec: SkillSpec) -> dict[str, Any]:
         candidate_id=None,
         skill_name=spec.name,
         current_content=spec.content,
+        research_evidence=[],
     )
 
 
@@ -159,6 +204,7 @@ def build_skill_candidate_improvement_proposal(candidate: SkillSpecCandidate) ->
         candidate_id=candidate.candidate_id,
         skill_name=candidate.skill_spec.name,
         current_content=candidate.skill_spec.content,
+        research_evidence=list(getattr(candidate, "research_evidence", []) or []),
     )
 
 def apply_skill_candidate_improvement_proposal(

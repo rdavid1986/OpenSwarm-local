@@ -193,3 +193,58 @@ def test_improvement_proposal_endpoint_missing_candidate_returns_404(monkeypatch
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Skill candidate not found"
+
+
+def test_improvement_proposal_integrates_research_evidence_without_mutating_candidate():
+    candidate = _candidate("Build Claude API apps using current SDK documentation.")
+    candidate = candidate.model_copy(update={
+        "research_approved": True,
+        "research_evidence": [
+            {
+                "kind": "web_search_result",
+                "query": "Claude API official documentation",
+                "backend": "test",
+                "results": "[1] Claude API Docs\n    https://docs.anthropic.com/en/api/overview",
+                "urls": ["https://docs.anthropic.com/en/api/overview"],
+                "executed_at": "2026-05-29T00:00:00+00:00",
+            }
+        ],
+    })
+    before = deepcopy(candidate.model_dump(mode="json"))
+
+    proposal = build_skill_candidate_improvement_proposal(candidate)
+
+    assert proposal["uses_research_evidence"] is True
+    assert proposal["research_evidence_count"] == 1
+    assert "research_evidence" in {item["source"] for item in proposal["proposal_items"]}
+    assert "Research grounding" in proposal["proposed_content"]
+    assert "https://docs.anthropic.com/en/api/overview" in proposal["proposed_content"]
+    assert proposal["preview_diff"]
+    assert candidate.model_dump(mode="json") == before
+
+
+def test_apply_improvement_proposal_can_apply_research_grounded_diff_but_not_install():
+    candidate = _candidate("Build Claude API apps using current SDK documentation.")
+    candidate = candidate.model_copy(update={
+        "research_approved": True,
+        "install_approved": True,
+        "research_evidence": [
+            {
+                "kind": "web_search_result",
+                "query": "Claude API official documentation",
+                "backend": "test",
+                "results": "[1] Claude API Docs\n    https://docs.anthropic.com/en/api/overview",
+                "urls": ["https://docs.anthropic.com/en/api/overview"],
+                "executed_at": "2026-05-29T00:00:00+00:00",
+            }
+        ],
+    })
+
+    updated, proposal = apply_skill_candidate_improvement_proposal(candidate, approved=True)
+
+    assert proposal["uses_research_evidence"] is True
+    assert updated.skill_spec.content == proposal["proposed_content"]
+    assert "Research grounding" in updated.skill_spec.content
+    assert updated.install_approved is False
+    assert updated.research_approved is True
+    assert updated.research_evidence == candidate.research_evidence
