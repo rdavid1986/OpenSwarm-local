@@ -120,14 +120,91 @@ function normalizeStatus(status?: string): ProcessTraceStatus {
   return 'planned';
 }
 
+const REDACTED_TRACE_VALUE = '[redacted]';
+const MAX_TRACE_TEXT_LENGTH = 600;
+
+const SENSITIVE_TRACE_KEYS = new Set([
+  'api_key',
+  'apikey',
+  'authorization',
+  'bearer',
+  'chain_of_thought',
+  'content',
+  'credential',
+  'credentials',
+  'cot',
+  'full_prompt',
+  'full_response',
+  'hidden_reasoning',
+  'message',
+  'password',
+  'private_key',
+  'private_reasoning',
+  'prompt',
+  'raw_prompt',
+  'raw_response',
+  'response',
+  'secret',
+  'system_prompt',
+  'user_prompt',
+]);
+
+function normalizeTraceKey(value: string): string {
+  return String(value || '').trim().toLowerCase().replace(/[\s.-]+/g, '_');
+}
+
+function isSensitiveTraceKey(key: string): boolean {
+  const normalized = normalizeTraceKey(key);
+  return SENSITIVE_TRACE_KEYS.has(normalized)
+    || normalized.endsWith('_secret')
+    || normalized.endsWith('_password')
+    || normalized.endsWith('_api_key')
+    || normalized.endsWith('_private_key')
+    || normalized.endsWith('_access_token')
+    || normalized.endsWith('_refresh_token');
+}
+
+function redactTraceText(value: string): string {
+  const clean = String(value || '')
+    .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s,;]+/gi, `$1${REDACTED_TRACE_VALUE}`)
+    .replace(/((?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)\s*[:=]\s*)[^\s,;]+/gi, `$1${REDACTED_TRACE_VALUE}`)
+    .replace(/(chain[_ -]?of[_ -]?thought|private[_ -]?reasoning|hidden[_ -]?reasoning)\s*[:=]\s*[^\n]+/gi, `$1: ${REDACTED_TRACE_VALUE}`);
+
+  return clean.length > MAX_TRACE_TEXT_LENGTH
+    ? `${clean.slice(0, MAX_TRACE_TEXT_LENGTH).trimEnd()}…`
+    : clean;
+}
+
+function sanitizeTraceValue(value: unknown, depth = 0): unknown {
+  if (value == null) return value;
+  if (typeof value === 'string') return redactTraceText(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (depth >= 3) return '[object redacted]';
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map((item) => sanitizeTraceValue(item, depth + 1));
+  }
+
+  if (typeof value === 'object') {
+    const output: Record<string, unknown> = {};
+    Object.entries(value as Record<string, unknown>).forEach(([key, item]) => {
+      output[key] = isSensitiveTraceKey(key) ? REDACTED_TRACE_VALUE : sanitizeTraceValue(item, depth + 1);
+    });
+    return output;
+  }
+
+  return String(value);
+}
+
 function stringifyDetail(value: unknown): string {
-  if (value == null) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  const sanitized = sanitizeTraceValue(value);
+  if (sanitized == null) return '';
+  if (typeof sanitized === 'string') return sanitized;
+  if (typeof sanitized === 'number' || typeof sanitized === 'boolean') return String(sanitized);
   try {
-    return JSON.stringify(value, null, 2);
+    return JSON.stringify(sanitized, null, 2);
   } catch {
-    return String(value);
+    return REDACTED_TRACE_VALUE;
   }
 }
 
@@ -202,14 +279,16 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
   const c = useClaudeTokens();
   const [expanded, setExpanded] = useState(defaultExpanded);
 
+  const shouldHideTraceItem = item.internal_only || item.visible_to_user === false;
+
   const status = normalizeStatus(item.status);
   const durationLabel = formatDurationMs(item.duration_ms);
-  const subsystem = item.subsystem || 'TraceCore';
-  const iconId = item.icon_id || subsystem;
+  const subsystem = redactTraceText(item.subsystem || 'TraceCore');
+  const iconId = redactTraceText(item.icon_id || subsystem);
   const iconLabel = SUBSYSTEM_INITIALS[subsystem] || subsystem.slice(0, 2).toUpperCase() || 'TR';
-  const title = item.title || item.kind || 'Process trace';
-  const summary = item.summary || 'No process summary recorded.';
-  const badge = item.badge || STATUS_LABELS[status] || status;
+  const title = redactTraceText(item.title || item.kind || 'Process trace');
+  const summary = redactTraceText(item.summary || 'No process summary recorded.');
+  const badge = redactTraceText(item.badge || STATUS_LABELS[status] || status);
   const evidenceCount = Array.isArray(item.evidence_refs) ? item.evidence_refs.length : 0;
   const artifactCount = Array.isArray(item.artifact_refs) ? item.artifact_refs.length : 0;
 
@@ -223,19 +302,23 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
 
   const detailRows = useMemo(() => {
     const rows: Array<[string, unknown]> = [];
-    if (item.related_task_id) rows.push(['Task', item.related_task_id]);
-    if (item.related_agent_id) rows.push(['Agent', item.related_agent_id]);
-    if (item.related_miniagent_id) rows.push(['MiniAgent', item.related_miniagent_id]);
-    if (item.related_skill_id) rows.push(['Skill', item.related_skill_id]);
-    if (item.related_action_id) rows.push(['Action', item.related_action_id]);
+    if (item.related_task_id) rows.push(['Task', redactTraceText(item.related_task_id)]);
+    if (item.related_agent_id) rows.push(['Agent', redactTraceText(item.related_agent_id)]);
+    if (item.related_miniagent_id) rows.push(['MiniAgent', redactTraceText(item.related_miniagent_id)]);
+    if (item.related_skill_id) rows.push(['Skill', redactTraceText(item.related_skill_id)]);
+    if (item.related_action_id) rows.push(['Action', redactTraceText(item.related_action_id)]);
     if (item.started_at) rows.push(['Started', item.started_at]);
     if (item.finished_at) rows.push(['Finished', item.finished_at]);
     if (durationLabel) rows.push(['Duration', durationLabel]);
     if (evidenceCount > 0) rows.push(['Evidence refs', evidenceCount]);
     if (artifactCount > 0) rows.push(['Artifact refs', artifactCount]);
-    if (showRawDetails && item.details && Object.keys(item.details).length > 0) rows.push(['Details', item.details]);
+    if (showRawDetails && item.details && Object.keys(item.details).length > 0) rows.push(['Details', sanitizeTraceValue(item.details)]);
     return rows;
   }, [item, durationLabel, evidenceCount, artifactCount, showRawDetails]);
+
+  if (shouldHideTraceItem) {
+    return null;
+  }
 
   return (
     <Box
