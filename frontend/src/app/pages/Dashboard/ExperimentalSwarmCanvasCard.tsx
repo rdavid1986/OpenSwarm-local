@@ -40,6 +40,7 @@ import SwarmPromptInput from './SwarmPromptInput';
 import { DEFAULT_SWARM_MODE, getSwarmModeOption } from './SwarmModePicker';
 import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
 import { API_BASE } from '@/shared/config';
+import ProcessTraceDropdown, { ProcessTraceItem } from './ProcessTraceDropdown';
 
 type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 type ImplementationVisualState =
@@ -685,6 +686,165 @@ function isTerminalImplementationState(status: string): boolean {
   return status === 'completed' || status === 'failed';
 }
 
+function buildSwarmCardProcessTraceItems(params: {
+  activeSwarm: any | null;
+  activeSwarmId: string | null;
+  activeSwarmMode: SwarmMode;
+  activeSwarmModel: string | null;
+  implementationLabel: string;
+  implementationStatus: string;
+  implementationVisualState: ImplementationVisualState;
+  actionLoading: boolean;
+  isImplementationActionRunning: boolean;
+  swarmActionElapsedMs: number;
+  lastSwarmActionDurationMs: number | null;
+  lastSwarmActionWasImplementation: boolean;
+  tasks: any[];
+  approvals: any[];
+  artifacts: any[];
+  finalEvidence: any[];
+  events: any[];
+  finalResult: any;
+  chatMessageCount: number;
+}): ProcessTraceItem[] {
+  const status: ProcessTraceItem['status'] = params.actionLoading
+    ? 'running'
+    : params.implementationVisualState === 'failed' || params.implementationVisualState === 'bridge_failed'
+      ? 'failed'
+      : params.implementationVisualState === 'missing_flags' || params.approvals.length > 0
+        ? 'blocked'
+        : params.implementationVisualState === 'idle'
+          ? 'planned'
+          : 'completed';
+
+  const items: ProcessTraceItem[] = [
+    {
+      trace_id: `swarm-session-${params.activeSwarmId || 'new'}`,
+      kind: 'summary',
+      subsystem: 'SwarmCore',
+      title: 'Swarm orchestration',
+      summary: params.activeSwarmId
+        ? `${params.implementationLabel} · ${params.chatMessageCount} visible messages`
+        : 'New Swarm card waiting for a task.',
+      status,
+      duration_ms: params.actionLoading ? params.swarmActionElapsedMs : params.lastSwarmActionDurationMs,
+      icon_id: 'SwarmCore',
+      badge: params.implementationLabel,
+      related_task_id: params.activeSwarmId || '',
+      details: {
+        mode: getSwarmModeOption(params.activeSwarmMode).label,
+        model: params.activeSwarmModel || null,
+        implementation_status: params.implementationStatus || null,
+        events: params.events.length,
+        tasks: params.tasks.length,
+      },
+    },
+  ];
+
+  if (params.actionLoading || params.lastSwarmActionDurationMs != null) {
+    items.push({
+      trace_id: `swarm-runtime-${params.activeSwarmId || 'new'}`,
+      kind: 'metric',
+      subsystem: 'MetricCore',
+      title: params.actionLoading
+        ? (params.isImplementationActionRunning ? 'Implementation running' : 'Thinking live')
+        : (params.lastSwarmActionWasImplementation ? 'Implementation duration' : 'Thinking duration'),
+      summary: params.actionLoading
+        ? 'Swarm is currently processing this task.'
+        : 'Latest visible Swarm duration captured in UI state.',
+      status: params.actionLoading ? 'running' : 'completed',
+      duration_ms: params.actionLoading ? params.swarmActionElapsedMs : params.lastSwarmActionDurationMs,
+      icon_id: 'MetricCore',
+      badge: params.actionLoading ? 'running' : 'duration',
+      related_task_id: params.activeSwarmId || '',
+      details: {
+        implementation_action: params.isImplementationActionRunning,
+        last_was_implementation: params.lastSwarmActionWasImplementation,
+      },
+    });
+  }
+
+  if (params.tasks.length > 0) {
+    const completedTasks = params.tasks.filter((task: any) => normalizeStatusValue(task?.status) === 'completed').length;
+    items.push({
+      trace_id: `swarm-tasks-${params.activeSwarmId || 'new'}`,
+      kind: 'worklog',
+      subsystem: 'TraceCore',
+      title: 'Task division',
+      summary: `${completedTasks}/${params.tasks.length} tasks completed.`,
+      status: completedTasks === params.tasks.length ? 'completed' : 'running',
+      icon_id: 'TraceCore',
+      badge: 'tasks',
+      related_task_id: params.activeSwarmId || '',
+      details: {
+        total_tasks: params.tasks.length,
+        completed_tasks: completedTasks,
+      },
+    });
+  }
+
+  if (params.approvals.length > 0) {
+    items.push({
+      trace_id: `swarm-approvals-${params.activeSwarmId || 'new'}`,
+      kind: 'validation',
+      subsystem: 'ReviewCore',
+      title: 'Pending approvals',
+      summary: `${params.approvals.length} approval${params.approvals.length === 1 ? '' : 's'} waiting for review.`,
+      status: 'blocked',
+      icon_id: 'ReviewCore',
+      badge: 'review',
+      related_task_id: params.activeSwarmId || '',
+      details: {
+        pending_approvals: params.approvals.length,
+      },
+    });
+  }
+
+  if (params.artifacts.length > 0 || params.finalEvidence.length > 0) {
+    items.push({
+      trace_id: `swarm-evidence-${params.activeSwarmId || 'new'}`,
+      kind: 'evidence',
+      subsystem: 'EvidenceCore',
+      title: 'Artifacts and evidence',
+      summary: `${params.artifacts.length} artifacts · ${params.finalEvidence.length} evidence refs.`,
+      status: params.finalEvidence.length > 0 ? 'completed' : 'planned',
+      icon_id: 'EvidenceCore',
+      badge: 'evidence',
+      related_task_id: params.activeSwarmId || '',
+      artifact_refs: params.artifacts.map((artifact: any) => artifact?.id || artifact?.path || artifact?.name).filter(Boolean),
+      evidence_refs: params.finalEvidence.map((evidence: any) => evidence?.id || evidence?.ref || evidence?.path || evidence?.summary).filter(Boolean),
+      details: {
+        artifacts: params.artifacts.length,
+        final_evidence: params.finalEvidence.length,
+      },
+    });
+  }
+
+  if (params.finalResult && typeof params.finalResult === 'object') {
+    const route = renderText(params.finalResult.route, '').trim();
+    const artifactKind = renderText(params.finalResult.artifact_kind, '').trim();
+    const verified = params.finalResult?.claim_guard?.status === 'verified';
+    items.push({
+      trace_id: `swarm-final-${params.activeSwarmId || 'new'}`,
+      kind: 'review',
+      subsystem: 'ReviewCore',
+      title: 'Final result',
+      summary: route || artifactKind || 'Final result available.',
+      status: verified || params.implementationVisualState === 'verified' ? 'completed' : status,
+      icon_id: 'ReviewCore',
+      badge: verified ? 'verified' : 'final',
+      related_task_id: params.activeSwarmId || '',
+      details: {
+        route: route || null,
+        artifact_kind: artifactKind || null,
+        claim_guard_status: params.finalResult?.claim_guard?.status || null,
+      },
+    });
+  }
+
+  return items.slice(0, 4);
+}
+
 function getImplementationVisualState(params: {
   hasSwarm: boolean;
   isRunning: boolean;
@@ -1020,6 +1180,51 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const chatMessages = hasLoadedActiveSwarm
     ? (swarmState.messages || []).filter((message: any) => getVisibleSwarmMessageText(getSwarmMessageText(message)))
     : [];
+  const swarmProcessTraceItems = useMemo(
+    () => buildSwarmCardProcessTraceItems({
+      activeSwarm,
+      activeSwarmId,
+      activeSwarmMode,
+      activeSwarmModel,
+      implementationLabel: implementationMeta.label,
+      implementationStatus,
+      implementationVisualState,
+      actionLoading: swarmState.actionLoading,
+      isImplementationActionRunning,
+      swarmActionElapsedMs,
+      lastSwarmActionDurationMs,
+      lastSwarmActionWasImplementation,
+      tasks,
+      approvals,
+      artifacts,
+      finalEvidence,
+      events,
+      finalResult,
+      chatMessageCount: chatMessages.length,
+    }),
+    [
+      activeSwarm,
+      activeSwarmId,
+      activeSwarmMode,
+      activeSwarmModel,
+      implementationMeta.label,
+      implementationStatus,
+      implementationVisualState,
+      swarmState.actionLoading,
+      isImplementationActionRunning,
+      swarmActionElapsedMs,
+      lastSwarmActionDurationMs,
+      lastSwarmActionWasImplementation,
+      tasks,
+      approvals,
+      artifacts,
+      finalEvidence,
+      events,
+      finalResult,
+      chatMessages.length,
+    ],
+  );
+
   const finalRoute = typeof finalResult === 'object' && finalResult ? (finalResult as any).route : null;
   const finalAnswerGuardApplied = typeof finalResult === 'object' && finalResult ? (finalResult as any).answer_guard_applied : null;
   const showFinalResultDebugMetadata = false;
@@ -1791,6 +1996,27 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             sx={{ flex: '1 1 0', height: 0, overflowY: 'auto', overflowX: 'hidden', p: 2, minHeight: 0 }}
           >
             <Box sx={{ maxWidth: 860, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              {swarmProcessTraceItems.length > 0 && (
+                <Box
+                  onClick={(e) => e.stopPropagation()}
+                  sx={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 0.75,
+                    mb: 0.5,
+                  }}
+                >
+                  {swarmProcessTraceItems.map((item) => (
+                    <ProcessTraceDropdown
+                      key={item.trace_id || `${item.kind}-${item.title}`}
+                      item={item}
+                      compact
+                      defaultExpanded={item.status === 'running' || item.status === 'blocked'}
+                    />
+                  ))}
+                </Box>
+              )}
+
               {chatMessages.length === 0 && events.length === 0 && (
                 <Box sx={{ alignSelf: 'stretch', maxWidth: '100%', bgcolor: 'transparent', border: 'none', px: 0.5, py: 1.25 }}>
                   <style>{`@keyframes swarm-text-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }`}</style>
