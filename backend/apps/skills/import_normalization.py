@@ -39,10 +39,106 @@ def _detect_risks(content: str) -> tuple[list[str], list[str]]:
     return risks, warnings
 
 
+def _parse_simple_frontmatter(content: str) -> tuple[dict[str, str], str]:
+    if not str(content or "").startswith("---"):
+        return {}, content
+    end = content.find("---", 3)
+    if end == -1:
+        return {}, content
+    raw_frontmatter = content[3:end].strip()
+    body = content[end + 3 :].strip()
+    parsed: dict[str, str] = {}
+    for line in raw_frontmatter.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        parsed[key.strip()] = value.strip().strip('"').strip("'")
+    return parsed, body
+
+
+def _legacy_metadata(data: dict[str, Any]) -> dict[str, Any]:
+    metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+    meta_json = data.get("meta_json") if isinstance(data.get("meta_json"), dict) else {}
+    merged = {**meta_json, **metadata}
+    return merged
+
+
+def _prepared_content_from_files(data: dict[str, Any]) -> str:
+    files = data.get("files")
+    if not isinstance(files, list):
+        return ""
+    for file in files:
+        if not isinstance(file, dict):
+            continue
+        name = str(file.get("name") or file.get("path") or "").lower().replace("\\", "/")
+        if name.endswith("skill.md") or name.endswith(".md"):
+            content = str(file.get("content") or "")
+            if content:
+                return content
+    return ""
+
+
+def _normalize_prepared_legacy_or_skillspec_input(data: dict[str, Any]) -> dict[str, Any]:
+    source_format = str(data.get("source_format") or "unknown")
+    metadata = _legacy_metadata(data)
+    content = str(data.get("content") or _prepared_content_from_files(data) or metadata.get("content") or "")
+    name = str(data.get("name") or metadata.get("name") or metadata.get("title") or "Imported OpenSwarm Skill Preview")
+    description = str(data.get("description") or metadata.get("description") or "")
+    command = str(data.get("command") or metadata.get("command") or "")
+    return {
+        **data,
+        "source_format": source_format,
+        "source_platform": str(data.get("source_platform") or "openswarm"),
+        "name": name,
+        "description": description,
+        "command": command,
+        "content": content,
+        "metadata_confidence": str(data.get("metadata_confidence") or "inferred"),
+        "source_author": str(data.get("source_author") or metadata.get("author") or "unknown"),
+        "source_license": str(data.get("source_license") or metadata.get("license") or "unknown"),
+        "provenance": {
+            **(data.get("provenance") if isinstance(data.get("provenance"), dict) else {}),
+            "legacy_metadata_present": bool(metadata),
+            "preview_only": True,
+        },
+    }
+
+
+def _normalize_prepared_claude_skill_input(data: dict[str, Any]) -> dict[str, Any]:
+    content = str(data.get("content") or _prepared_content_from_files(data) or "")
+    parsed_frontmatter, body = _parse_simple_frontmatter(content)
+    supplied_frontmatter = data.get("frontmatter") if isinstance(data.get("frontmatter"), dict) else {}
+    frontmatter = {**parsed_frontmatter, **supplied_frontmatter}
+    return {
+        **data,
+        "source_platform": str(data.get("source_platform") or "claude"),
+        "frontmatter": frontmatter,
+        "name": str(data.get("name") or frontmatter.get("name") or "Imported Claude Skill Preview"),
+        "description": str(data.get("description") or frontmatter.get("description") or ""),
+        "content": content,
+        "metadata_confidence": str(data.get("metadata_confidence") or "inferred"),
+        "provenance": {
+            **(data.get("provenance") if isinstance(data.get("provenance"), dict) else {}),
+            "frontmatter_present": bool(frontmatter),
+            "body_preview": body[:240],
+            "preview_only": True,
+        },
+    }
+
+
+def _normalize_input_for_supported_adapter(data: dict[str, Any]) -> dict[str, Any]:
+    source_format = str(data.get("source_format") or "unknown")
+    if source_format in {"openswarm_legacy_skill", "openswarm_skillspec"}:
+        return _normalize_prepared_legacy_or_skillspec_input(data)
+    if source_format in {"anthropic_skill", "claude_skill"}:
+        return _normalize_prepared_claude_skill_input(data)
+    return data
+
+
 def normalize_external_skill_to_skillspec_preview(input: dict[str, Any]) -> dict[str, Any]:
     """Normalize caller-prepared content into a SkillSpec preview only."""
 
-    data = input or {}
+    data = _normalize_input_for_supported_adapter(input or {})
     source_format = str(data.get("source_format") or "unknown")
     source_platform = str(data.get("source_platform") or "unknown")
     content = str(data.get("content") or "")
@@ -75,6 +171,7 @@ def normalize_external_skill_to_skillspec_preview(input: dict[str, Any]) -> dict
     skill_spec = SkillSpec(
         name=name,
         description=description,
+        command=str(data.get("command") or ""),
         content=content,
         source_format=source_format,
         provenance=provenance,

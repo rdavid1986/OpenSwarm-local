@@ -88,3 +88,81 @@ def test_secret_and_dangerous_instruction_add_risks_without_execution():
     assert "dangerous_execution_instruction" in result["risks"]
     assert result["conversion_warnings"]
     assert_preview_safe(result)
+
+
+def test_normalizes_prepared_openswarm_legacy_skill_metadata():
+    result = normalize_external_skill_to_skillspec_preview({
+        "source_format": "openswarm_legacy_skill",
+        "meta_json": {
+            "name": "Legacy Helper",
+            "description": "Migrated helper",
+            "command": "legacy-helper",
+            "author": "Legacy Author",
+            "license": "MIT",
+        },
+        "files": [{"name": "SKILL.md", "content": "# Legacy Helper\nUse this migrated workflow."}],
+    })
+
+    spec = result["skill_spec_preview"]
+    assert spec["name"] == "Legacy Helper"
+    assert spec["description"] == "Migrated helper"
+    assert spec["command"] == "legacy-helper"
+    assert spec["content"].startswith("# Legacy Helper")
+    assert spec["source_format"] == "openswarm_legacy_skill"
+    assert spec["provenance"]["source_platform"] == "openswarm"
+    assert spec["provenance"]["legacy_metadata_present"] is True
+    assert result["import_contract"]["source_format"] == "openswarm_legacy_skill"
+    assert_preview_safe(result)
+
+
+def test_normalizes_prepared_openswarm_skillspec_preview_without_candidate_creation():
+    result = normalize_external_skill_to_skillspec_preview({
+        "source_format": "openswarm_skillspec",
+        "metadata": {
+            "name": "Portable Skill",
+            "description": "Existing SkillSpec-like data",
+            "command": "portable-skill",
+        },
+        "content": "# Portable Skill\nAlready portable.",
+        "provenance": {"source_url": "file://export/skill.json"},
+    })
+
+    spec = result["skill_spec_preview"]
+    assert spec["name"] == "Portable Skill"
+    assert spec["command"] == "portable-skill"
+    assert spec["source_format"] == "openswarm_skillspec"
+    assert spec["provenance"]["source_url"] == "file://export/skill.json"
+    assert result["can_create_candidate"] is False
+    assert_preview_safe(result)
+
+
+def test_normalizes_prepared_anthropic_skill_frontmatter_from_skill_md():
+    result = normalize_external_skill_to_skillspec_preview({
+        "source_format": "anthropic_skill",
+        "content": "---\nname: Brand Writer\ndescription: Writes in brand voice\n---\n# Brand Writer\nFollow the brand system.",
+    })
+
+    spec = result["skill_spec_preview"]
+    assert spec["name"] == "Brand Writer"
+    assert spec["description"] == "Writes in brand voice"
+    assert spec["content"].startswith("---")
+    assert spec["source_format"] == "anthropic_skill"
+    assert spec["provenance"]["frontmatter_present"] is True
+    assert spec["provenance"]["source_platform"] == "claude"
+    assert result["import_contract"]["import_adapter"] == "anthropic_skill_adapter"
+    assert_preview_safe(result)
+
+
+def test_claude_skill_supplied_frontmatter_overrides_parsed_preview_metadata():
+    result = normalize_external_skill_to_skillspec_preview({
+        "source_format": "claude_skill",
+        "frontmatter": {"name": "Supplied Name", "description": "Supplied description"},
+        "content": "---\nname: Parsed Name\ndescription: Parsed description\n---\nBody",
+    })
+
+    spec = result["skill_spec_preview"]
+    assert spec["name"] == "Supplied Name"
+    assert spec["description"] == "Supplied description"
+    assert spec["source_format"] == "claude_skill"
+    assert result["import_contract"]["import_adapter"] == "claude_skill_adapter"
+    assert_preview_safe(result)
