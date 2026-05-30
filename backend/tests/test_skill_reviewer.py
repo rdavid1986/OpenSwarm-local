@@ -112,6 +112,33 @@ comment markers inside runs.
 """
 
 
+DOC_COAUTHORING_STYLE_CONTENT = """
+# Doc Co-Authoring Workflow
+
+This skill provides a structured workflow for guiding users through collaborative
+document creation.
+
+## When to Offer This Workflow
+Use it for documentation, proposals, technical specs, decision docs, and reader
+testing.
+
+## Stage 1: Context Gathering
+Ask clarifying questions about purpose, audience, stakeholder concerns,
+constraints, and available templates.
+
+## Stage 2: Refinement and Structure
+Suggest sections, ask targeted questions, curate details, draft sections, and
+iterate based on feedback.
+
+## Stage 3: Reader Testing
+Predict reader questions, test assumptions, review coherence, and fix blind
+spots before publishing.
+
+## Tips for Effective Guidance
+Track missing context, ask focused questions, and adapt tone to the document.
+"""
+
+
 def _client(monkeypatch, tmp_path):
     monkeypatch.setattr(skills_module, "skill_candidate_store", SkillCandidateStore(root=tmp_path / "skill_candidates"))
     monkeypatch.setattr(skills_module, "SKILLS_DIR", str(tmp_path / "legacy_skills"))
@@ -190,6 +217,35 @@ def test_generic_candidate_keeps_quality_gap_items():
     assert "add_methodology" in quality_codes
     assert review["skill_profile"] == "general_skill"
     assert review["openswarm_adaptation_items"]
+
+
+
+def test_doc_coauthoring_style_skill_is_not_design_creation():
+    review = review_skill_candidate(_candidate(DOC_COAUTHORING_STYLE_CONTENT, command="doc-coauthoring"))
+
+    assert review["skill_profile"] == "expert_behavior"
+
+
+def test_internal_comms_template_keeps_quality_gaps():
+    review = review_skill_candidate(_candidate(
+        """
+        ## When to use this skill
+        Use for internal communications, status reports, newsletters, FAQs, and
+        leadership updates.
+
+        ## How to use this skill
+        Load the appropriate guideline file from examples/ and follow it.
+        Ask for clarification if the communication type does not match.
+        """,
+        command="internal-comms",
+    ))
+
+    quality_codes = {item["code"] for item in review["quality_gap_items"]}
+
+    assert review["skill_profile"] == "communication_template"
+    assert "add_methodology" in quality_codes
+    assert "add_validation_guidance" in quality_codes
+    assert "add_pitfalls" in quality_codes
 
 
 

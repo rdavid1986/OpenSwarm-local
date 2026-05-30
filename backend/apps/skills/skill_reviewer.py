@@ -160,16 +160,43 @@ def _split_improvement_items(
 
 def _skill_profile(spec: SkillSpec, quality_contract: dict[str, Any]) -> str:
     text = _normalized(f"{spec.name}\n{spec.description}\n{spec.content}")
+
     if any(token in text for token in ("docx", ".docx", "word document", "pptx", ".pptx", "pdf", ".pdf", "xlsx", "spreadsheet")):
         return "document_workflow"
-    if any(token in text for token in ("frontend", "design", "aesthetics", "typography", "motion", "visual")):
-        return "design_creation"
-    if any(token in text for token in ("communication", "comms", "newsletter", "status report", "leadership update")):
+
+    if any(token in text for token in ("communication", "comms", "newsletter", "status report", "leadership update", "internal communications")):
         return "communication_template"
+
+    if any(token in text for token in ("co-authoring", "coauthoring", "documentation", "technical specs", "decision docs", "reader testing")):
+        return "expert_behavior"
+
+    design_signal_count = sum(
+        1
+        for token in (
+            "frontend",
+            "aesthetics",
+            "typography",
+            "motion",
+            "visual design",
+            "visual art",
+            "layout",
+            "color palette",
+            "backgrounds",
+            "spatial composition",
+            "brand styling",
+            "brand guidelines",
+        )
+        if token in text
+    )
+    if design_signal_count >= 2:
+        return "design_creation"
+
     if any(token in text for token in ("mcp", "api", "server", "sdk", "tool")):
         return "procedural_tool_guide"
+
     if quality_contract.get("has_expert_methodology") and quality_contract.get("has_decision_criteria"):
         return "expert_behavior"
+
     return "general_skill"
 
 
