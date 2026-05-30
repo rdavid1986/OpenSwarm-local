@@ -264,11 +264,17 @@ def build_ollama_capability_snapshot_from_payloads(
         if isinstance(item, dict)
     ]
 
+    health = "available" if version_payload or tag_models else "unknown"
+    if errors and not (version_payload or tag_models):
+        health = "unavailable"
+    elif errors and (version_payload or tag_models):
+        health = "degraded"
+
     return {
         "snapshot_kind": "ollama_native_capability_snapshot",
         "provider": "ollama",
         "base_url": resolved_base_url,
-        "health": "available" if version_payload or tag_models else "unknown",
+        "health": health,
         "version": (version_payload or {}).get("version") or "unknown",
         "models": models,
         "running_models": [redact_ollama_value(item) for item in running_models_raw if isinstance(item, dict)],
@@ -328,8 +334,10 @@ def fetch_ollama_capability_snapshot(
         ps_payload=ps,
         errors=errors,
     )
-    if errors and not tags:
+    if errors and not tags and not version:
         snapshot["health"] = "unavailable"
+    elif errors:
+        snapshot["health"] = "degraded"
     return snapshot
 
 
@@ -406,7 +414,21 @@ def normalize_ollama_stream_chunks(chunks: list[dict[str, Any]]) -> dict[str, An
         "tool_calls": tool_calls,
         "metrics": normalize_ollama_runtime_metrics(metrics) if metrics else {},
         "thinking_visible_to_user": False,
+        "thinking_metadata": normalize_ollama_thinking_metadata("".join(thinking_parts)),
         "summary_source": "native_ollama_thinking" if thinking_parts else "fallback",
+    }
+
+
+def normalize_ollama_thinking_metadata(thinking: Any, *, safe_summary: str | None = None) -> dict[str, Any]:
+    text = str(thinking or "")
+    return {
+        "has_native_thinking": bool(text),
+        "thinking_available": bool(text),
+        "thinking_redacted": bool(text),
+        "thinking_summary": str(safe_summary or "")[:600],
+        "fallback_reason": "" if text else "not_reported",
+        "visible_to_user": False,
+        "source": "ollama_native_thinking_metadata",
     }
 
 

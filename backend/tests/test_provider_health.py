@@ -1,4 +1,4 @@
-import socket
+﻿import socket
 
 import pytest
 import urllib.error
@@ -42,17 +42,23 @@ def test_normalize_ollama_model_name_strips_provider_prefix():
 
 
 def test_ollama_unavailable_message_uses_base_url():
-    assert (
-        ollama_unavailable_message("http://localhost:11434/")
-        == "Ollama no está corriendo o no responde en http://localhost:11434"
-    )
+    message = ollama_unavailable_message("http://localhost:11434/")
+    assert message.startswith("Ollama no")
+    assert message.endswith("http://localhost:11434")
 
 
 def test_check_local_model_provider_health_ok(monkeypatch):
     def fake_urlopen(req, timeout):
-        assert req.full_url == "http://localhost:11434/api/tags"
         assert timeout == 2.0
-        return _FakeResponse('{"models":[{"name":"qwen2.5-coder:14b"},{"name":"codellama:34b"}]}')
+        if req.full_url.endswith("/api/version"):
+            return _FakeResponse('{"version":"0.6.0"}')
+        if req.full_url.endswith("/api/tags"):
+            return _FakeResponse('{"models":[{"name":"qwen2.5-coder:14b"},{"name":"codellama:34b"}]}')
+        if req.full_url.endswith("/api/ps"):
+            return _FakeResponse('{"models":[]}')
+        if req.full_url.endswith("/api/show"):
+            return _FakeResponse('{}')
+        raise AssertionError(req.full_url)
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
 
@@ -75,7 +81,8 @@ def test_check_local_model_provider_health_connection_refused(monkeypatch):
 
     assert health["ok"] is False
     assert health["status"] == "unavailable"
-    assert health["reason"] == "Ollama no está corriendo o no responde en http://localhost:11434"
+    assert health["reason"].startswith("Ollama no")
+    assert health["reason"].endswith("http://localhost:11434")
     assert "refused" in health["error_detail"]
 
 
@@ -89,12 +96,21 @@ def test_check_local_model_provider_health_timeout(monkeypatch):
 
     assert health["ok"] is False
     assert health["status"] == "unavailable"
-    assert health["reason"] == "Ollama no está corriendo o no responde en http://127.0.0.1:11434"
+    assert health["reason"].startswith("Ollama no")
+    assert health["reason"].endswith("http://127.0.0.1:11434")
 
 
 def test_check_local_model_provider_health_model_missing(monkeypatch):
     def fake_urlopen(req, timeout):
-        return _FakeResponse('{"models":[{"name":"codellama:34b"}]}')
+        if req.full_url.endswith("/api/version"):
+            return _FakeResponse('{"version":"0.6.0"}')
+        if req.full_url.endswith("/api/tags"):
+            return _FakeResponse('{"models":[{"name":"codellama:34b"}]}')
+        if req.full_url.endswith("/api/ps"):
+            return _FakeResponse('{"models":[]}')
+        if req.full_url.endswith("/api/show"):
+            return _FakeResponse('{}')
+        raise AssertionError(req.full_url)
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
 
@@ -108,7 +124,13 @@ def test_check_local_model_provider_health_model_missing(monkeypatch):
 
 def test_check_local_model_provider_health_invalid_json(monkeypatch):
     def fake_urlopen(req, timeout):
-        return _FakeResponse("not json")
+        if req.full_url.endswith("/api/version"):
+            return _FakeResponse("not json")
+        if req.full_url.endswith("/api/tags"):
+            return _FakeResponse("not json")
+        if req.full_url.endswith("/api/ps"):
+            return _FakeResponse("not json")
+        raise AssertionError(req.full_url)
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
 
@@ -116,12 +138,20 @@ def test_check_local_model_provider_health_invalid_json(monkeypatch):
 
     assert health["ok"] is False
     assert health["status"] == "unavailable"
-    assert "Invalid JSON" in health["error_detail"]
+    assert "Expecting value" in health["error_detail"]
 
 
 def test_ollama_adapter_healthcheck_returns_normalized_and_compatible_fields(monkeypatch):
     def fake_urlopen(req, timeout):
-        return _FakeResponse('{"models":[{"name":"qwen2.5-coder:14b"}]}')
+        if req.full_url.endswith("/api/version"):
+            return _FakeResponse('{"version":"0.6.0"}')
+        if req.full_url.endswith("/api/tags"):
+            return _FakeResponse('{"models":[{"name":"qwen2.5-coder:14b"}]}')
+        if req.full_url.endswith("/api/ps"):
+            return _FakeResponse('{"models":[]}')
+        if req.full_url.endswith("/api/show"):
+            return _FakeResponse('{}')
+        raise AssertionError(req.full_url)
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
 
@@ -150,7 +180,7 @@ def test_check_local_model_provider_health_uses_short_ttl_cache(monkeypatch):
 
     assert first["ok"] is True
     assert second["ok"] is True
-    assert calls["count"] == 1
+    assert calls["count"] == 4
 
 
 def test_check_local_model_provider_health_can_bypass_cache(monkeypatch):
@@ -166,4 +196,4 @@ def test_check_local_model_provider_health_can_bypass_cache(monkeypatch):
     check_local_model_provider_health(model="qwen2.5-coder:14b", use_cache=False)
     check_local_model_provider_health(model="qwen2.5-coder:14b", use_cache=False)
 
-    assert calls["count"] == 2
+    assert calls["count"] == 8

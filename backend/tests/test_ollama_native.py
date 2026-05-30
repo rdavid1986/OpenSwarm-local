@@ -9,6 +9,7 @@ from backend.apps.agents.providers.ollama_native import (
     normalize_embedding_response,
     normalize_ollama_runtime_metrics,
     normalize_ollama_stream_chunks,
+    normalize_ollama_thinking_metadata,
     normalize_ollama_tool_calls,
     normalize_openai_compatibility_adapter_metadata,
     normalize_reasoning_effort,
@@ -123,6 +124,7 @@ def test_stream_chunk_parser_separates_thinking_content_tool_calls_and_metrics()
     assert parsed["thinking"] == "private native thinking "
     assert parsed["content"] == "Hello world"
     assert parsed["thinking_visible_to_user"] is False
+    assert parsed["thinking_metadata"]["thinking_redacted"] is True
     assert parsed["tool_calls"][0]["tool_name"] == "read_file"
     assert parsed["tool_calls"][0]["arguments"]["api_key"] == "[redacted]"
     assert parsed["metrics"]["tokens_per_second"] == 10.0
@@ -145,6 +147,15 @@ def test_tool_call_and_runtime_metric_normalizers_are_safe_and_calculate_through
     assert calls == [{"tool_call_id": "call1", "tool_name": "search", "arguments": {"query": "x"}, "source": "ollama_native_tool_calls", "status": "requested"}]
     assert metrics["tokens_per_second"] == 10.0
     assert metrics["cold_start_likely"] is True
+
+
+def test_thinking_metadata_never_exposes_raw_thinking_by_default():
+    metadata = normalize_ollama_thinking_metadata("private chain of thought", safe_summary="safe")
+
+    assert metadata["has_native_thinking"] is True
+    assert metadata["thinking_redacted"] is True
+    assert metadata["thinking_summary"] == "safe"
+    assert metadata["visible_to_user"] is False
 
 
 def test_structured_output_request_and_validation_contracts():

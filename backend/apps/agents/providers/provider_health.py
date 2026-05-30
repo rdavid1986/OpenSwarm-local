@@ -1,4 +1,4 @@
-"""Reusable local model provider health checks.
+﻿"""Reusable local model provider health checks.
 
 This module is intentionally small and side-effect free: it never starts
 Ollama, installs models, or retries in loops. Callers can use it as a fast
@@ -13,9 +13,7 @@ import os
 import socket
 import time
 import urllib.error
-import urllib.request
 from typing import Any
-
 
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_REQUIRED_ACTION = (
@@ -41,12 +39,7 @@ def normalize_ollama_model_name(model: str | None) -> str | None:
 
 
 def is_local_model(model: str | None) -> bool:
-    """Best-effort detection for local/Ollama model identifiers.
-
-    The backend paths using this helper are already local-provider paths; this
-    function deliberately remains conservative for global routing while still
-    recognizing bare Ollama model names used by OpenSwarm defaults.
-    """
+    """Best-effort detection for local/Ollama model identifiers."""
 
     value = str(model or "").strip().lower()
     if not value:
@@ -87,21 +80,6 @@ def _result(
     }
 
 
-def _available_model_names(payload: Any) -> list[str]:
-    if not isinstance(payload, dict):
-        return []
-    models = payload.get("models")
-    if not isinstance(models, list):
-        return []
-    names: list[str] = []
-    for item in models:
-        if isinstance(item, dict):
-            name = str(item.get("name") or "").strip()
-            if name:
-                names.append(name)
-    return names
-
-
 def _cache_and_return(
     cache_key: tuple[str, str | None],
     health: dict[str, Any],
@@ -125,11 +103,7 @@ def check_local_model_provider_health(
     cache_ttl_seconds: float = DEFAULT_PROVIDER_HEALTH_CACHE_TTL_SECONDS,
     use_cache: bool = True,
 ) -> dict[str, Any]:
-    """Check Ollama availability via GET /api/tags and normalize the result.
-
-    A short in-memory TTL avoids repeated /api/tags calls when multiple
-    model-dependent steps run in the same local action sequence.
-    """
+    """Check Ollama availability via native /api/version/tags/show/ps snapshot."""
 
     resolved_base_url = _normalize_base_url(base_url)
     normalized_model = normalize_ollama_model_name(model)
@@ -142,36 +116,11 @@ def check_local_model_provider_health(
             if now - cached_at <= cache_ttl_seconds:
                 return copy.deepcopy(cached_health)
 
-    req = urllib.request.Request(f"{resolved_base_url}/api/tags", method="GET")
-
     try:
-        with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
-            status_code = int(getattr(resp, "status", None) or getattr(resp, "code", None) or 200)
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        detail = ""
-        try:
-            detail = exc.read().decode("utf-8", errors="replace")
-        except Exception:
-            detail = str(exc)
-        return _cache_and_return(cache_key, _result(
-            ok=False,
-            base_url=resolved_base_url,
-            model=normalized_model,
-            status="unavailable",
-            reason=ollama_unavailable_message(resolved_base_url),
-            error_detail=f"HTTP {exc.code}: {detail}",
-        ), cache_ttl_seconds=cache_ttl_seconds, use_cache=use_cache)
-    except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
-        return _cache_and_return(cache_key, _result(
-            ok=False,
-            base_url=resolved_base_url,
-            model=normalized_model,
-            status="unavailable",
-            reason=ollama_unavailable_message(resolved_base_url),
-            error_detail=str(exc),
-        ), cache_ttl_seconds=cache_ttl_seconds, use_cache=use_cache)
-    except Exception as exc:
+        from backend.apps.agents.providers.ollama_native import fetch_ollama_capability_snapshot
+
+        snapshot = fetch_ollama_capability_snapshot(base_url=resolved_base_url, timeout_seconds=timeout_seconds)
+    except (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError, OSError) as exc:
         return _cache_and_return(cache_key, _result(
             ok=False,
             base_url=resolved_base_url,
@@ -181,29 +130,24 @@ def check_local_model_provider_health(
             error_detail=str(exc),
         ), cache_ttl_seconds=cache_ttl_seconds, use_cache=use_cache)
 
-    if status_code != 200:
+    health_status = str(snapshot.get("health") or "unknown")
+    models = [m for m in snapshot.get("models", []) if isinstance(m, dict)]
+    available_models = [str(m.get("model") or m.get("name")) for m in models if m.get("model") or m.get("name")]
+    errors = snapshot.get("errors") if isinstance(snapshot.get("errors"), list) else []
+    warnings = snapshot.get("warnings") if isinstance(snapshot.get("warnings"), list) else []
+    detail = "; ".join(str(item) for item in [*errors, *warnings] if item)
+
+    if health_status == "unavailable":
         return _cache_and_return(cache_key, _result(
             ok=False,
             base_url=resolved_base_url,
             model=normalized_model,
             status="unavailable",
             reason=ollama_unavailable_message(resolved_base_url),
-            error_detail=f"HTTP {status_code}",
+            available_models=available_models,
+            error_detail=detail,
         ), cache_ttl_seconds=cache_ttl_seconds, use_cache=use_cache)
 
-    try:
-        payload = json.loads(raw)
-    except Exception as exc:
-        return _cache_and_return(cache_key, _result(
-            ok=False,
-            base_url=resolved_base_url,
-            model=normalized_model,
-            status="unavailable",
-            reason=ollama_unavailable_message(resolved_base_url),
-            error_detail=f"Invalid JSON from Ollama /api/tags: {exc}",
-        ), cache_ttl_seconds=cache_ttl_seconds, use_cache=use_cache)
-
-    available_models = _available_model_names(payload)
     if normalized_model and normalized_model not in available_models:
         return _cache_and_return(cache_key, _result(
             ok=False,
@@ -215,11 +159,28 @@ def check_local_model_provider_health(
             error_detail="Model not found in /api/tags.",
         ), cache_ttl_seconds=cache_ttl_seconds, use_cache=use_cache)
 
-    return _cache_and_return(cache_key, _result(
+    result = _result(
         ok=True,
         base_url=resolved_base_url,
         model=normalized_model,
-        status="available",
-        reason="Ollama está disponible.",
+        status="degraded" if health_status == "degraded" else "available",
+        reason="Ollama está disponible." if health_status != "degraded" else "Ollama responde, con endpoints degradados.",
         available_models=available_models,
-    ), cache_ttl_seconds=cache_ttl_seconds, use_cache=use_cache)
+        error_detail=detail,
+    )
+    result.update({
+        "version": snapshot.get("version") or "unknown",
+        "model_count": snapshot.get("model_count", len(available_models)),
+        "running_model_count": snapshot.get("running_model_count", 0),
+        "source": snapshot.get("metadata_source") or "Ollama native snapshot",
+        "snapshot": {
+            "base_url": snapshot.get("base_url"),
+            "health": snapshot.get("health"),
+            "version": snapshot.get("version"),
+            "model_count": snapshot.get("model_count", len(available_models)),
+            "running_model_count": snapshot.get("running_model_count", 0),
+            "errors": errors,
+            "warnings": warnings,
+        },
+    })
+    return _cache_and_return(cache_key, result, cache_ttl_seconds=cache_ttl_seconds, use_cache=use_cache)

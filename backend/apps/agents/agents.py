@@ -587,6 +587,24 @@ async def probe_model(body: dict):
         return {"ok": False, "error": msg[:240]}
 
 
+@agents.router.post("/ollama/embeddings")
+async def ollama_embeddings(body: dict):
+    """Safe native Ollama embeddings bridge.
+
+    Returns normalized metadata and the provider embedding without storing the
+    full input text. Ollama being offline degrades to ok=false.
+    """
+    from backend.apps.agents.providers.ollama_runtime import fetch_ollama_embedding
+
+    payload = body or {}
+    model = str(payload.get("model") or "").strip()
+    if not model:
+        raise HTTPException(status_code=400, detail="model is required")
+    input_text = str(payload.get("input") or payload.get("text") or "")
+    keep_alive = payload.get("keep_alive") if isinstance(payload.get("keep_alive"), str) else None
+    return await fetch_ollama_embedding(model=model, input_text=input_text, keep_alive=keep_alive)
+
+
 @agents.router.get("/models")
 async def list_models():
     """Picker model list, grouped by provider, intersected with available creds."""
@@ -662,272 +680,15 @@ async def list_models():
 
     result: dict[str, list[dict]] = {}
 
-    def _ollama_label(model_name: str) -> str:
-        clean = str(model_name or "").strip()
-        display = clean.replace(":latest", "").replace("-", " ").replace("_", " ")
-        return "Ollama " + " ".join(part.capitalize() for part in display.split())
-
-    def _ollama_context_window(model_name: str) -> int:
-        lower = str(model_name or "").lower()
-        if "codellama" in lower:
-            return 16_000
-        if "qwen" in lower:
-            return 128_000
-        if "phi" in lower:
-            return 16_000
-        return 32_000
-
-    def _ollama_reasoning(model_name: str) -> bool:
-        lower = str(model_name or "").lower()
-        return any(token in lower for token in ("qwen3", "qwen3.", "qwq", "deepseek-r1", "reason"))
-
-    def _ollama_tiers(model_name: str) -> list[int]:
-        lower = str(model_name or "").lower()
-        if "qwen3" in lower or "qwen2.5-coder:32" in lower or "34b" in lower or "36" in lower:
-            return [3, 3, 1]
-        if "14b" in lower:
-            return [2, 4, 1]
-        return [2, 3, 1]
-
-    def _utc_now_iso() -> str:
-        return datetime.now(timezone.utc).isoformat()
-
-    def _local_model_registry_path() -> Path:
-        override = os.environ.get("OPENSWARM_LOCAL_MODEL_REGISTRY_PATH")
-        if override:
-            return Path(override)
-        return Path(__file__).resolve().parents[2] / "data" / "models" / "local_model_registry.json"
-
-    def _load_local_model_registry() -> dict:
-        path = _local_model_registry_path()
-        try:
-            if not path.exists():
-                return {}
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
-        except Exception as e:
-            logger.debug(f"Local model registry load failed: {e}")
-            return {}
-
-    def _save_local_model_registry(registry: dict) -> None:
-        path = _local_model_registry_path()
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(registry, indent=2, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-        except Exception as e:
-            logger.debug(f"Local model registry save failed: {e}")
-
-    def _registry_entry_matches(entry: dict | None, metadata: dict) -> bool:
-        if not isinstance(entry, dict):
-            return False
-        return (
-            entry.get("digest") == metadata.get("digest")
-            and entry.get("modified_at") == metadata.get("modified_at")
-            and entry.get("size_bytes") == metadata.get("size")
-        )
-
-    def _extract_num_ctx_from_parameters(parameters: object) -> int | None:
-        if not isinstance(parameters, str):
-            return None
-        for raw_line in parameters.splitlines():
-            parts = raw_line.strip().split()
-            if len(parts) >= 2 and parts[0] == "num_ctx":
-                try:
-                    value = int(float(parts[1]))
-                    return value if value > 0 else None
-                except Exception:
-                    return None
-        return None
-
-    def _extract_context_length_from_show(show_data: dict) -> tuple[int | None, str | None]:
-        model_info = show_data.get("model_info") if isinstance(show_data, dict) else None
-        if isinstance(model_info, dict):
-            for key, value in model_info.items():
-                lowered = str(key).lower()
-                if lowered.endswith(".context_length") or lowered == "context_length":
-                    try:
-                        parsed = int(value)
-                        if parsed > 0:
-                            return parsed, f"Ollama /api/show model_info {key}"
-                    except Exception:
-                        continue
-
-        parameter_context = _extract_num_ctx_from_parameters(show_data.get("parameters") if isinstance(show_data, dict) else None)
-        if parameter_context:
-            return parameter_context, "Ollama /api/show parameters num_ctx"
-
-        modelfile = show_data.get("modelfile") if isinstance(show_data, dict) else None
-        if isinstance(modelfile, str):
-            for raw_line in modelfile.splitlines():
-                parts = raw_line.strip().split()
-                if len(parts) >= 3 and parts[0].upper() == "PARAMETER" and parts[1] == "num_ctx":
-                    try:
-                        parsed = int(float(parts[2]))
-                        if parsed > 0:
-                            return parsed, "Ollama /api/show Modelfile PARAMETER num_ctx"
-                    except Exception:
-                        continue
-
-        return None, None
-
-    async def _fetch_ollama_show_registry_entry(client, base_url: str, name: str, metadata: dict) -> dict:
-        payload = {"model": name, "verbose": True}
-        fetched_at = _utc_now_iso()
-        try:
-            response = await client.post(f"{base_url}/api/show", json=payload)
-            response.raise_for_status()
-            show_data = response.json()
-        except Exception as e:
-            logger.debug(f"Ollama model show failed for {name}: {e}")
-            show_data = {}
-
-        configured_context_window, configured_context_source = _extract_context_length_from_show(show_data if isinstance(show_data, dict) else {})
-
-        details = metadata.get("details") if isinstance(metadata.get("details"), dict) else {}
-        return {
-            "provider": "Ollama Local",
-            "local_model_name": name,
-            "digest": metadata.get("digest"),
-            "modified_at": metadata.get("modified_at"),
-            "size_bytes": metadata.get("size"),
-            "format": details.get("format"),
-            "family": details.get("family"),
-            "families": details.get("families"),
-            "parameter_size": details.get("parameter_size"),
-            "quantization_level": details.get("quantization_level"),
-            "configured_context_window": configured_context_window,
-            "configured_context_source": configured_context_source,
-            "declared_context_window": None,
-            "declared_context_source": None,
-            "loaded_context_window": None,
-            "loaded_context_source": None,
-            "official_metadata_status": "not_fetched",
-            "official_metadata_fetched_at": None,
-            "first_seen_at": fetched_at,
-            "last_seen_at": fetched_at,
-            "last_refreshed_at": fetched_at,
-            "metadata_source": "Ollama /api/tags + /api/show",
-        }
-
-    def _ollama_metadata(item: dict) -> dict:
-        details = item.get("details") if isinstance(item.get("details"), dict) else {}
-        name = str(item.get("name") or item.get("model") or "").strip()
-        return {
-            "source": "ollama_api_tags",
-            "name": name or None,
-            "model": item.get("model") or name or None,
-            "modified_at": item.get("modified_at"),
-            "size": item.get("size"),
-            "digest": item.get("digest"),
-            "details": {
-                "format": details.get("format"),
-                "family": details.get("family"),
-                "families": details.get("families"),
-                "parameter_size": details.get("parameter_size"),
-                "quantization_level": details.get("quantization_level"),
-            },
-        }
-
     async def _fetch_ollama_models() -> list[dict]:
-        import httpx
-        base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
-        registry = _load_local_model_registry()
-        registry_changed = False
+        from backend.apps.agents.providers.ollama_runtime import fetch_ollama_models_for_picker
+
         try:
-            async with httpx.AsyncClient(timeout=6.0) as client:
-                response = await client.get(f"{base_url}/api/tags")
-                response.raise_for_status()
-                data = response.json()
-
-                models = []
-                seen: set[str] = set()
-                for item in data.get("models", []):
-                    name = str(item.get("name") or item.get("model") or "").strip()
-                    if not name or name in seen:
-                        continue
-                    seen.add(name)
-                    metadata = _ollama_metadata(item)
-                    details = metadata["details"]
-                    registry_key = f"ollama/{name}"
-                    registry_entry = registry.get(registry_key)
-
-                    if _registry_entry_matches(registry_entry, metadata):
-                        registry_entry["last_seen_at"] = _utc_now_iso()
-                        registry_changed = True
-                    else:
-                        previous_first_seen = registry_entry.get("first_seen_at") if isinstance(registry_entry, dict) else None
-                        registry_entry = await _fetch_ollama_show_registry_entry(client, base_url, name, metadata)
-                        if previous_first_seen:
-                            registry_entry["first_seen_at"] = previous_first_seen
-                        registry[registry_key] = registry_entry
-                        registry_changed = True
-
-                    configured_context_window = registry_entry.get("configured_context_window")
-                    estimated_context_window = _ollama_context_window(name)
-                    context_window = configured_context_window or estimated_context_window
-                    context_window_source = "configured" if configured_context_window else "estimated"
-
-                    local_metadata = {
-                        **metadata,
-                        "registry": {
-                            "configured_context_window": configured_context_window,
-                            "configured_context_source": registry_entry.get("configured_context_source"),
-                            "declared_context_window": registry_entry.get("declared_context_window"),
-                            "declared_context_source": registry_entry.get("declared_context_source"),
-                            "loaded_context_window": registry_entry.get("loaded_context_window"),
-                            "loaded_context_source": registry_entry.get("loaded_context_source"),
-                            "last_refreshed_at": registry_entry.get("last_refreshed_at"),
-                        },
-                    }
-
-                    models.append({
-                        "value": registry_key,
-                        "label": _ollama_label(name),
-                        "provider": "Ollama Local",
-                        "context_window": context_window,
-                        "context_window_source": context_window_source,
-                        "estimated_context_window": estimated_context_window,
-                        "estimated_context_source": "OpenSwarm estimate",
-                        "configured_context_window": configured_context_window,
-                        "configured_context_source": registry_entry.get("configured_context_source"),
-                        "declared_context_window": registry_entry.get("declared_context_window"),
-                        "declared_context_source": registry_entry.get("declared_context_source"),
-                        "loaded_context_window": registry_entry.get("loaded_context_window"),
-                        "loaded_context_source": registry_entry.get("loaded_context_source"),
-                        "reasoning": _ollama_reasoning(name),
-                        "reasoning_source": "estimated",
-                        "tiers_source": "estimated",
-                        "input_cost_per_1m": 0.0,
-                        "output_cost_per_1m": 0.0,
-                        "is_free": True,
-                        "billing_kind": "free",
-                        "tiers": _ollama_tiers(name),
-                        "local_metadata": local_metadata,
-                        "model_metadata": local_metadata,
-                        "metadata_source": "Ollama /api/tags + /api/show",
-                        "name": metadata.get("name"),
-                        "model": metadata.get("model"),
-                        "local_model_name": name,
-                        "modified_at": metadata.get("modified_at"),
-                        "size_bytes": metadata.get("size"),
-                        "digest": metadata.get("digest"),
-                        "format": details.get("format"),
-                        "family": details.get("family"),
-                        "families": details.get("families"),
-                        "parameter_size": details.get("parameter_size"),
-                        "quantization_level": details.get("quantization_level"),
-                        "availability": "available",
-                        "availability_source": "Ollama /api/tags",
-                        "runtime_metrics": None,
-                        "eval_results": None,
-                    })
+            return await fetch_ollama_models_for_picker(timeout_seconds=6.0)
         except Exception as e:
             logger.debug(f"Ollama model fetch failed: {e}")
             return []
 
-        if registry_changed:
-            _save_local_model_registry(registry)
-        return models
 
 
     anthropic_models = BUILTIN_MODELS.get("Anthropic", [])

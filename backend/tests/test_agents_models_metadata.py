@@ -1,4 +1,4 @@
-import json
+﻿import json
 
 import pytest
 
@@ -64,8 +64,13 @@ class _FakeAsyncClient:
         return False
 
     async def get(self, url):
-        assert url.endswith("/api/tags")
-        return _FakeResponse(_TAGS_PAYLOAD)
+        if url.endswith("/api/version"):
+            return _FakeResponse({"version": "0.6.0"})
+        if url.endswith("/api/tags"):
+            return _FakeResponse(_TAGS_PAYLOAD)
+        if url.endswith("/api/ps"):
+            return _FakeResponse({"models": []})
+        raise AssertionError(url)
 
     async def post(self, url, json=None):
         assert url.endswith("/api/show")
@@ -107,5 +112,5 @@ async def test_list_models_includes_real_ollama_tags_metadata(monkeypatch, tmp_p
     registry = json.loads((tmp_path / "local_model_registry.json").read_text(encoding="utf-8"))
     assert registry["ollama/qwen3.6:latest"]["configured_context_window"] == 262144
     assert registry["ollama/qwen3.6:latest"]["digest"] == "sha256:abcdef1234567890"
-    assert model["reasoning_source"] == "estimated"
+    assert model["reasoning_source"] == "inferred"
     assert model["tiers_source"] == "estimated"
