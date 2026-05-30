@@ -2081,17 +2081,47 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
           <DragIndicatorIcon sx={{ fontSize: 16 }} />
         </Box>
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-            <Typography sx={{ fontWeight: 650, fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+            <Typography sx={{ fontWeight: 650, fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: c.text.primary }}>
               Swarm
             </Typography>
-            <Typography sx={{ color: c.text.tertiary, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {getSwarmModeOption(activeSwarmMode).label}
-            </Typography>
+            <Chip
+              size="small"
+              label={getSwarmModeOption(activeSwarmMode).label}
+              sx={{
+                height: 22,
+                fontSize: '0.68rem',
+                fontWeight: 650,
+                color: c.text.secondary,
+                bgcolor: c.bg.secondary,
+                border: `1px solid ${c.border.subtle}`,
+                flexShrink: 0,
+              }}
+            />
+            <Chip
+              size="small"
+              label={implementationMeta.label}
+              sx={{
+                height: 22,
+                fontSize: '0.68rem',
+                color: implementationMeta.color,
+                bgcolor: `${implementationMeta.color}18`,
+                border: `1px solid ${implementationMeta.color}55`,
+                fontWeight: 650,
+                flexShrink: 0,
+              }}
+            />
           </Box>
-          <Typography sx={{ color: c.text.tertiary, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {activeSwarmModel || 'No model selected'}{swarmState.actionLoading ? ` · ${swarmActionStatusLabel} ${swarmActionElapsedLabel}` : ''}
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, mt: 0.25, minWidth: 0 }}>
+            <Typography sx={{ color: c.text.tertiary, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {activeSwarmModel || 'No model selected'}
+            </Typography>
+            {swarmState.actionLoading && (
+              <Typography sx={{ color: c.text.tertiary, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                {swarmActionStatusLabel} · {swarmActionElapsedLabel}
+              </Typography>
+            )}
+          </Box>
         </Box>
         {(stableOutputBridgeOutputId || canCreateOutputBridge) && (
           <Button
@@ -2133,16 +2163,6 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
           </Button>
         )}
 
-        <Chip
-          size="small"
-          label={implementationMeta.label}
-          sx={{
-            color: implementationMeta.color,
-            bgcolor: `${implementationMeta.color}18`,
-            border: `1px solid ${implementationMeta.color}55`,
-            fontWeight: 650,
-          }}
-        />
         <IconButton
           size="small"
           onClick={(e) => e.stopPropagation()}

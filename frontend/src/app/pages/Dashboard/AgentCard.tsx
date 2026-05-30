@@ -1038,21 +1038,35 @@ const AgentCard: React.FC<Props> = ({
               minWidth: 0,
               display: 'flex',
               alignItems: 'center',
-              gap: 1,
+              gap: 0.75,
               borderRadius: 1,
             }}
           >
-            <Typography sx={{ color: c.text.primary, fontWeight: 600, fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <Typography sx={{ color: c.text.primary, fontWeight: 650, fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
               {session.display_label || session.name}
             </Typography>
+            <Chip
+              label={session.mode}
+              size="small"
+              sx={{
+                height: 22,
+                fontSize: '0.68rem',
+                fontWeight: 650,
+                color: c.text.secondary,
+                bgcolor: c.bg.secondary,
+                border: `1px solid ${c.border.subtle}`,
+                flexShrink: 0,
+              }}
+            />
             <Chip
               label={session.status.replace('_', ' ')}
               size="small"
               sx={{
                 bgcolor: statusStyle.bg,
                 color: statusStyle.color,
-                fontWeight: 600,
-                fontSize: '0.7rem',
+                border: `1px solid ${statusStyle.color}45`,
+                fontWeight: 650,
+                fontSize: '0.68rem',
                 height: 22,
                 flexShrink: 0,
               }}
@@ -1086,13 +1100,10 @@ const AgentCard: React.FC<Props> = ({
           flexShrink: 0,
           ...(isDraft && { visibility: 'hidden' }),
         }}>
-          <Typography variant="caption" sx={{ color: c.text.tertiary }}>
+          <Typography variant="caption" sx={{ color: c.text.tertiary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {friendlyModelLabel}
           </Typography>
-          <Typography variant="caption" sx={{ color: c.text.tertiary }}>
-            {session.mode}
-          </Typography>
-          <Typography variant="caption" sx={{ color: c.text.tertiary }}>
+          <Typography variant="caption" sx={{ color: c.text.tertiary, flexShrink: 0 }}>
             {fmtDurationMs(agentWorkTime.lastMs)}
           </Typography>
           {session.cost_usd > 0 && hasApiKey && (
