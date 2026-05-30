@@ -18,6 +18,8 @@ TRACE_KIND = "process_trace_item"
 TRACE_VERSION = "openswarm.process_trace_item.v1"
 PANEL_KIND = "process_trace_panel"
 PANEL_VERSION = "openswarm.process_trace_panel.v1"
+TURN_TRACE_KIND = "process_trace_turn_container"
+TURN_TRACE_VERSION = "openswarm.process_trace_turn_container.v1"
 
 ALLOWED_KINDS = {
     "context",
@@ -212,6 +214,114 @@ def append_process_trace_item(panel: dict[str, Any], item: dict[str, Any]) -> di
     updated["items"] = items
     updated["item_count"] = len(items)
     return updated
+
+
+def build_process_trace_turn_container(
+    *,
+    items: list[dict[str, Any]] | None = None,
+    turn_trace_id: Any = None,
+    title: Any = "Thought",
+    status: Any = "completed",
+    turn_id: Any = None,
+    message_id: Any = None,
+    action_id: Any = None,
+    started_at: Any = None,
+    finished_at: Any = None,
+    duration_ms: Any = None,
+    child_trace_ids: Any = None,
+    output_message_id: Any = None,
+    related_task_ids: Any = None,
+    related_agent_ids: Any = None,
+    related_miniagent_ids: Any = None,
+    evidence_refs: Any = None,
+    artifact_refs: Any = None,
+    default_collapsed_after_finish: bool = True,
+    default_expanded_while_running: bool = False,
+    visible_to_user: bool = True,
+    internal_only: bool = False,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build one privacy-safe turn/action work trace container.
+
+    The turn container is the parent object for a chat turn or action. It groups
+    ProcessTraceItem children such as ReasoningCore, ModelCore, ToolCore,
+    FileCore, EvidenceCore, ValidationCore, and Debug JSON. It is intentionally
+    side-effect-free and does not persist, call models, read files, or mutate
+    runtime state.
+    """
+
+    safe_items = [deepcopy(_safe(item)) for item in (items or [])]
+    inferred_child_ids = [
+        str(item.get("trace_id"))
+        for item in safe_items
+        if isinstance(item, dict) and str(item.get("trace_id") or "").strip()
+    ]
+    normalized_status = _normalize_status(status)
+    normalized_child_ids = _list(child_trace_ids) if child_trace_ids is not None else inferred_child_ids
+    created_at = _now()
+
+    return _safe({
+        "turn_trace_kind": TURN_TRACE_KIND,
+        "turn_trace_version": TURN_TRACE_VERSION,
+        "turn_trace_id": _text(turn_trace_id, uuid4().hex),
+        "title": _text(title, "Thought"),
+        "status": normalized_status,
+        "turn_id": _text(turn_id),
+        "message_id": _text(message_id),
+        "action_id": _text(action_id),
+        "started_at": _optional_text(started_at),
+        "finished_at": _optional_text(finished_at),
+        "duration_ms": _int_or_none(duration_ms),
+        "default_collapsed_after_finish": bool(default_collapsed_after_finish),
+        "default_expanded_while_running": bool(default_expanded_while_running),
+        "child_trace_ids": normalized_child_ids,
+        "item_count": len(safe_items),
+        "items": safe_items,
+        "output_message_id": _text(output_message_id),
+        "related_task_ids": _list(related_task_ids),
+        "related_agent_ids": _list(related_agent_ids),
+        "related_miniagent_ids": _list(related_miniagent_ids),
+        "evidence_refs": _list(evidence_refs),
+        "artifact_refs": _list(artifact_refs),
+        "visible_to_user": bool(visible_to_user),
+        "internal_only": bool(internal_only),
+        "metadata": _safe(dict(metadata or {})),
+        "created_at": created_at,
+    })
+
+
+def append_process_trace_turn_item(container: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    updated = deepcopy(_safe(container or build_process_trace_turn_container()))
+    safe_item = deepcopy(_safe(item))
+    items = _list(updated.get("items"))
+    items.append(safe_item)
+    updated["items"] = items
+    updated["item_count"] = len(items)
+
+    trace_id = safe_item.get("trace_id") if isinstance(safe_item, dict) else None
+    child_trace_ids = _list(updated.get("child_trace_ids"))
+    if trace_id and trace_id not in child_trace_ids:
+        child_trace_ids.append(trace_id)
+    updated["child_trace_ids"] = child_trace_ids
+    return updated
+
+
+def summarize_process_trace_turn_container(container: dict[str, Any]) -> dict[str, Any]:
+    snapshot = deepcopy(_safe(container or {}))
+    items = _list(snapshot.get("items"))
+    return {
+        "summary_kind": "process_trace_turn_container_summary",
+        "turn_trace_id": snapshot.get("turn_trace_id", ""),
+        "title": snapshot.get("title", "Thought"),
+        "status": snapshot.get("status", "planned"),
+        "duration_ms": snapshot.get("duration_ms"),
+        "item_count": len(items),
+        "child_trace_count": len(_list(snapshot.get("child_trace_ids"))),
+        "evidence_count": len(_list(snapshot.get("evidence_refs"))),
+        "artifact_count": len(_list(snapshot.get("artifact_refs"))),
+        "visible_to_user": bool(snapshot.get("visible_to_user", True)),
+        "internal_only": bool(snapshot.get("internal_only", False)),
+    }
 
 
 def _status_from_severity(severity: Any) -> str:

@@ -4,6 +4,9 @@ from backend.apps.runtime_timing import finish_runtime_timer, start_runtime_time
 from backend.apps.swarms.process_trace_item import (
     build_process_trace_item,
     build_process_trace_panel,
+    build_process_trace_turn_container,
+    append_process_trace_turn_item,
+    summarize_process_trace_turn_container,
     append_process_trace_item,
     process_trace_item_from_timeline_event,
     process_trace_item_from_runtime_metric,
@@ -109,3 +112,82 @@ def test_mapping_from_runtime_metric():
     assert item["status"] == "completed"
     assert item["duration_ms"] == 1000
     assert item["details"]["scope"] == "tool_call"
+
+
+def test_build_process_trace_turn_container_shape_and_defaults():
+    item = build_process_trace_item(trace_id="reasoning1", kind="summary", title="Reasoning summary")
+
+    container = build_process_trace_turn_container(
+        items=[item],
+        turn_trace_id="turn1",
+        title="Thought",
+        status="completed",
+        message_id="msg1",
+        output_message_id="assistant1",
+        duration_ms=1234,
+        related_agent_ids=["agent1"],
+    )
+
+    assert container["turn_trace_kind"] == "process_trace_turn_container"
+    assert container["turn_trace_version"] == "openswarm.process_trace_turn_container.v1"
+    assert container["turn_trace_id"] == "turn1"
+    assert container["title"] == "Thought"
+    assert container["status"] == "completed"
+    assert container["message_id"] == "msg1"
+    assert container["output_message_id"] == "assistant1"
+    assert container["duration_ms"] == 1234
+    assert container["item_count"] == 1
+    assert container["child_trace_ids"] == ["reasoning1"]
+    assert container["default_collapsed_after_finish"] is True
+    assert container["default_expanded_while_running"] is False
+    assert container["visible_to_user"] is True
+    assert container["internal_only"] is False
+
+
+def test_process_trace_turn_container_redacts_sensitive_metadata():
+    container = build_process_trace_turn_container(
+        metadata={"safe": "ok", "prompt": "hidden prompt", "nested": {"api_key": "secret", "safe": True}},
+        items=[build_process_trace_item(details={"chain_of_thought": "private", "count": 1})],
+    )
+
+    rendered = str(container)
+    assert "hidden prompt" not in rendered
+    assert "secret" not in rendered
+    assert "private" not in rendered
+    assert container["metadata"] == {"safe": "ok", "nested": {"safe": True}}
+    assert container["items"][0]["details"] == {"count": 1}
+
+
+def test_append_process_trace_turn_item_does_not_mutate_inputs():
+    container = build_process_trace_turn_container(turn_trace_id="turn1")
+    item = build_process_trace_item(trace_id="tool1", kind="tool")
+    original_container = deepcopy(container)
+    original_item = deepcopy(item)
+
+    updated = append_process_trace_turn_item(container, item)
+
+    assert updated["item_count"] == 1
+    assert updated["child_trace_ids"] == ["tool1"]
+    assert container == original_container
+    assert item == original_item
+
+
+def test_summarize_process_trace_turn_container_does_not_mutate_input():
+    item = build_process_trace_item(trace_id="model1", kind="model")
+    container = build_process_trace_turn_container(
+        turn_trace_id="turn1",
+        items=[item],
+        evidence_refs=["ev1"],
+        artifact_refs=["art1"],
+    )
+    original = deepcopy(container)
+
+    summary = summarize_process_trace_turn_container(container)
+
+    assert summary["summary_kind"] == "process_trace_turn_container_summary"
+    assert summary["turn_trace_id"] == "turn1"
+    assert summary["item_count"] == 1
+    assert summary["child_trace_count"] == 1
+    assert summary["evidence_count"] == 1
+    assert summary["artifact_count"] == 1
+    assert container == original
