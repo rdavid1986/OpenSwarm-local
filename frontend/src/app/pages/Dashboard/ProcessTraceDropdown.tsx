@@ -278,6 +278,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
 }) => {
   const c = useClaudeTokens();
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const [debugExpanded, setDebugExpanded] = useState(showRawDetails);
 
   const shouldHideTraceItem = item.internal_only || item.visible_to_user === false;
 
@@ -291,6 +292,11 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
   const badge = redactTraceText(item.badge || STATUS_LABELS[status] || status);
   const evidenceCount = Array.isArray(item.evidence_refs) ? item.evidence_refs.length : 0;
   const artifactCount = Array.isArray(item.artifact_refs) ? item.artifact_refs.length : 0;
+  const hasDebugDetails = Boolean(item.details && Object.keys(item.details).length > 0);
+  const sanitizedDebugDetails = useMemo(
+    () => (hasDebugDetails ? sanitizeTraceValue(item.details) : null),
+    [hasDebugDetails, item.details],
+  );
 
   const statusColor = useMemo(() => {
     if (status === 'completed') return c.status.success;
@@ -312,9 +318,8 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
     if (durationLabel) rows.push(['Duration', durationLabel]);
     if (evidenceCount > 0) rows.push(['Evidence refs', evidenceCount]);
     if (artifactCount > 0) rows.push(['Artifact refs', artifactCount]);
-    if (showRawDetails && item.details && Object.keys(item.details).length > 0) rows.push(['Details', sanitizeTraceValue(item.details)]);
     return rows;
-  }, [item, durationLabel, evidenceCount, artifactCount, showRawDetails]);
+  }, [item, durationLabel, evidenceCount, artifactCount]);
 
   if (shouldHideTraceItem) {
     return null;
@@ -483,6 +488,71 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
                   </Typography>
                 </Box>
               ))}
+            </Box>
+          )}
+
+          {hasDebugDetails && (
+            <Box sx={{ mt: detailRows.length > 0 ? 0.9 : 0 }}>
+              <Box
+                component="button"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setDebugExpanded((value) => !value);
+                }}
+                sx={{
+                  width: '100%',
+                  border: `1px solid ${c.border.subtle}`,
+                  borderRadius: `${c.radius.sm}px`,
+                  bgcolor: c.bg.elevated,
+                  color: c.text.tertiary,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 1,
+                  px: 0.75,
+                  py: 0.55,
+                  fontFamily: c.font.sans,
+                  fontSize: '0.68rem',
+                  fontWeight: 700,
+                  textAlign: 'left',
+                  '&:hover': { bgcolor: c.bg.secondary },
+                }}
+              >
+                <span>Debug data · redacted JSON</span>
+                <ExpandMoreIcon
+                  sx={{
+                    fontSize: 16,
+                    transform: debugExpanded ? 'rotate(0deg)' : 'rotate(-90deg)',
+                    transition: 'transform 0.2s ease',
+                    color: c.text.ghost,
+                  }}
+                />
+              </Box>
+
+              <Collapse in={debugExpanded} timeout={160}>
+                <Typography
+                  component="pre"
+                  sx={{
+                    mt: 0.65,
+                    mb: 0,
+                    p: 0.75,
+                    border: `1px solid ${c.border.subtle}`,
+                    borderRadius: `${c.radius.sm}px`,
+                    bgcolor: c.bg.page,
+                    color: c.text.tertiary,
+                    fontSize: '0.66rem',
+                    fontFamily: c.font.mono,
+                    whiteSpace: 'pre-wrap',
+                    overflowWrap: 'anywhere',
+                    maxHeight: 220,
+                    overflow: 'auto',
+                  }}
+                >
+                  {stringifyDetail(sanitizedDebugDetails)}
+                </Typography>
+              </Collapse>
             </Box>
           )}
         </Box>
