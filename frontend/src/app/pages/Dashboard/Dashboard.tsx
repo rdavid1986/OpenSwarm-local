@@ -9,6 +9,7 @@ import { store } from '@/shared/state/store';
 import {
   fetchSessions,
   fetchHistory,
+  createDraftSession,
   collapseSession,
   closeSession,
   duplicateSession,
@@ -774,20 +775,28 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     return () => clearTimeout(timer);
   }, [isActive, layoutInitialized, canvas.actions, pendingFocusAgentId]);
 
+  const focusAgentCardWithRetry = useCallback((agentId: string, attempts = 10) => {
+    const card = store.getState().dashboardLayout.cards[agentId];
+    if (card) {
+      hasFittedRef.current = true;
+      canvas.actions.fitToCards([{ x: card.x, y: card.y, width: card.width, height: card.height }], 1.15, true);
+      handleHighlightCard(agentId);
+      dispatch(bringToFront({ id: agentId, type: 'agent' }));
+      selection.selectCard(agentId, 'agent', false);
+      return;
+    }
+    if (attempts > 0) {
+      window.setTimeout(() => focusAgentCardWithRetry(agentId, attempts - 1), 120);
+    }
+  }, [canvas.actions, dispatch, handleHighlightCard, selection]);
+
   useEffect(() => {
     if (!isActive) return;  // Defer focus animation until dashboard is visible
     if (!pendingFocusAgentId || !layoutInitialized) return;
     const agentId = pendingFocusAgentId;
     dispatch(clearPendingFocusAgentId());
-    hasFittedRef.current = true;
-    setTimeout(() => {
-      const card = store.getState().dashboardLayout.cards[agentId];
-      if (card) {
-        canvas.actions.fitToCards([{ x: card.x, y: card.y, width: card.width, height: card.height }], 1.15, true);
-        handleHighlightCard(agentId);
-      }
-    }, 350);
-  }, [isActive, pendingFocusAgentId, layoutInitialized, dispatch, canvas.actions, handleHighlightCard]);
+    window.setTimeout(() => focusAgentCardWithRetry(agentId), 120);
+  }, [isActive, pendingFocusAgentId, layoutInitialized, dispatch, focusAgentCardWithRetry]);
 
   // Auto-focus a newly created browser card. The reducer that handles
   // addBrowserCard sets pendingFocusBrowserId to the new card's id; this
@@ -1440,6 +1449,10 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
 
       const config: AgentConfig = { name: 'New chat', model, mode, dashboard_id: dashboardId };
 
+      dispatch(createDraftSession({ draftId, mode, model, setActive: true }));
+      dispatch(ensureAgentCard({ sessionId: draftId, expandedSessionIds: [...expandedSessionIds, draftId] }));
+      window.setTimeout(() => focusAgentCardWithRetry(draftId), 20);
+
       dispatch(
         launchAndSendFirstMessage({
           draftId,
@@ -1476,14 +1489,9 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
 
           setAutoFocusSessionId(realId);
           dispatch(expandSession(realId));
+          dispatch(ensureAgentCard({ sessionId: realId, expandedSessionIds: store.getState().agents.expandedSessionIds }));
 
-          setTimeout(() => {
-            const card = store.getState().dashboardLayout.cards[realId];
-            if (card) {
-              canvas.actions.fitToCards([{ x: card.x, y: card.y, width: card.width, height: card.height }], 1.15, true);
-              handleHighlightCard(realId);
-            }
-          }, 200);
+          window.setTimeout(() => focusAgentCardWithRetry(realId), 80);
 
           if (dashboardId) {
             const currentSessions = store.getState().agents.sessions;
@@ -1505,7 +1513,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
         }
       });
     },
-    [canvas.viewportRef, canvas.actions, dispatch, dashboardId, handleHighlightCard],
+    [canvas.viewportRef, dispatch, dashboardId, expandedSessionIds, focusAgentCardWithRetry],
   );
 
   const handleAddView = useCallback((outputId: string) => {

@@ -202,11 +202,16 @@ async def service_lifespan():
     except Exception as e:
         logger.debug(f"Service startup event failed (non-critical): {e}")
 
-    try:
-        from backend.apps.nine_router import ensure_running as ensure_9router
-        await ensure_9router()
-    except Exception as e:
-        logger.debug(f"9Router auto-start skipped: {e}")
+    async def _ensure_9router_without_blocking_startup():
+        try:
+            from backend.apps.nine_router import ensure_running as ensure_9router
+            await asyncio.wait_for(ensure_9router(), timeout=8.0)
+        except asyncio.TimeoutError:
+            logger.warning("9Router auto-start timed out; backend startup continues.")
+        except Exception as e:
+            logger.debug(f"9Router auto-start skipped: {e}")
+
+    asyncio.create_task(_ensure_9router_without_blocking_startup())
 
     _pulse_task = asyncio.create_task(_pulse_loop())
     _drain_task = asyncio.create_task(_drain_loop())

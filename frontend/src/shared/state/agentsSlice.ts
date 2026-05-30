@@ -542,10 +542,10 @@ const agentsSlice = createSlice({
           }
         }
       },
-      prepare(opts?: { mode?: string; setActive?: boolean; targetDirectory?: string; model?: string; provider?: string; thinkingLevel?: 'off' | 'low' | 'medium' | 'high' | 'auto' }) {
+      prepare(opts?: { draftId?: string; mode?: string; setActive?: boolean; targetDirectory?: string; model?: string; provider?: string; thinkingLevel?: 'off' | 'low' | 'medium' | 'high' | 'auto' }) {
         return {
           payload: {
-            draftId: `draft-${Date.now().toString(36)}`,
+            draftId: opts?.draftId || `draft-${Date.now().toString(36)}`,
             mode: opts?.mode || 'agent',
             setActive: opts?.setActive !== false,
             targetDirectory: opts?.targetDirectory,
