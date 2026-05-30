@@ -2334,10 +2334,25 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                     {messageTraceItems.length > 0 && (
                       <Box sx={{ mb: 1 }}>
                         <ProcessTraceTurnDropdown
-                          title="Pensado"
-                          status="completed"
-                          duration_ms={isLatestCompletedAssistantTrace ? lastSwarmActionDurationMs : undefined}
-                          items={messageTraceItems}
+                          container={{
+                            turn_trace_kind: 'process_trace_turn_container',
+                            turn_trace_version: 'openswarm.process_trace_turn_container.v1',
+                            turn_trace_id: `swarm-message-turn-${message.id || idx}`,
+                            title: 'Pensado',
+                            status: 'completed',
+                            message_id: String(message.id || idx),
+                            output_message_id: String(message.id || idx),
+                            duration_ms: isLatestCompletedAssistantTrace ? lastSwarmActionDurationMs : undefined,
+                            default_collapsed_after_finish: true,
+                            default_expanded_while_running: false,
+                            child_trace_ids: messageTraceItems.map((trace) => trace.trace_id).filter(Boolean),
+                            related_task_ids: activeSwarmId ? [activeSwarmId] : [],
+                            items: messageTraceItems,
+                            metadata: {
+                              source: 'swarm_chat_message',
+                              visible_message_index: idx,
+                            },
+                          }}
                           compact
                           defaultExpanded={false}
                         />
@@ -2916,38 +2931,51 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                   }}
                 >
                   <ProcessTraceTurnDropdown
-                    title={swarmActionStatusLabel === 'Thinking' ? 'Pensando' : swarmActionStatusLabel}
-                    status="running"
-                    duration_ms={swarmActionElapsedMs}
+                    container={{
+                      turn_trace_kind: 'process_trace_turn_container',
+                      turn_trace_version: 'openswarm.process_trace_turn_container.v1',
+                      turn_trace_id: `swarm-live-turn-${activeSwarmId || swarmCardId}`,
+                      title: swarmActionStatusLabel === 'Thinking' ? 'Pensando' : swarmActionStatusLabel,
+                      status: 'running',
+                      duration_ms: swarmActionElapsedMs,
+                      default_collapsed_after_finish: false,
+                      default_expanded_while_running: true,
+                      child_trace_ids: [
+                        `swarm-live-reasoning-${activeSwarmId || swarmCardId}`,
+                        `swarm-live-model-${activeSwarmId || swarmCardId}`,
+                      ],
+                      related_task_ids: activeSwarmId ? [activeSwarmId] : [],
+                      items: [
+                        {
+                          trace_id: `swarm-live-reasoning-${activeSwarmId || swarmCardId}`,
+                          kind: 'reasoning',
+                          subsystem: 'ReasoningCore',
+                          icon_id: 'reasoning-core',
+                          title: 'Razonamiento operativo en curso',
+                          summary: lastSubmittedPrompt
+                            ? `Evaluando la solicitud visible: "${lastSubmittedPrompt.length > 180 ? `${lastSubmittedPrompt.slice(0, 180).trimEnd()}…` : lastSubmittedPrompt}".`
+                            : 'Evaluando el turno actual y preparando una respuesta útil.',
+                          status: 'running',
+                          duration_ms: swarmActionElapsedMs,
+                          badge: 'live',
+                          related_task_id: activeSwarmId || undefined,
+                        },
+                        {
+                          trace_id: `swarm-live-model-${activeSwarmId || swarmCardId}`,
+                          kind: 'model',
+                          subsystem: 'ModelCore',
+                          icon_id: 'model-core',
+                          title: 'Modelo generando respuesta',
+                          summary: `El modelo está trabajando en este turno. Se muestra un resumen operativo, no razonamiento privado paso a paso.`,
+                          status: 'running',
+                          duration_ms: swarmActionElapsedMs,
+                          badge: 'running',
+                          related_task_id: activeSwarmId || undefined,
+                        },
+                      ],
+                      metadata: { source: 'swarm_live_action' },
+                    }}
                     defaultExpanded={false}
-                    items={[
-                      {
-                        trace_id: `swarm-live-reasoning-${activeSwarmId || swarmCardId}`,
-                        kind: 'reasoning',
-                        subsystem: 'ReasoningCore',
-                        icon_id: 'reasoning-core',
-                        title: 'Razonamiento operativo en curso',
-                        summary: lastSubmittedPrompt
-                          ? `Evaluando la solicitud visible: "${lastSubmittedPrompt.length > 180 ? `${lastSubmittedPrompt.slice(0, 180).trimEnd()}…` : lastSubmittedPrompt}".`
-                          : 'Evaluando el turno actual y preparando una respuesta útil.',
-                        status: 'running',
-                        duration_ms: swarmActionElapsedMs,
-                        badge: 'live',
-                        related_task_id: activeSwarmId || undefined,
-                      },
-                      {
-                        trace_id: `swarm-live-model-${activeSwarmId || swarmCardId}`,
-                        kind: 'model',
-                        subsystem: 'ModelCore',
-                        icon_id: 'model-core',
-                        title: 'Modelo generando respuesta',
-                        summary: `El modelo está trabajando en este turno. Se muestra un resumen operativo, no razonamiento privado paso a paso.`,
-                        status: 'running',
-                        duration_ms: swarmActionElapsedMs,
-                        badge: 'running',
-                        related_task_id: activeSwarmId || undefined,
-                      },
-                    ]}
                   />
                 </Box>
               )}

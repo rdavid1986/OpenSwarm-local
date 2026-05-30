@@ -1199,29 +1199,38 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                     <ToolCallBubble call={item.call} result={item.result} isPending={isPending} sessionId={session.id} />
                     <Box sx={{ mt: 0.65, mb: 0.75 }}>
                       <ProcessTraceTurnDropdown
-                        title={isPending ? 'Ejecutando' : 'Ejecutado'}
-                        status={isPending ? 'running' : 'completed'}
-                        defaultExpanded={isPending}
-                        items={[{
-                          trace_id: `agent-tool-trace-${item.id}`,
-                          kind: 'tool',
-                          subsystem: 'ToolCore',
-                          icon_id: 'tool-core',
-                          title: isPending ? 'Tool action live' : 'Tool action',
-                          summary: isPending ? `Running ${toolName}.` : `Tool ${toolName} completed or returned a result.`,
+                        container={{
+                          turn_trace_kind: 'process_trace_turn_container',
+                          turn_trace_version: 'openswarm.process_trace_turn_container.v1',
+                          turn_trace_id: `agent-tool-turn-${item.id}`,
+                          title: isPending ? 'Ejecutando' : 'Ejecutado',
                           status: isPending ? 'running' : 'completed',
-                          badge: isPending ? 'running' : 'tool',
-                          related_agent_id: session.id,
-                          related_action_id: toolName,
-                          details: {
-                            mode,
-                            model,
-                            tool: toolName,
-                            pending: isPending,
-                            result_available: item.result !== null,
-                            branch_id: (item.call as any)?.branch_id || null,
-                          },
-                        }]}
+                          default_expanded_while_running: isPending,
+                          child_trace_ids: [`agent-tool-trace-${item.id}`],
+                          related_agent_ids: [session.id],
+                          items: [{
+                            trace_id: `agent-tool-trace-${item.id}`,
+                            kind: 'tool',
+                            subsystem: 'ToolCore',
+                            icon_id: 'tool-core',
+                            title: isPending ? 'Tool action live' : 'Tool action',
+                            summary: isPending ? `Running ${toolName}.` : `Tool ${toolName} completed or returned a result.`,
+                            status: isPending ? 'running' : 'completed',
+                            badge: isPending ? 'running' : 'tool',
+                            related_agent_id: session.id,
+                            related_action_id: toolName,
+                            details: {
+                              mode,
+                              model,
+                              tool: toolName,
+                              pending: isPending,
+                              result_available: item.result !== null,
+                              branch_id: (item.call as any)?.branch_id || null,
+                            },
+                          }],
+                          metadata: { source: 'agent_tool_pair' },
+                        }}
+                        defaultExpanded={isPending}
                       />
                     </Box>
                     {compactionChip}
@@ -1244,42 +1253,56 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                   {msg.role === 'assistant' && (
                     <Box sx={{ mb: 0.75 }}>
                       <ProcessTraceTurnDropdown
-                        title="Thought"
-                        status="completed"
-                        duration_ms={(msg as any).elapsed_ms || null}
-                        bare
-                        items={[
-                          {
-                            trace_id: `agent-reasoning-summary-${msg.id}`,
-                            kind: 'reasoning',
-                            subsystem: 'ReasoningCore',
-                            icon_id: 'reasoning-core',
-                            title: 'Reasoning summary',
-                            summary: reasoningSummary,
-                            status: 'completed',
-                            badge: 'summary',
-                            related_agent_id: session.id,
-                          },
-                          {
-                            trace_id: `agent-message-trace-${msg.id}`,
-                            kind: 'debug',
-                            subsystem: 'TraceCore',
-                            icon_id: 'trace-core',
-                            title: 'Debug JSON',
-                            summary: 'Technical response metadata for developers.',
-                            status: 'completed',
-                            badge: 'JSON',
-                            metadata: { display_mode: 'debug_json' },
-                            details: {
-                              mode,
-                              model,
-                              role: msg.role,
-                              message_id: msg.id,
-                              branch_id: (msg as any).branch_id || null,
-                              latest_assistant_message: msg.id === latestAssistantMessageId,
+                        container={{
+                          turn_trace_kind: 'process_trace_turn_container',
+                          turn_trace_version: 'openswarm.process_trace_turn_container.v1',
+                          turn_trace_id: `agent-assistant-turn-${msg.id}`,
+                          title: 'Thought',
+                          status: 'completed',
+                          output_message_id: msg.id,
+                          duration_ms: (msg as any).elapsed_ms || null,
+                          default_collapsed_after_finish: true,
+                          default_expanded_while_running: false,
+                          child_trace_ids: [`agent-reasoning-summary-${msg.id}`, `agent-message-trace-${msg.id}`],
+                          related_agent_ids: [session.id],
+                          items: [
+                            {
+                              trace_id: `agent-reasoning-summary-${msg.id}`,
+                              kind: 'reasoning',
+                              subsystem: 'ReasoningCore',
+                              icon_id: 'reasoning-core',
+                              title: 'Reasoning summary',
+                              summary: reasoningSummary,
+                              status: 'completed',
+                              badge: 'summary',
+                              related_agent_id: session.id,
                             },
+                            {
+                              trace_id: `agent-message-trace-${msg.id}`,
+                              kind: 'debug',
+                              subsystem: 'TraceCore',
+                              icon_id: 'trace-core',
+                              title: 'Debug JSON',
+                              summary: 'Technical response metadata for developers.',
+                              status: 'completed',
+                              badge: 'JSON',
+                              metadata: { display_mode: 'debug_json' },
+                              details: {
+                                mode,
+                                model,
+                                role: msg.role,
+                                message_id: msg.id,
+                                branch_id: (msg as any).branch_id || null,
+                                latest_assistant_message: msg.id === latestAssistantMessageId,
+                              },
+                            },
+                          ],
+                          metadata: {
+                            source: 'agent_assistant_message',
+                            reasoning_summary_source: 'operational_summary',
                           },
-                        ]}
+                        }}
+                        bare
                       />
                     </Box>
                   )}
