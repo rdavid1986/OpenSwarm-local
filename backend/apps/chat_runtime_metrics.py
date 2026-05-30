@@ -349,49 +349,127 @@ def dump_chat_response_metric(metric: ChatResponseMetric | dict[str, Any]) -> di
     return _json_safe(dumped)
 
 
+def _contains_any(haystack: str, needles: tuple[str, ...]) -> bool:
+    return any(needle in haystack for needle in needles)
+
+
+def _safe_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip().lower() for item in value if str(item).strip()]
+
+
 def classify_chat_metric_safe_metadata(input: dict[str, Any] | None) -> dict[str, Any]:
+    """Classify a chat metric using only safe routing/runtime metadata.
+
+    This helper must not inspect prompt, response, message, body, text or raw
+    content fields. It is intentionally coarse, deterministic and privacy-safe.
+    """
+
     data = dict(input or {})
     mode = str(data.get("mode") or "").strip().lower()
     route = str(data.get("route") or "").strip().lower()
     flow = str(data.get("flow") or "").strip().lower()
+    artifact_kind = str(data.get("artifact_kind") or "").strip().lower()
     card_type = _normalize_card_type(data.get("card_type"))
+    used_tools = _safe_list(data.get("used_tools"))
+    used_actions = _safe_list(data.get("used_actions"))
+    used_skills = _safe_list(data.get("used_skills"))
 
     task_type = "unknown"
     project_type = "unknown"
     intent_type = "chat"
     complexity_level = "low"
+    warnings: list[str] = []
 
-    haystack = " ".join([mode, route, flow])
-    if "debug" in haystack:
-        task_type = "debug"
-        intent_type = "debug"
+    haystack = " ".join([
+        mode,
+        route,
+        flow,
+        artifact_kind,
+        " ".join(used_tools),
+        " ".join(used_actions),
+        " ".join(used_skills),
+    ])
+
+    if _contains_any(haystack, ("skill_import", "import_skill", "skill import")):
+        task_type = "skill_import"
+        project_type = "skill"
+        intent_type = "skill_import"
         complexity_level = "medium"
-    elif "skill" in haystack:
+    elif _contains_any(haystack, ("skill_review", "reviewer", "improvement_proposal", "proposal_diff")):
+        task_type = "skill_review"
+        project_type = "skill"
+        intent_type = "review"
+        complexity_level = "medium"
+    elif _contains_any(haystack, ("skill_builder", "skill-builder", "skill builder")) or mode == "skill_builder":
         task_type = "skill_builder"
         project_type = "skill"
         intent_type = "skill_creation"
         complexity_level = "medium"
-    elif "app_builder" in haystack or "implementation" in haystack:
+    elif _contains_any(haystack, ("refine", "refinement", "candidate_iteration", "preview_refinement")):
+        task_type = "refinement"
+        project_type = "application" if artifact_kind or data.get("created_output") else "unknown"
+        intent_type = "refine"
+        complexity_level = "medium"
+    elif _contains_any(haystack, ("debug", "fix_error", "bug", "diagnostic")):
+        task_type = "debug"
+        intent_type = "debug"
+        complexity_level = "medium"
+    elif _contains_any(haystack, ("browser", "research", "web_grounding", "web_search")):
+        task_type = "research"
+        project_type = "research"
+        intent_type = "research"
+        complexity_level = "medium"
+    elif _contains_any(haystack, ("mcp", "tool", "action", "safeshell")) or used_tools or used_actions:
+        task_type = "tool_action"
+        intent_type = "execute"
+        complexity_level = "medium"
+    elif _contains_any(haystack, ("game", "unity", "blender", "3d", "g3d")):
+        task_type = "game_3d"
+        project_type = "game_3d"
+        intent_type = "build"
+        complexity_level = "high"
+    elif _contains_any(haystack, ("desktop", "windows_app", "macos", "linux_app")):
+        task_type = "desktop_app"
+        project_type = "desktop_app"
+        intent_type = "build"
+        complexity_level = "high"
+    elif _contains_any(haystack, ("mobile", "android", "ios")):
+        task_type = "mobile_app"
+        project_type = "mobile_app"
+        intent_type = "build"
+        complexity_level = "high"
+    elif _contains_any(haystack, ("static_app", "landing", "website", "web_app", "app_builder", "implementation")):
         task_type = "app_builder"
         project_type = "application"
         intent_type = "build"
         complexity_level = "high"
-    elif "plan" in haystack:
+    elif _contains_any(haystack, ("plan", "planner", "dag")):
         task_type = "planning"
         intent_type = "plan"
         complexity_level = "medium"
+    elif _contains_any(haystack, ("config", "configuration", "settings")):
+        task_type = "configuration"
+        intent_type = "configure"
+        complexity_level = "low"
     elif mode == "ask" or card_type in {"swarm", "agent"}:
         task_type = "ask"
+
+    if bool(data.get("created_output")) and project_type == "unknown":
+        project_type = "application"
+    if bool(data.get("requires_research")) and task_type not in {"research", "skill_import", "skill_review"}:
+        warnings.append("requires_research_without_research_task_type")
 
     return {
         "project_type": project_type,
         "task_type": task_type,
         "intent_type": intent_type,
         "complexity_level": complexity_level,
-        "requires_tools": bool(data.get("used_tools")),
-        "requires_research": bool(data.get("requires_research")),
+        "requires_tools": bool(used_tools or used_actions or data.get("used_tools") or data.get("used_actions")),
+        "requires_research": bool(data.get("requires_research") or task_type == "research"),
         "requires_swarm": card_type == "swarm",
         "creates_output": bool(data.get("created_output")),
         "confidence": "low" if task_type == "unknown" else "medium",
-        "warnings": [],
+        "warnings": warnings,
     }

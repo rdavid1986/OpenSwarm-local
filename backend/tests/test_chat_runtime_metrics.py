@@ -109,3 +109,47 @@ def test_classify_chat_metric_safe_metadata_uses_mode_route_flow_without_content
     assert classify_chat_metric_safe_metadata({"route": "app_builder", "card_type": "swarm"})["project_type"] == "application"
     assert classify_chat_metric_safe_metadata({"flow": "skill_builder"})["task_type"] == "skill_builder"
     assert classify_chat_metric_safe_metadata({})["task_type"] == "unknown"
+
+
+def test_classify_chat_metric_safe_metadata_covers_safe_task_categories():
+    cases = [
+        ({"route": "skill_import"}, "skill_import", "skill", "skill_import"),
+        ({"route": "skill_review"}, "skill_review", "skill", "review"),
+        ({"flow": "preview_refinement", "created_output": True}, "refinement", "application", "refine"),
+        ({"mode": "browser-agent", "requires_research": True}, "research", "research", "research"),
+        ({"used_tools": ["SafeShell"], "used_actions": ["run_command"]}, "tool_action", "unknown", "execute"),
+        ({"artifact_kind": "unity_game_3d"}, "game_3d", "game_3d", "build"),
+        ({"route": "desktop_windows_app"}, "desktop_app", "desktop_app", "build"),
+        ({"route": "android_mobile"}, "mobile_app", "mobile_app", "build"),
+        ({"artifact_kind": "static_app"}, "app_builder", "application", "build"),
+        ({"mode": "configuration"}, "configuration", "unknown", "configure"),
+    ]
+
+    for metadata, task_type, project_type, intent_type in cases:
+        classified = classify_chat_metric_safe_metadata(metadata)
+        assert classified["task_type"] == task_type
+        assert classified["project_type"] == project_type
+        assert classified["intent_type"] == intent_type
+
+
+def test_classify_chat_metric_safe_metadata_ignores_private_content_fields():
+    classified = classify_chat_metric_safe_metadata({
+        "mode": "ask",
+        "prompt": "create a unity game",
+        "response": "private answer",
+        "message": "debug this",
+        "body": "skill import request",
+        "text": "browser research",
+        "raw": {"content": "desktop app"},
+    })
+
+    assert classified["task_type"] == "ask"
+    assert classified["project_type"] == "unknown"
+
+
+def test_classify_chat_metric_safe_metadata_warns_when_research_flag_conflicts():
+    classified = classify_chat_metric_safe_metadata({"mode": "ask", "requires_research": True})
+
+    assert classified["task_type"] == "ask"
+    assert classified["requires_research"] is True
+    assert "requires_research_without_research_task_type" in classified["warnings"]
