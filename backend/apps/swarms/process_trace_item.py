@@ -22,14 +22,20 @@ TURN_TRACE_KIND = "process_trace_turn_container"
 TURN_TRACE_VERSION = "openswarm.process_trace_turn_container.v1"
 
 ALLOWED_KINDS = {
+    "reasoning",
+    "thinking",
     "context",
     "memory",
     "skill",
     "mode",
     "action",
     "tool",
+    "file",
+    "diff",
+    "workspace",
     "evidence",
     "handoff",
+    "miniagent",
     "metric",
     "review",
     "browser",
@@ -38,6 +44,9 @@ ALLOWED_KINDS = {
     "timeline",
     "worklog",
     "validation",
+    "output",
+    "artifact",
+    "debug",
     "summary",
     "unknown",
 }
@@ -72,6 +81,13 @@ SENSITIVE_KEYS = {
     "set_cookie",
 }
 SENSITIVE_MARKERS = ("password", "secret", "token", "api_key", "apikey", "private_key", "authorization", "credential")
+ALLOWED_REASONING_SUMMARY_SOURCES = {
+    "native_ollama_thinking",
+    "provider_reasoning_summary",
+    "operational_summary",
+    "fallback",
+}
+ALLOWED_REASONING_LEVELS = {"auto", "off", "minimal", "low", "medium", "high", "xhigh"}
 
 
 def _now() -> str:
@@ -174,6 +190,83 @@ def build_process_trace_item(**kwargs: Any) -> dict[str, Any]:
         "internal_only": bool(kwargs.get("internal_only", False)),
         "metadata": _safe(dict(kwargs.get("metadata") or {})),
     })
+
+
+
+
+def _normalize_reasoning_summary_source(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in ALLOWED_REASONING_SUMMARY_SOURCES else "fallback"
+
+
+def _normalize_reasoning_level(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in ALLOWED_REASONING_LEVELS else "auto"
+
+
+def build_humanized_reasoning_trace_item(
+    *,
+    trace_id: Any = None,
+    summary: Any = None,
+    source: Any = "operational_summary",
+    status: Any = "completed",
+    requested_level: Any = "auto",
+    applied_level: Any = "auto",
+    provider: Any = None,
+    model: Any = None,
+    capability_supported: Any = None,
+    duration_ms: Any = None,
+    related_agent_id: Any = None,
+    related_task_id: Any = None,
+    output_message_id: Any = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a user-safe ReasoningCore trace item.
+
+    This helper stores a human-readable reasoning summary. It must not expose
+    private chain-of-thought. Native thinking text may only be represented here
+    after provider separation and redaction.
+    """
+
+    normalized_source = _normalize_reasoning_summary_source(source)
+    normalized_requested_level = _normalize_reasoning_level(requested_level)
+    normalized_applied_level = _normalize_reasoning_level(applied_level)
+    safe_summary = _text(summary, "Reasoning summary unavailable.")
+    support_value = None if capability_supported is None else bool(capability_supported)
+
+    merged_metadata = {
+        "summary_source": normalized_source,
+        "requested_reasoning_level": normalized_requested_level,
+        "applied_reasoning_level": normalized_applied_level,
+        "capability_supported": support_value,
+        "provider": _optional_text(provider),
+        "model": _optional_text(model),
+        "output_message_id": _optional_text(output_message_id),
+        **dict(metadata or {}),
+    }
+
+    return build_process_trace_item(
+        trace_id=trace_id,
+        kind="reasoning",
+        subsystem="ReasoningCore",
+        icon_id="reasoning-core",
+        title="Reasoning summary",
+        summary=safe_summary,
+        status=status,
+        duration_ms=duration_ms,
+        badge=normalized_source,
+        related_agent_id=related_agent_id,
+        related_task_id=related_task_id,
+        details={
+            "summary_source": normalized_source,
+            "requested_reasoning_level": normalized_requested_level,
+            "applied_reasoning_level": normalized_applied_level,
+            "capability_supported": support_value,
+            "provider": _optional_text(provider),
+            "model": _optional_text(model),
+        },
+        metadata=merged_metadata,
+    )
 
 
 def summarize_process_trace_item(item: dict[str, Any]) -> dict[str, Any]:

@@ -5,6 +5,7 @@ from backend.apps.swarms.process_trace_item import (
     build_process_trace_item,
     build_process_trace_panel,
     build_process_trace_turn_container,
+    build_humanized_reasoning_trace_item,
     append_process_trace_turn_item,
     summarize_process_trace_turn_container,
     append_process_trace_item,
@@ -191,3 +192,70 @@ def test_summarize_process_trace_turn_container_does_not_mutate_input():
     assert summary["evidence_count"] == 1
     assert summary["artifact_count"] == 1
     assert container == original
+
+
+def test_humanized_reasoning_trace_item_contract():
+    item = build_humanized_reasoning_trace_item(
+        trace_id="reasoning1",
+        summary="The agent identified this as a greeting and prepared a short response.",
+        source="operational_summary",
+        requested_level="high",
+        applied_level="low",
+        provider="ollama",
+        model="qwen3.6:latest",
+        capability_supported=True,
+        duration_ms=250,
+        related_agent_id="agent1",
+        output_message_id="assistant1",
+    )
+
+    assert item["trace_id"] == "reasoning1"
+    assert item["kind"] == "reasoning"
+    assert item["subsystem"] == "ReasoningCore"
+    assert item["icon_id"] == "reasoning-core"
+    assert item["title"] == "Reasoning summary"
+    assert item["summary"] == "The agent identified this as a greeting and prepared a short response."
+    assert item["badge"] == "operational_summary"
+    assert item["duration_ms"] == 250
+    assert item["related_agent_id"] == "agent1"
+    assert item["metadata"]["summary_source"] == "operational_summary"
+    assert item["metadata"]["requested_reasoning_level"] == "high"
+    assert item["metadata"]["applied_reasoning_level"] == "low"
+    assert item["metadata"]["provider"] == "ollama"
+    assert item["metadata"]["model"] == "qwen3.6:latest"
+    assert item["metadata"]["output_message_id"] == "assistant1"
+    assert item["details"]["capability_supported"] is True
+
+
+def test_humanized_reasoning_trace_item_redacts_private_reasoning():
+    item = build_humanized_reasoning_trace_item(
+        summary="Safe public summary.",
+        source="bad-source",
+        requested_level="extreme",
+        applied_level="medium",
+        metadata={
+            "chain_of_thought": "private",
+            "safe": "ok",
+            "nested": {"prompt": "hidden", "safe": True},
+        },
+    )
+
+    rendered = str(item)
+    assert item["badge"] == "fallback"
+    assert item["metadata"]["summary_source"] == "fallback"
+    assert item["metadata"]["requested_reasoning_level"] == "auto"
+    assert item["metadata"]["applied_reasoning_level"] == "medium"
+    assert "private" not in rendered
+    assert "hidden" not in rendered
+    assert item["metadata"]["safe"] == "ok"
+    assert item["metadata"]["nested"] == {"safe": True}
+
+
+def test_reasoning_and_debug_kinds_are_allowed():
+    reasoning = build_process_trace_item(kind="reasoning")
+    thinking = build_process_trace_item(kind="thinking")
+    debug = build_process_trace_item(kind="debug")
+
+    assert reasoning["kind"] == "reasoning"
+    assert thinking["kind"] == "thinking"
+    assert debug["kind"] == "debug"
