@@ -236,3 +236,62 @@ def test_turn_container_from_sources_honors_explicit_status():
 
     assert container["status"] == "warning"
     assert container["items"][0]["status"] == "failed"
+
+
+def test_builder_from_humanized_reasoning_summary_source():
+    source = {
+        "reasoning_summary_kind": "humanized_reasoning_summary",
+        "reasoning_trace_id": "reasoning1",
+        "reasoning_summary": "The agent classified the request and selected a direct answer.",
+        "summary_source": "operational_summary",
+        "requested_reasoning_level": "high",
+        "applied_reasoning_level": "medium",
+        "provider": "ollama",
+        "model": "qwen3.6:latest",
+        "capability_supported": True,
+        "duration_ms": 321,
+        "agent_id": "agent1",
+        "output_message_id": "assistant1",
+    }
+
+    item = build_process_trace_item_from_source(source)
+
+    assert normalize_process_trace_source_kind(source) == "humanized_reasoning_summary"
+    assert item["trace_id"] == "reasoning1"
+    assert item["kind"] == "reasoning"
+    assert item["subsystem"] == "ReasoningCore"
+    assert item["icon_id"] == "reasoning-core"
+    assert item["summary"] == "The agent classified the request and selected a direct answer."
+    assert item["badge"] == "operational_summary"
+    assert item["duration_ms"] == 321
+    assert item["related_agent_id"] == "agent1"
+    assert item["metadata"]["source_kind"] == "humanized_reasoning_summary"
+    assert item["metadata"]["summary_source"] == "operational_summary"
+    assert item["metadata"]["requested_reasoning_level"] == "high"
+    assert item["metadata"]["applied_reasoning_level"] == "medium"
+    assert item["metadata"]["provider"] == "ollama"
+    assert item["metadata"]["model"] == "qwen3.6:latest"
+    assert item["details"]["capability_supported"] is True
+
+
+def test_turn_container_from_sources_accepts_reasoning_summary_source():
+    reasoning = {
+        "reasoning_summary_kind": "humanized_reasoning_summary",
+        "reasoning_trace_id": "reasoning1",
+        "reasoning_summary": "The model prepared a safe operational summary.",
+        "summary_source": "fallback",
+        "agent_id": "agent1",
+    }
+    timer = finish_runtime_timer(
+        start_runtime_timer(scope="model_call", label="Model", timer_id="timer1", started_at=START),
+        finished_at=FINISH,
+    )
+
+    container = build_process_trace_turn_container_from_sources([reasoning, timer], turn_trace_id="turn1")
+
+    assert container["turn_trace_id"] == "turn1"
+    assert container["status"] == "completed"
+    assert container["child_trace_ids"] == ["reasoning1", "timer1"]
+    assert container["related_agent_ids"] == ["agent1"]
+    assert container["metadata"]["source_kinds"] == ["humanized_reasoning_summary", "runtime_timer"]
+    assert container["items"][0]["subsystem"] == "ReasoningCore"

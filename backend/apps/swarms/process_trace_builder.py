@@ -11,6 +11,7 @@ from backend.apps.swarms.process_trace_item import (
     build_process_trace_item,
     build_process_trace_panel,
     build_process_trace_turn_container,
+    build_humanized_reasoning_trace_item,
     process_trace_item_from_runtime_metric,
     process_trace_item_from_timeline_event,
 )
@@ -31,6 +32,12 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "unknown"
     if data.get("event_id") or data.get("event_type"):
         return "timeline_event"
+    if (
+        data.get("reasoning_summary_kind") == "humanized_reasoning_summary"
+        or data.get("trace_kind") == "humanized_reasoning_summary"
+        or (data.get("summary_source") and (data.get("reasoning_summary") or data.get("summary")))
+    ):
+        return "humanized_reasoning_summary"
     if data.get("worklog_kind") == "agent_worklog_entry":
         return "agent_worklog"
     if data.get("display_kind") == "context_retrieval_display_item" or data.get("panel_kind") == "context_retrieval_panel":
@@ -59,6 +66,27 @@ def _refs(value: Any) -> list[Any]:
         return list(value)
     text = str(value or "").strip()
     return [text] if text else []
+
+
+
+
+def _reasoning_summary_item(data: dict[str, Any]) -> dict[str, Any]:
+    return build_humanized_reasoning_trace_item(
+        trace_id=data.get("reasoning_trace_id") or data.get("trace_id"),
+        summary=data.get("reasoning_summary") or data.get("summary"),
+        source=data.get("summary_source") or data.get("reasoning_summary_source"),
+        status=data.get("status") or "completed",
+        requested_level=data.get("requested_reasoning_level") or data.get("requested_level") or data.get("thinking_level"),
+        applied_level=data.get("applied_reasoning_level") or data.get("applied_level") or data.get("effective_thinking_level"),
+        provider=data.get("provider"),
+        model=data.get("model"),
+        capability_supported=data.get("capability_supported"),
+        duration_ms=data.get("duration_ms"),
+        related_agent_id=data.get("agent_id") or data.get("related_agent_id"),
+        related_task_id=data.get("task_id") or data.get("related_task_id"),
+        output_message_id=data.get("output_message_id"),
+        metadata=data.get("metadata") if isinstance(data.get("metadata"), dict) else {},
+    )
 
 
 def _context_item(data: dict[str, Any]) -> dict[str, Any]:
@@ -207,6 +235,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = process_trace_item_from_runtime_metric(source if isinstance(source, RuntimeTimerRecord) else data)
     elif source_kind == "timeline_event":
         item = process_trace_item_from_timeline_event(data)
+    elif source_kind == "humanized_reasoning_summary":
+        item = _reasoning_summary_item(data)
     elif source_kind == "agent_worklog":
         item = _worklog_item(data)
     elif source_kind == "context_retrieval":
