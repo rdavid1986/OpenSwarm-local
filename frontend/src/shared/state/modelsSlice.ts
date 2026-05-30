@@ -18,7 +18,7 @@ export interface ModelOption {
   declared_context_source?: string | null;
   loaded_context_window?: number | null;
   loaded_context_source?: string | null;
-  reasoning_source?: 'estimated' | 'measured' | 'declared' | 'unknown';
+  reasoning_source?: 'estimated' | 'measured' | 'declared' | 'reported' | 'inferred' | 'not_reported' | 'unknown';
   tiers_source?: 'estimated' | 'measured' | 'declared' | 'unknown';
   // Optional picker-UX fields from list_models.
   input_cost_per_1m?: number;
@@ -44,6 +44,18 @@ export interface ModelOption {
   model_metadata?: Record<string, any> | null;
   availability?: 'available' | 'unknown' | string;
   availability_source?: string | null;
+  supports_thinking?: boolean;
+  supports_tools?: boolean;
+  supports_vision?: boolean;
+  supports_embedding?: boolean;
+  supports_structured_output?: boolean;
+  supports_json?: boolean;
+  supports_keep_alive?: boolean;
+  capability_source?: Record<string, string> | null;
+  loaded?: boolean;
+  running?: boolean;
+  expires_at?: string | null;
+  reasoning_effort?: Record<string, any> | null;
   runtime_metrics?: Record<string, any> | null;
   eval_results?: Record<string, any> | null;
 }

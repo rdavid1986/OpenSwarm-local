@@ -152,6 +152,10 @@ function sourceLabel(source?: string | null): string {
   if (source === 'estimated') return 'Estimated';
   if (source === 'measured') return 'Measured';
   if (source === 'declared') return 'Declared';
+  if (source === 'reported') return 'Reported';
+  if (source === 'inferred') return 'Inferred';
+  if (source === 'not_reported') return 'Not reported';
+  if (source === 'ollama_native_option') return 'Native option';
   return 'No data';
 }
 
@@ -180,6 +184,21 @@ function metadataCompleteness(opt: any): number {
     return Array.isArray(value) ? value.length > 0 : value !== undefined && value !== null && value !== '';
   }).length;
   return Math.round((present / fields.length) * 5);
+}
+
+function modelCapabilityChips(opt: any): string[] {
+  const sourceOf = (key: string) => opt.capability_source?.[key] || 'unknown';
+  const mk = (label: string, key: string) => `${label}${sourceOf(key) === 'inferred' ? '*' : ''}`;
+  return [
+    opt.supports_thinking && mk('thinking', 'thinking'),
+    opt.supports_tools && mk('tools', 'tools'),
+    opt.supports_vision && mk('vision', 'vision'),
+    opt.supports_embedding && mk('embed', 'embedding'),
+    opt.supports_json && mk('json', 'json'),
+    opt.running && 'running',
+    opt.loaded && !opt.running && 'loaded',
+    opt.context_window ? `ctx ${formatTokenCount(Number(opt.context_window))}` : '',
+  ].filter(Boolean).slice(0, 7) as string[];
 }
 
 const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, compact = false, onProviderChange }) => {
@@ -259,6 +278,18 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
         model_metadata: m.model_metadata,
         availability: m.availability,
         availability_source: m.availability_source,
+        supports_thinking: !!m.supports_thinking,
+        supports_tools: !!m.supports_tools,
+        supports_vision: !!m.supports_vision,
+        supports_embedding: !!m.supports_embedding,
+        supports_structured_output: !!m.supports_structured_output,
+        supports_json: !!m.supports_json,
+        supports_keep_alive: !!m.supports_keep_alive,
+        capability_source: m.capability_source,
+        loaded: !!m.loaded,
+        running: !!m.running,
+        expires_at: m.expires_at,
+        reasoning_effort: m.reasoning_effort,
         runtime_metrics: m.runtime_metrics,
         eval_results: m.eval_results,
       }));
@@ -539,12 +570,15 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
     const COST_PALETTE = ['#C7752E', '#DD8A3D', '#F59E0B', '#FAB23C', '#FCC773'];
 
     const capabilities = [
-      opt.reasoning && 'Reasoning',
-      'Tools',
+      ...modelCapabilityChips(opt),
       billingKind === 'free' && 'Free tier',
       billingKind === 'subscription' && 'Subscription',
       (opt.context_window ?? 0) >= 1_000_000 && '1M+ context',
-    ].filter(Boolean).join(' · ');
+    ].filter(Boolean).join(' ? ');
+
+    const capabilitySources = opt.capability_source
+      ? Object.entries(opt.capability_source).slice(0, 5).map(([k, v]) => `${k}: ${sourceLabel(String(v))}`).join(' ? ')
+      : '';
 
     return (
       <Box sx={{ fontSize: '0.74rem', lineHeight: 1.55, minWidth: 256 }}>
@@ -613,6 +647,12 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
             <>
               <span>Capabilities</span>
               <span style={{ color: c.text.secondary }}>{capabilities}</span>
+            </>
+          )}
+          {capabilitySources && (
+            <>
+              <span>Sources</span>
+              <span style={{ color: c.text.secondary }}>{capabilitySources}</span>
             </>
           )}
         </Box>
@@ -691,7 +731,11 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
     return 0;
   };
 
-  const compareCapabilityValue = (_m: any, _capability: 'tools' | 'multimodal' | 'image' | 'video') => {
+  const compareCapabilityValue = (m: any, capability: 'tools' | 'multimodal' | 'image' | 'video') => {
+    if (capability === 'tools' && m.supports_tools) return { label: sourceLabel(m.capability_source?.tools) };
+    if (capability === 'multimodal' && m.supports_vision) return { label: sourceLabel(m.capability_source?.vision) };
+    if (capability === 'image') return { label: 'None' };
+    if (capability === 'video') return { label: 'None' };
     return { label: 'No measured data' };
   };
 
@@ -810,6 +854,11 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
     ['loaded/context', (m: any) => m.loaded_context_window ? `${Number(m.loaded_context_window).toLocaleString()} (${m.loaded_context_source || 'No source'})` : 'No data'],
     ['estimated/context', (m: any) => m.estimated_context_window ? `${Number(m.estimated_context_window).toLocaleString()} (${m.estimated_context_source || 'No source'})` : 'No data'],
     ['reasoning/source', (m: any) => `${m.reasoning ? 'Yes' : 'No'} (${sourceLabel(m.reasoning_source)})`],
+    ['tool use', (m: any) => m.supports_tools ? `Yes (${sourceLabel(m.capability_source?.tools)})` : 'No data'],
+    ['vision', (m: any) => m.supports_vision ? `Yes (${sourceLabel(m.capability_source?.vision)})` : 'No data'],
+    ['embeddings', (m: any) => m.supports_embedding ? `Yes (${sourceLabel(m.capability_source?.embedding)})` : 'No data'],
+    ['json', (m: any) => m.supports_json ? `Yes (${sourceLabel(m.capability_source?.json)})` : 'No data'],
+    ['residency', (m: any) => m.running ? `Running${m.expires_at ? ` until ${formatDate(m.expires_at)}` : ''}` : (m.loaded ? 'Loaded' : 'No data')],
     ['runtime metrics', (m: any) => m.runtime_metrics ? 'Available' : 'No data'],
     ['eval results', (m: any) => m.eval_results ? 'Available' : 'No data'],
   ] as const;
@@ -830,6 +879,11 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
       'loaded/context': 'Loaded context',
       'estimated/context': 'Estimated context',
       'reasoning/source': 'Reasoning',
+      'tool use': 'Tool use',
+      vision: 'Vision',
+      embeddings: 'Embeddings',
+      json: 'JSON',
+      residency: 'Residency',
       'runtime metrics': 'Runtime metrics',
       'eval results': 'Eval results',
     };
@@ -1135,6 +1189,11 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
                 <Tooltip key={`recent-${opt.value}`} title={buildModelTooltip(opt)} placement="right" enterDelay={300} slotProps={tooltipSlotProps}>
                   <MenuItem selected={model === opt.value} onClick={() => chooseModel(opt.value, opt.provider)}>
                     <ListItemText primary={opt.label} slotProps={{ primary: { sx: { fontSize: '0.8rem', color: model === opt.value ? c.text.primary : c.text.muted } } }} />
+                    {modelCapabilityChips(opt).slice(0, 3).map((chip) => (
+                      <Box key={chip} sx={{ ml: 0.45, px: 0.5, py: 0.12, borderRadius: 999, border: `1px solid ${c.border.subtle}`, color: c.text.tertiary, fontSize: '0.56rem', fontWeight: 800 }}>
+                        {chip}
+                      </Box>
+                    ))}
                     {compareMode && (
                       <Box
                         onClick={(e) => { e.stopPropagation(); toggleCompareValue(opt.value); }}
@@ -1201,6 +1260,11 @@ const ModelPicker: React.FC<Props> = ({ model, onModelChange, disabled = false, 
                   <Tooltip key={opt.value} title={buildModelTooltip(opt)} placement="right" enterDelay={300} slotProps={tooltipSlotProps}>
                     <MenuItem selected={model === opt.value} onClick={() => chooseModel(opt.value, prov)}>
                       <ListItemText primary={highlightMatch(displayLabel)} slotProps={{ primary: { sx: { fontSize: '0.8rem', color: model === opt.value ? c.text.primary : c.text.muted } } }} />
+                      {modelCapabilityChips(opt).slice(0, 3).map((chip) => (
+                        <Box key={chip} sx={{ ml: 0.45, px: 0.5, py: 0.12, borderRadius: 999, border: `1px solid ${c.border.subtle}`, color: c.text.tertiary, fontSize: '0.56rem', fontWeight: 800 }}>
+                          {chip}
+                        </Box>
+                      ))}
                       {compareMode && (
                         <Box
                           onClick={(e) => { e.stopPropagation(); toggleCompareValue(opt.value); }}

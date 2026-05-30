@@ -327,6 +327,7 @@ function buildSubsystemDetailRows(item: ProcessTraceItem, durationLabel: string 
   const isSkill = subsystem === 'skillcore' || kind === 'skill';
   const isFileOutput = ['filecore', 'outputcore'].includes(subsystem) || ['file', 'diff', 'workspace', 'output', 'artifact'].includes(kind);
   const isMiniAgentOrHandoff = ['miniagentcore', 'handoffcore'].includes(subsystem) || ['miniagent', 'handoff'].includes(kind);
+  const isModel = subsystem === 'modelcore' || kind === 'model' || kind === 'model_snapshot';
 
   if (isToolOrAction) {
     pushDetailRow(rows, 'Tool', getDetailValue(details, 'tool_name', 'tool'));
@@ -390,6 +391,17 @@ function buildSubsystemDetailRows(item: ProcessTraceItem, durationLabel: string 
     pushDetailRow(rows, 'Artifacts', item.artifact_refs, { list: true });
     pushDetailRow(rows, 'Validation', getDetailValue(details, 'validation', 'validation_summary'));
     pushDetailRow(rows, 'Failure', getDetailValue(details, 'failure_reason', 'error'));
+    return rows;
+  }
+
+  if (isModel) {
+    pushDetailRow(rows, 'Provider', getDetailValue(details, 'provider'));
+    pushDetailRow(rows, 'Model', getDetailValue(details, 'model'));
+    pushDetailRow(rows, 'Health', getDetailValue(details, 'health'));
+    pushDetailRow(rows, 'Capabilities', getDetailValue(details, 'capabilities'));
+    pushDetailRow(rows, 'Loaded', getDetailValue(details, 'loaded'));
+    pushDetailRow(rows, 'Running', getDetailValue(details, 'running'));
+    pushDetailRow(rows, 'Expires', getDetailValue(details, 'expires_at'));
     return rows;
   }
 
