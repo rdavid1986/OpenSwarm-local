@@ -11,10 +11,10 @@ from backend.apps.skills.candidate_approval import apply_skill_candidate_install
 from backend.apps.skills.candidate_gate import apply_skill_candidate_gate
 from backend.apps.skills.candidate_install import install_approved_skill_candidate
 from backend.apps.skills.candidate_validation import apply_skill_candidate_validation
-from backend.apps.skills.models import Skill, SkillCandidateApprovalRequest, SkillCreate, SkillSpecCandidate, SkillUpdate, SkillWorkspaceSeedRequest
+from backend.apps.skills.models import Skill, SkillCandidateApprovalRequest, SkillCandidateImprovementApplyRequest, SkillCreate, SkillSpecCandidate, SkillUpdate, SkillWorkspaceSeedRequest
 from backend.apps.skills.requirements_contract import build_skill_candidate_requirements_contract
 from backend.apps.skills.skill_reviewer import review_skill_candidate
-from backend.apps.skills.skill_improvement_proposal import build_skill_candidate_improvement_proposal
+from backend.apps.skills.skill_improvement_proposal import build_skill_candidate_improvement_proposal, apply_skill_candidate_improvement_proposal
 from backend.apps.tools_lib.models import BUILTIN_TOOLS
 
 logger = logging.getLogger(__name__)
@@ -294,6 +294,46 @@ async def get_skill_candidate_improvement_proposal(candidate_id: str):
         raise HTTPException(status_code=400, detail=str(exc))
 
     return build_skill_candidate_improvement_proposal(candidate)
+
+
+@skills.router.post("/candidates/{candidate_id}/improvement-proposal/apply")
+async def apply_skill_candidate_improvement_proposal_route(
+    candidate_id: str,
+    body: SkillCandidateImprovementApplyRequest,
+):
+    try:
+        candidate = skill_candidate_store.load(candidate_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Skill candidate not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    try:
+        updated_candidate, proposal = apply_skill_candidate_improvement_proposal(
+            candidate,
+            approved=body.approved,
+        )
+    except ValueError as exc:
+        if str(exc) == "skill_improvement_proposal_requires_explicit_approval":
+            raise HTTPException(status_code=409, detail="Skill improvement proposal requires explicit approval")
+        if str(exc) == "skill_improvement_proposal_has_no_diff":
+            raise HTTPException(status_code=409, detail="Skill improvement proposal has no diff to apply")
+        raise
+
+    validated_candidate = apply_skill_candidate_validation(updated_candidate)
+    gated_candidate = apply_skill_candidate_gate(validated_candidate)
+    saved = skill_candidate_store.save(gated_candidate)
+    return {
+        "ok": True,
+        "candidate": saved.model_dump(mode="json"),
+        "proposal": proposal,
+        "audit": {
+            "event": "skill_candidate_improvement_proposal_applied",
+            "candidate_id": saved.candidate_id,
+            "install_approved": saved.install_approved,
+            "status": saved.status,
+        },
+    }
 
 
 @skills.router.get("/candidates/{candidate_id}")

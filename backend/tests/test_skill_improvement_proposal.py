@@ -7,6 +7,7 @@ from backend.apps.skills import skills as skills_module
 from backend.apps.skills.candidate_store import SkillCandidateStore
 from backend.apps.skills.models import SkillSpec, SkillSpecCandidate
 from backend.apps.skills.skill_improvement_proposal import (
+    apply_skill_candidate_improvement_proposal,
     build_skill_candidate_improvement_proposal,
 )
 
@@ -100,6 +101,90 @@ def test_improvement_proposal_endpoint_returns_proposal_without_mutating_candida
     after = client.get(f"/api/skills/candidates/{candidate_id}").json()
     assert after == before
 
+
+
+def test_apply_improvement_proposal_requires_explicit_approval():
+    candidate = _candidate("Help with tasks using best practices.")
+
+    try:
+        apply_skill_candidate_improvement_proposal(candidate, approved=False)
+    except ValueError as exc:
+        assert str(exc) == "skill_improvement_proposal_requires_explicit_approval"
+    else:
+        raise AssertionError("expected explicit approval error")
+
+
+def test_apply_improvement_proposal_updates_only_candidate_content_and_clears_install_approval():
+    candidate = _candidate("Help with tasks using best practices.")
+    approved_candidate = candidate.model_copy(update={"install_approved": True})
+    before_candidate_id = approved_candidate.candidate_id
+
+    updated, proposal = apply_skill_candidate_improvement_proposal(approved_candidate, approved=True)
+
+    assert updated.candidate_id == before_candidate_id
+    assert updated.skill_spec.content == proposal["proposed_content"]
+    assert updated.skill_spec.content != approved_candidate.skill_spec.content
+    assert updated.install_approved is False
+    assert approved_candidate.install_approved is True
+
+
+def test_apply_improvement_proposal_endpoint_requires_approval(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    created = client.post("/api/skills/candidates/create", json={
+        "skill_spec": {
+            "name": "Apply Proposal",
+            "content": "Help with tasks using best practices.",
+            "source_format": "unknown",
+            "metadata_confidence": "unknown",
+        },
+        "source": "skill_builder",
+    })
+    candidate_id = created.json()["candidate"]["candidate_id"]
+
+    response = client.post(f"/api/skills/candidates/{candidate_id}/improvement-proposal/apply", json={"approved": False})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Skill improvement proposal requires explicit approval"
+
+
+def test_apply_improvement_proposal_endpoint_updates_candidate_without_installing(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    created = client.post("/api/skills/candidates/create", json={
+        "skill_spec": {
+            "name": "Apply Proposal",
+            "content": "Help with tasks using best practices.",
+            "source_format": "unknown",
+            "metadata_confidence": "unknown",
+        },
+        "source": "skill_builder",
+    })
+    candidate_id = created.json()["candidate"]["candidate_id"]
+    before = client.get(f"/api/skills/candidates/{candidate_id}").json()
+
+    response = client.post(f"/api/skills/candidates/{candidate_id}/improvement-proposal/apply", json={"approved": True})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["audit"]["event"] == "skill_candidate_improvement_proposal_applied"
+    assert body["candidate"]["candidate_id"] == candidate_id
+    assert body["candidate"]["install_approved"] is False
+    assert body["candidate"]["skill_spec"]["content"] != before["skill_spec"]["content"]
+    assert "# OpenSwarm proposed improvements" in body["candidate"]["skill_spec"]["content"]
+    assert body["proposal"]["can_update_candidate"] is False
+
+    listed = client.get("/api/skills/list")
+    assert listed.status_code == 200
+    assert not any(skill["name"] == "Apply Proposal" for skill in listed.json()["skills"])
+
+
+def test_apply_improvement_proposal_endpoint_missing_candidate_returns_404(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    response = client.post("/api/skills/candidates/missing/improvement-proposal/apply", json={"approved": True})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Skill candidate not found"
 
 def test_improvement_proposal_endpoint_missing_candidate_returns_404(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)

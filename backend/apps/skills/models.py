@@ -93,3 +93,6 @@ class SkillSpecCandidate(BaseModel):
 
 class SkillCandidateApprovalRequest(BaseModel):
     approved: bool
+
+class SkillCandidateImprovementApplyRequest(BaseModel):
+    approved: bool = False

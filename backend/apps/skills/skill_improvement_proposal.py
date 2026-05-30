@@ -160,3 +160,29 @@ def build_skill_candidate_improvement_proposal(candidate: SkillSpecCandidate) ->
         skill_name=candidate.skill_spec.name,
         current_content=candidate.skill_spec.content,
     )
+
+def apply_skill_candidate_improvement_proposal(
+    candidate: SkillSpecCandidate,
+    *,
+    approved: bool,
+) -> tuple[SkillSpecCandidate, dict[str, Any]]:
+    """Apply the generated proposed_content to a candidate only after explicit approval.
+
+    This updates only the candidate content. It never installs the skill, approves
+    install, activates tools, activates MCP, or touches the legacy skill registry.
+    """
+
+    if not approved:
+        raise ValueError("skill_improvement_proposal_requires_explicit_approval")
+
+    proposal = build_skill_candidate_improvement_proposal(candidate)
+    proposed_content = str(proposal.get("proposed_content") or "")
+    if not proposal.get("can_generate_diff") or not proposed_content:
+        raise ValueError("skill_improvement_proposal_has_no_diff")
+
+    updated_spec = candidate.skill_spec.model_copy(update={"content": proposed_content})
+    updated_candidate = candidate.model_copy(update={
+        "skill_spec": updated_spec,
+        "install_approved": False,
+    })
+    return updated_candidate, proposal
