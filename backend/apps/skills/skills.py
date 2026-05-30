@@ -11,7 +11,7 @@ from backend.apps.skills.candidate_approval import apply_skill_candidate_install
 from backend.apps.skills.candidate_gate import apply_skill_candidate_gate
 from backend.apps.skills.candidate_install import install_approved_skill_candidate
 from backend.apps.skills.candidate_validation import apply_skill_candidate_validation
-from backend.apps.skills.models import Skill, SkillCandidateApprovalRequest, SkillCandidateImprovementApplyRequest, SkillCreate, SkillSpecCandidate, SkillUpdate, SkillWorkspaceSeedRequest
+from backend.apps.skills.models import Skill, SkillCandidateApprovalRequest, SkillCandidateImprovementApplyRequest, SkillCandidateResearchApprovalRequest, SkillCreate, SkillSpecCandidate, SkillUpdate, SkillWorkspaceSeedRequest
 from backend.apps.skills.requirements_contract import build_skill_candidate_requirements_contract
 from backend.apps.skills.research_contract import build_skill_candidate_research_contract
 from backend.apps.skills.skill_reviewer import review_skill_candidate
@@ -283,6 +283,35 @@ async def get_skill_candidate_quality_review(candidate_id: str):
         raise HTTPException(status_code=400, detail=str(exc))
 
     return review_skill_candidate(candidate)
+
+
+
+
+@skills.router.post("/candidates/{candidate_id}/research-approval")
+async def approve_skill_candidate_research(candidate_id: str, body: SkillCandidateResearchApprovalRequest):
+    try:
+        candidate = skill_candidate_store.load(candidate_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Skill candidate not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    updated = candidate.model_copy(update={"research_approved": body.approved})
+    saved = skill_candidate_store.save(updated)
+    research_contract = build_skill_candidate_research_contract(saved)
+    return {
+        "ok": True,
+        "candidate": saved.model_dump(mode="json"),
+        "research_contract": research_contract,
+        "audit": {
+            "event": "skill_candidate_research_permission_updated",
+            "candidate_id": saved.candidate_id,
+            "research_approved": saved.research_approved,
+            "install_approved": saved.install_approved,
+            "status": saved.status,
+            "web_research_executed": False,
+        },
+    }
 
 
 @skills.router.get("/candidates/{candidate_id}/research-contract")

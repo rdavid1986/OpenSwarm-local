@@ -57,6 +57,7 @@ export interface SkillSpecCandidate {
   evidence_refs: string[];
   policy_refs: string[];
   install_approved: boolean;
+  research_approved?: boolean;
 }
 
 export interface SkillCandidateRequirementsContract {
@@ -219,6 +220,8 @@ interface SkillsState {
   candidateResearchContracts: Record<string, SkillCandidateResearchContract>;
   candidateResearchContractsLoading: Record<string, boolean>;
   candidateResearchContractsError: Record<string, string | null>;
+  candidateResearchApprovalLoading: Record<string, boolean>;
+  candidateResearchApprovalError: Record<string, string | null>;
   candidateImprovementProposals: Record<string, SkillCandidateImprovementProposal>;
   candidateImprovementProposalsLoading: Record<string, boolean>;
   candidateImprovementProposalsError: Record<string, string | null>;
@@ -242,6 +245,8 @@ const initialState: SkillsState = {
   candidateResearchContracts: {},
   candidateResearchContractsLoading: {},
   candidateResearchContractsError: {},
+  candidateResearchApprovalLoading: {},
+  candidateResearchApprovalError: {},
   candidateImprovementProposals: {},
   candidateImprovementProposalsLoading: {},
   candidateImprovementProposalsError: {},
@@ -329,6 +334,28 @@ export const fetchSkillCandidateResearchContract = createAsyncThunk(
       throw new Error(data.detail || 'Failed to fetch skill candidate research contract');
     }
     return await res.json() as SkillCandidateResearchContract;
+  },
+);
+
+
+export const approveSkillCandidateResearch = createAsyncThunk(
+  'skills/approveCandidateResearch',
+  async ({ candidateId, approved }: { candidateId: string; approved: boolean }) => {
+    const res = await fetch(`${SKILLS_API}/candidates/${candidateId}/research-approval`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Failed to update skill candidate research permission');
+    }
+    const data = await res.json();
+    return {
+      candidate: data.candidate as SkillSpecCandidate,
+      researchContract: data.research_contract as SkillCandidateResearchContract | undefined,
+      audit: data.audit as Record<string, any>,
+    };
   },
 );
 
@@ -508,6 +535,25 @@ const skillsSlice = createSlice({
       .addCase(fetchSkillCandidateResearchContract.rejected, (state, action) => {
         state.candidateResearchContractsLoading[action.meta.arg] = false;
         state.candidateResearchContractsError[action.meta.arg] = action.error.message || 'Failed to fetch research contract';
+      })
+
+      .addCase(approveSkillCandidateResearch.pending, (state, action) => {
+        state.candidateResearchApprovalLoading[action.meta.arg.candidateId] = true;
+        state.candidateResearchApprovalError[action.meta.arg.candidateId] = null;
+      })
+      .addCase(approveSkillCandidateResearch.fulfilled, (state, action) => {
+        const candidateId = action.payload.candidate.candidate_id;
+        state.candidateResearchApprovalLoading[candidateId] = false;
+        state.candidates[candidateId] = action.payload.candidate;
+        if (action.payload.researchContract) {
+          state.candidateResearchContracts[candidateId] = action.payload.researchContract;
+          state.candidateResearchContractsLoading[candidateId] = false;
+          state.candidateResearchContractsError[candidateId] = null;
+        }
+      })
+      .addCase(approveSkillCandidateResearch.rejected, (state, action) => {
+        state.candidateResearchApprovalLoading[action.meta.arg.candidateId] = false;
+        state.candidateResearchApprovalError[action.meta.arg.candidateId] = action.error.message || 'Failed to update research permission';
       })
       .addCase(fetchSkillCandidateImprovementProposal.pending, (state, action) => {
         state.candidateImprovementProposalsLoading[action.meta.arg] = true;

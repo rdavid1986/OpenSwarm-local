@@ -42,6 +42,7 @@ import {
   fetchSkillCandidateRequirementsContract,
   fetchSkillCandidateQualityReview,
   fetchSkillCandidateResearchContract,
+  approveSkillCandidateResearch,
   fetchSkillCandidateImprovementProposal,
   applySkillCandidateImprovementProposal,
   createSkillCandidate,
@@ -102,6 +103,8 @@ const Skills: React.FC = () => {
     candidateResearchContracts,
     candidateResearchContractsLoading,
     candidateResearchContractsError,
+    candidateResearchApprovalLoading,
+    candidateResearchApprovalError,
     candidateImprovementProposals,
     candidateImprovementProposalsLoading,
     candidateImprovementProposalsError,
@@ -233,6 +236,10 @@ const Skills: React.FC = () => {
     selectedCandidate ? !!candidateResearchContractsLoading[selectedCandidate.candidate_id] : false;
   const selectedResearchContractError =
     selectedCandidate ? candidateResearchContractsError[selectedCandidate.candidate_id] ?? null : null;
+  const selectedResearchApprovalLoading =
+    selectedCandidate ? !!candidateResearchApprovalLoading[selectedCandidate.candidate_id] : false;
+  const selectedResearchApprovalError =
+    selectedCandidate ? candidateResearchApprovalError[selectedCandidate.candidate_id] ?? null : null;
   const selectedImprovementProposal: SkillCandidateImprovementProposal | null =
     selectedCandidate ? candidateImprovementProposals[selectedCandidate.candidate_id] ?? null : null;
   const selectedImprovementProposalLoading =
@@ -404,6 +411,26 @@ const Skills: React.FC = () => {
     } catch (err) {
       console.error('Failed to delete skill candidate:', err);
       setSnackbar({ open: true, message: err instanceof Error ? err.message : 'Failed to delete skill candidate' });
+    }
+  };
+
+
+  const handleApproveCandidateResearch = async (approved: boolean) => {
+    if (!selectedCandidate) return;
+    try {
+      const result = await dispatch(approveSkillCandidateResearch({
+        candidateId: selectedCandidate.candidate_id,
+        approved,
+      })).unwrap();
+      setSnackbar({
+        open: true,
+        message: approved
+          ? `Research permission allowed for "${result.candidate.skill_spec.name}". No web research was executed.`
+          : `Research permission revoked for "${result.candidate.skill_spec.name}".`,
+      });
+    } catch (err) {
+      console.error('Failed to update skill candidate research permission:', err);
+      setSnackbar({ open: true, message: err instanceof Error ? err.message : 'Failed to update research permission' });
     }
   };
 
@@ -645,7 +672,10 @@ const Skills: React.FC = () => {
     contract: SkillCandidateResearchContract | null;
     loading: boolean;
     error: string | null;
-  }> = ({ contract, loading, error }) => {
+    approvalLoading: boolean;
+    approvalError: string | null;
+    onSetResearchPermission: (approved: boolean) => void;
+  }> = ({ contract, loading, error, approvalLoading, approvalError, onSetResearchPermission }) => {
     const requiresResearch = contract?.requires_web_research === true;
     const researchAllowed = contract?.research_allowed === true;
     const webExecuted = contract?.web_research_executed === true;
@@ -686,11 +716,60 @@ const Skills: React.FC = () => {
               </Typography>
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.65 }}>
                 <MetaChip label={requiresResearch ? 'Research needed' : 'No research needed'} tone={requiresResearch ? 'warning' : 'success'} />
-                {!researchAllowed && <MetaChip label="Research not allowed yet" tone="warning" />}
+                {researchAllowed ? <MetaChip label="Research allowed" tone="success" /> : <MetaChip label="Research not allowed yet" tone="warning" />}
                 {!webExecuted && <MetaChip label="Web not executed" tone={requiresResearch ? 'warning' : 'default'} />}
                 {readOnly && <MetaChip label="Read-only" tone="success" />}
               </Box>
             </ReviewSection>
+
+
+
+            {requiresResearch && (
+              <ReviewSection title="Research permission" tone={researchAllowed ? 'success' : 'warning'}>
+                <Typography sx={{ fontSize: '0.74rem', color: c.text.secondary, lineHeight: 1.45, mb: 1 }}>
+                  This only authorizes a future research phase for this candidate. It does not browse, execute web research, install the skill, apply improvements, activate tools, or activate MCP.
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, alignItems: 'center' }}>
+                  {researchAllowed ? (
+                    <>
+                      <MetaChip label="Research allowed" tone="success" />
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        disabled={approvalLoading}
+                        onClick={() => onSetResearchPermission(false)}
+                        sx={{ textTransform: 'none', borderRadius: `${c.radius.md}px`, fontSize: '0.74rem' }}
+                      >
+                        Revoke research permission
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      variant="contained"
+                      size="small"
+                      disabled={approvalLoading}
+                      onClick={() => onSetResearchPermission(true)}
+                      startIcon={approvalLoading ? <CircularProgress size={14} sx={{ color: 'inherit' }} /> : undefined}
+                      sx={{
+                        bgcolor: c.accent.primary,
+                        '&:hover': { bgcolor: c.accent.pressed },
+                        textTransform: 'none',
+                        borderRadius: `${c.radius.md}px`,
+                        fontSize: '0.74rem',
+                        boxShadow: 'none',
+                      }}
+                    >
+                      Allow research for this candidate
+                    </Button>
+                  )}
+                </Box>
+                {approvalError && (
+                  <Typography sx={{ fontSize: '0.72rem', color: c.status.error, lineHeight: 1.4, mt: 0.8 }}>
+                    {approvalError}
+                  </Typography>
+                )}
+              </ReviewSection>
+            )}
 
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 1.25 }}>
               <ReviewSection title="Research queries" tone={queries.length > 0 ? 'warning' : 'default'}>
@@ -2152,6 +2231,9 @@ const Skills: React.FC = () => {
                 contract={selectedResearchContract}
                 loading={selectedResearchContractLoading}
                 error={selectedResearchContractError}
+                approvalLoading={selectedResearchApprovalLoading}
+                approvalError={selectedResearchApprovalError}
+                onSetResearchPermission={handleApproveCandidateResearch}
               />
             </CollapsibleCandidatePanel>
 

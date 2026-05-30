@@ -91,3 +91,82 @@ def test_research_contract_endpoint_missing_candidate_returns_404(monkeypatch, t
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Skill candidate not found"
+
+
+def test_research_approval_endpoint_sets_permission_without_installing(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    created = client.post("/api/skills/candidates/create", json={
+        "skill_spec": {
+            "name": "Claude API Skill",
+            "content": "Build Claude API apps using current SDK documentation.",
+            "source_format": "unknown",
+            "metadata_confidence": "unknown",
+        },
+        "source": "skill_builder",
+    })
+    assert created.status_code == 200
+    candidate_id = created.json()["candidate"]["candidate_id"]
+    before = client.get(f"/api/skills/candidates/{candidate_id}").json()
+
+    response = client.post(f"/api/skills/candidates/{candidate_id}/research-approval", json={"approved": True})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["candidate"]["research_approved"] is True
+    assert body["candidate"]["install_approved"] == before["install_approved"]
+    assert body["candidate"]["status"] == before["status"]
+    assert body["research_contract"]["research_allowed"] is True
+    assert body["research_contract"]["web_research_executed"] is False
+    assert body["research_contract"]["can_mutate_candidate"] is False
+    assert body["research_contract"]["can_install_skill"] is False
+    assert body["research_contract"]["can_activate_tools"] is False
+    assert body["research_contract"]["can_activate_mcp"] is False
+    assert body["audit"]["event"] == "skill_candidate_research_permission_updated"
+
+
+def test_research_approval_endpoint_revokes_permission(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    created = client.post("/api/skills/candidates/create", json={
+        "skill_spec": {
+            "name": "Claude API Skill",
+            "content": "Build Claude API apps using current SDK documentation.",
+            "source_format": "unknown",
+            "metadata_confidence": "unknown",
+        },
+        "source": "skill_builder",
+        "research_approved": True,
+    })
+    assert created.status_code == 200
+    candidate_id = created.json()["candidate"]["candidate_id"]
+
+    response = client.post(f"/api/skills/candidates/{candidate_id}/research-approval", json={"approved": False})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["candidate"]["research_approved"] is False
+    assert body["candidate"]["install_approved"] is False
+    assert body["research_contract"]["research_allowed"] is False
+    assert body["research_contract"]["web_research_executed"] is False
+
+
+def test_research_approval_missing_candidate_returns_404(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    response = client.post("/api/skills/candidates/missing/research-approval", json={"approved": True})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Skill candidate not found"
+
+
+def test_candidate_without_research_approved_loads_as_false(tmp_path):
+    store = SkillCandidateStore(root=tmp_path / "skill_candidates")
+    candidate = _candidate("Build Claude API apps using the current SDK documentation.")
+    store.save(candidate)
+    path = tmp_path / "skill_candidates" / f"{candidate.candidate_id}.json"
+    data = path.read_text(encoding="utf-8")
+    path.write_text(data.replace('  "research_approved": false,\n', ''), encoding="utf-8")
+
+    loaded = store.load(candidate.candidate_id)
+
+    assert loaded.research_approved is False
+    assert build_skill_candidate_research_contract(loaded)["research_allowed"] is False

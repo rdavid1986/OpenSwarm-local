@@ -90,9 +90,16 @@ class SkillSpecCandidate(BaseModel):
     evidence_refs: list[str] = Field(default_factory=list)
     policy_refs: list[str] = Field(default_factory=list)
     install_approved: bool = False
+    research_approved: bool = False
+
 
 class SkillCandidateApprovalRequest(BaseModel):
     approved: bool
+
+
+class SkillCandidateResearchApprovalRequest(BaseModel):
+    approved: bool = False
+
 
 class SkillCandidateImprovementApplyRequest(BaseModel):
     approved: bool = False

@@ -98,6 +98,7 @@ def build_skill_research_contract_from_review(
     review: dict[str, Any],
     *,
     candidate_id: str | None = None,
+    research_allowed: bool = False,
 ) -> dict[str, Any]:
     research_items = [item for item in review.get("research_gap_items", []) or [] if isinstance(item, dict)]
     research_codes = {str(item.get("code") or "") for item in research_items}
@@ -108,13 +109,19 @@ def build_skill_research_contract_from_review(
 
     queries = _suggest_queries(spec) if requires_research else []
     expected_source_types = _expected_source_types(spec, requires_research)
+    if requires_research and not research_allowed:
+        next_step = "Request explicit research permission before any future web research workflow."
+    elif requires_research and research_allowed:
+        next_step = "Research permission is approved; a future research workflow may gather current external sources, but this contract still does not browse."
+    else:
+        next_step = "No external research is required by this contract."
 
     return {
         "contract_kind": CONTRACT_KIND,
         "candidate_id": candidate_id,
         "skill_name": spec.name,
         "requires_web_research": requires_research,
-        "research_allowed": False,
+        "research_allowed": bool(research_allowed),
         "web_research_executed": False,
         "can_mutate_candidate": False,
         "can_install_skill": False,
@@ -128,11 +135,7 @@ def build_skill_research_contract_from_review(
             if requires_research
             else "No current-information dependency was detected by the read-only contract."
         ),
-        "next_step": (
-            "Request an explicit research workflow before browsing or citing sources."
-            if requires_research
-            else "Continue without web research unless the user requests current-source grounding."
-        ),
+        "next_step": next_step,
         "guardrails": [
             "This contract is read-only.",
             "It does not browse the web.",
@@ -156,4 +159,5 @@ def build_skill_candidate_research_contract(candidate: SkillSpecCandidate) -> di
         candidate.skill_spec,
         review,
         candidate_id=candidate.candidate_id,
+        research_allowed=bool(getattr(candidate, "research_approved", False)),
     )
