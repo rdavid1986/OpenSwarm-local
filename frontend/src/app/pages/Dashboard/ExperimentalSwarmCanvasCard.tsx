@@ -2075,7 +2075,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
           sx={{
             display: 'flex',
             alignItems: 'center',
-            color: c.text.ghost,
+            color: cardTokens.polish.mutedActionColor,
             flexShrink: 0,
           }}
         >
@@ -2094,8 +2094,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 fontSize: '0.68rem',
                 fontWeight: 650,
                 color: c.text.secondary,
-                bgcolor: c.bg.secondary,
-                border: `1px solid ${c.border.subtle}`,
+                bgcolor: cardTokens.polish.subtleChipBackground,
+                border: `1px solid ${cardTokens.polish.subtleChipBorder}`,
                 flexShrink: 0,
               }}
             />
@@ -2137,8 +2137,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               minHeight: 28,
               px: 1.2,
               py: 0.25,
-              borderRadius: `${c.radius.md}px`,
-              bgcolor: c.bg.surface,
+              borderRadius: cardTokens.trace.radius,
+              bgcolor: cardTokens.surface.background,
               color: c.text.primary,
               borderColor: shouldHighlightOpenPreview ? c.accent.primary : c.border.medium,
               boxShadow: shouldHighlightOpenPreview ? `0 0 0 1px ${c.accent.primary}22, 0 0 10px ${c.accent.primary}12` : c.shadow.sm,
@@ -2154,9 +2154,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               flexShrink: 0,
               cursor: 'pointer',
               '&:hover': {
-                bgcolor: c.bg.secondary,
-                borderColor: c.border.strong,
-                boxShadow: c.shadow.md,
+                bgcolor: cardTokens.polish.hoverBackground,
+                borderColor: cardTokens.surface.selectedBorder,
+                boxShadow: cardTokens.surface.shadow,
               },
             }}
           >
@@ -2751,7 +2751,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                             },
                             '&.Mui-disabled': {
                               bgcolor: 'transparent',
-                              color: c.text.ghost,
+                              color: cardTokens.polish.mutedActionColor,
                               borderColor: 'transparent',
                             },
                           }}
@@ -3025,7 +3025,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
           {renderPanelHeader('tasks', 'Tasks', tasks.length)}
           {openPanelSections.tasks && (tasks.length === 0 ? (
-            <Typography sx={{ color: c.text.tertiary, fontSize: '0.78rem', mb: 1.5 }}>No tasks loaded.</Typography>
+            <Typography sx={{ color: c.text.tertiary, fontSize: '0.78rem', mb: 1.5 }}>No tasks yet.</Typography>
           ) : tasks.slice(0, 6).map((task: any, idx: number) => (
             <Box
               key={task.id || idx}

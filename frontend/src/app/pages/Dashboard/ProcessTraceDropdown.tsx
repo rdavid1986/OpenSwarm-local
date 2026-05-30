@@ -375,6 +375,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
         overflow: 'hidden',
         transition: 'border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease',
         boxShadow: status === 'running' ? cardTokens.trace.runningShadow : cardTokens.trace.shadow,
+        outline: status === 'running' ? `1px solid ${c.accent.primary}10` : 'none',
       }}
     >
       <Box
@@ -388,6 +389,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
           cursor: 'pointer',
           userSelect: 'none',
           '&:hover': { bgcolor: cardTokens.trace.headerHoverBackground },
+          transition: 'background 0.15s ease',
         }}
       >
         <Tooltip title={subsystem} arrow>
@@ -583,6 +585,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
                   fontWeight: 700,
                   textAlign: 'left',
                   '&:hover': { bgcolor: cardTokens.trace.headerHoverBackground },
+          transition: 'background 0.15s ease',
                 }}
               >
                 <span>Debug data · redacted JSON</span>
@@ -676,6 +679,7 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
         borderRadius: cardTokens.trace.turnRadius,
         overflow: 'hidden',
         boxShadow: normalizedStatus === 'running' ? cardTokens.trace.runningTurnShadow : cardTokens.trace.turnShadow,
+        outline: normalizedStatus === 'running' ? `1px solid ${c.accent.primary}10` : 'none',
       }}
     >
       <Box
@@ -689,6 +693,7 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
           cursor: 'pointer',
           userSelect: 'none',
           '&:hover': { bgcolor: cardTokens.trace.headerHoverBackground },
+          transition: 'background 0.15s ease',
         }}
       >
         <Tooltip title="Turn work trace" arrow>

@@ -1067,8 +1067,8 @@ const AgentCard: React.FC<Props> = ({
                 fontSize: '0.68rem',
                 fontWeight: 650,
                 color: c.text.secondary,
-                bgcolor: c.bg.secondary,
-                border: `1px solid ${c.border.subtle}`,
+                bgcolor: cardTokens.polish.subtleChipBackground,
+                border: `1px solid ${cardTokens.polish.subtleChipBorder}`,
                 flexShrink: 0,
               }}
             />
@@ -1096,7 +1096,7 @@ const AgentCard: React.FC<Props> = ({
                 onClick={handleRemove}
                 onMouseDown={(e) => e.stopPropagation()}
                 sx={{
-                  color: c.text.ghost,
+                  color: cardTokens.polish.mutedActionColor,
                   p: 0.5,
                   '&:hover': { color: c.status.error, bgcolor: `${c.status.errorBg}` },
                 }}
@@ -1137,7 +1137,7 @@ const AgentCard: React.FC<Props> = ({
             mb: -2,
             flex: 1,
             minHeight: 0,
-            borderTop: `1px solid ${c.border.subtle}`,
+            borderTop: `1px solid ${cardTokens.polish.divider}`,
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',

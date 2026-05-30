@@ -50,6 +50,15 @@ export function buildCardVisualTokens(c: ClaudeTokens) {
       headerPaddingX: 2,
       headerPaddingY: 1.15,
     },
+    polish: {
+      subtleChipBackground: c.bg.secondary,
+      subtleChipBorder: c.border.subtle,
+      mutedActionColor: c.text.ghost,
+      hoverBackground: c.bg.secondary,
+      divider: c.border.subtle,
+      emptyStateBackground: 'transparent',
+      emptyStateBorder: 'transparent',
+    },
   };
 }
 
