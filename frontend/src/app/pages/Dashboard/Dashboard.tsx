@@ -56,6 +56,7 @@ import {
   GRID_GAP,
 } from '@/shared/state/dashboardLayoutSlice';
 import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
+import type { UnifiedComposerSubmitPayload } from '@/shared/types/unifiedComposer';
 import { fetchOutputs } from '@/shared/state/outputsSlice';
 import type { Output } from '@/shared/state/outputsSlice';
 import {
@@ -1733,8 +1734,9 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     prompt: string,
     swarmMode: SwarmMode,
     swarmModel: string,
+    composerPayload?: UnifiedComposerSubmitPayload | null,
   ) => {
-    const cleanPrompt = prompt.trim();
+    const cleanPrompt = (composerPayload?.prompt || prompt).trim();
     if (!cleanPrompt) return;
 
     setToolbarComposer(null);
@@ -1769,6 +1771,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
       message: cleanPrompt,
       swarmMode,
       model: swarmModel,
+      composerPayload: composerPayload || null,
     }));
     dispatch(fetchExperimentalSwarm(swarmIdToRun));
     window.setTimeout(() => focusSwarmCard(swarmCardId), 160);

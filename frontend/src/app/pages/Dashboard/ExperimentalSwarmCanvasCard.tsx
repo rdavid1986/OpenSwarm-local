@@ -39,6 +39,7 @@ import type { CardType } from './useDashboardSelection';
 import SwarmPromptInput from './SwarmPromptInput';
 import { DEFAULT_SWARM_MODE, getSwarmModeOption } from './SwarmModePicker';
 import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
+import type { UnifiedComposerSubmitPayload } from '@/shared/types/unifiedComposer';
 import { API_BASE } from '@/shared/config';
 import ProcessTraceDropdown, { ProcessTraceItem, ProcessTraceTurnDropdown, normalizeProcessTraceTurnContainer } from './ProcessTraceDropdown';
 import { buildCardVisualTokens } from './cardVisualTokens';
@@ -1559,8 +1560,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     window.setTimeout(scrollToBottom, 0);
   }, [chatMessages.length, events.length, lastSubmittedPrompt, swarmState.actionLoading]);
 
-  const handleStart = useCallback(async () => {
-    const cleanPrompt = prompt.trim();
+  const handleStart = useCallback(async (composerPayload?: UnifiedComposerSubmitPayload) => {
+    const cleanPrompt = (composerPayload?.prompt || prompt).trim();
     setCustomIntakeMode(false);
     if (!cleanPrompt && !activeSwarmId) return;
 
@@ -1632,6 +1633,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       message: messageToSend,
       swarmMode: requestedMode,
       model: activeSwarmModel,
+      composerPayload: composerPayload || null,
     }));
     dispatch(fetchExperimentalSwarm(swarmIdToRun));
   }, [activeSwarm?.intent, activeSwarmId, activeSwarmModel, dashboardId, dispatch, ensureSkillWorkspace, lastSubmittedPrompt, onSwarmBound, pendingPreviewRefinementDraft, prompt, swarmCardId]);
@@ -2979,6 +2981,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               modelLabel={activeSwarmModel}
               contextEstimate={contextEstimate}
               inputRef={promptInputRef}
+              ownerId={swarmCardId}
+              cardId={swarmCardId}
               placeholderOverride={pendingPreviewRefinementDraft ? 'Describí el cambio para esta Preview…' : undefined}
             />
           </Box>

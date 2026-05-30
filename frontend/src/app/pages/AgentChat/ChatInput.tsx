@@ -34,6 +34,13 @@ import { useElementSelection, SelectedElement } from '@/app/components/ElementSe
 import { getClipboardCards, clearClipboard } from '@/shared/dashboardClipboard';
 import { getWebview } from '@/shared/browserRegistry';
 import { API_BASE, getAuthToken } from '@/shared/config';
+import {
+  createDisabledVoiceState,
+  contextRefFromPath,
+  selectionRefFromElement,
+  toolRefFromNames,
+  type UnifiedComposerState,
+} from '@/shared/types/unifiedComposer';
 
 // Slash command parser (Phase 2). Returns true if the command was handled
 // and the prompt should NOT be sent to the agent. Three commands:
@@ -780,10 +787,35 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
 
   const selectedElements = elementSelection?.elementsByOwner?.[ownerId] ?? [];
   const hasAttachments = images.length > 0 || contextPaths.length > 0 || forcedTools.length > 0 || selectedElements.length > 0;
+  const voiceState = useMemo(() => createDisabledVoiceState(), []);
+  const unifiedComposerState: UnifiedComposerState = useMemo(() => ({
+    source_surface: 'agent',
+    owner_id: ownerId,
+    card_id: sessionId,
+    mode,
+    model,
+    prompt: editorRef.current ? serializeEditorContent(editorRef.current, attachedSkillsRef.current).trim() : '',
+    loading: Boolean(isRunning),
+    disabled: Boolean(disabled),
+    disabled_reasons: disabled ? [{ code: 'running', message: 'Composer is disabled by the current session state.' }] : [],
+    tools_available: [],
+    tools_selected: forcedTools.map((tool) => toolRefFromNames(tool.label, tool.tools, tool.iconKey)),
+    context_refs: contextPaths.map((cp) => contextRefFromPath(cp.path, cp.type === 'directory' ? 'directory' : 'file', 'existing')),
+    attachment_refs: contextPaths.map((cp) => ({ ...contextRefFromPath(cp.path, cp.type === 'directory' ? 'directory' : 'file', 'existing'), source: 'existing' as const })),
+    selected_ui_elements: selectedElements.map((el) => selectionRefFromElement(el, ownerId)),
+    voice: voiceState,
+    can_submit: !disabled && hasContent,
+    can_stop: Boolean(isRunning && onStop),
+    pending_action_capability: 'available',
+    evidence_refs: [],
+    trace_refs: [],
+  }), [contextPaths, disabled, forcedTools, hasContent, isRunning, mode, model, onStop, ownerId, selectedElements, sessionId, voiceState]);
 
   return (
     <Box
       ref={containerRef}
+      data-composer-surface={unifiedComposerState.source_surface}
+      data-composer-owner-id={unifiedComposerState.owner_id}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -1390,7 +1422,7 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
                 </IconButton>
               </Tooltip>
             ) : !hasContent ? (
-              <Tooltip title="Voice input (coming soon)">
+              <Tooltip title={voiceState.disabled_reason?.message || 'Voice input disabled'}>
                 <span>
                   <IconButton
                     size="small"

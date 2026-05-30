@@ -1,6 +1,7 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { API_BASE } from '@/shared/config';
 import type { SwarmMode } from './dashboardLayoutSlice';
+import type { UnifiedComposerSubmitPayload } from '@/shared/types/unifiedComposer';
 
 const SWARMS_API = `${API_BASE}/swarms`;
 
@@ -149,14 +150,33 @@ export const createOutputBridgeFromSwarm = createAsyncThunk(
 
 export const chatExperimentalSwarm = createAsyncThunk(
   'experimentalSwarms/chat',
-  async ({ swarmId, message, swarmMode, model }: {
+  async ({ swarmId, message, swarmMode, model, composerPayload }: {
     swarmId: string;
     message: string;
     swarmMode?: SwarmMode;
     model?: string | null;
+    composerPayload?: UnifiedComposerSubmitPayload | null;
   }) => {
     const body: Record<string, any> = { message, swarm_mode: swarmMode };
     if (model) body.model = model;
+    if (composerPayload) {
+      body.composer = {
+        source_surface: composerPayload.source_surface,
+        owner_id: composerPayload.owner_id,
+        card_id: composerPayload.card_id,
+        mode: composerPayload.mode,
+        model: composerPayload.model,
+        prompt: composerPayload.prompt,
+        context_refs: composerPayload.context_refs,
+        attachment_refs: composerPayload.attachment_refs,
+        selected_ui_elements: composerPayload.selected_ui_elements,
+        selected_tools: composerPayload.selected_tools,
+        selected_tool_names: composerPayload.selected_tool_names,
+        voice: composerPayload.voice,
+        evidence_refs: composerPayload.evidence_refs,
+        trace_refs: composerPayload.trace_refs,
+      };
+    }
     const res = await fetch(`${SWARMS_API}/${swarmId}/experimental/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -28,6 +28,7 @@ import { store } from '@/shared/state/store';
 import type { ClaudeTokens } from '@/shared/styles/claudeTokens';
 import type { Output } from '@/shared/state/outputsSlice';
 import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
+import type { UnifiedComposerSubmitPayload } from '@/shared/types/unifiedComposer';
 
 interface Props {
   composerType: 'agent' | 'swarm' | null;
@@ -44,7 +45,7 @@ interface Props {
     attachedSkills?: Array<{ id: string; name: string; content: string }>,
     selectedBrowserIds?: string[],
   ) => void;
-  onSwarmSend: (prompt: string, swarmMode: SwarmMode, swarmModel: string) => void;
+  onSwarmSend: (prompt: string, swarmMode: SwarmMode, swarmModel: string, composerPayload?: UnifiedComposerSubmitPayload | null) => void;
   onAddView: (outputId: string) => void;
   onHistoryResume: (sessionId: string) => void;
   onAddBrowser: () => void;
@@ -223,10 +224,10 @@ const DashboardToolbar = React.forwardRef<HTMLDivElement, Props>(
       [onSend, mode, model],
     );
 
-    const handleSwarmSend = useCallback(() => {
-      const cleanPrompt = swarmPrompt.trim();
+    const handleSwarmSend = useCallback((composerPayload?: UnifiedComposerSubmitPayload) => {
+      const cleanPrompt = (composerPayload?.prompt || swarmPrompt).trim();
       if (!cleanPrompt) return;
-      onSwarmSend(cleanPrompt, swarmMode, swarmModel);
+      onSwarmSend(cleanPrompt, swarmMode, swarmModel, composerPayload || null);
       setSwarmPrompt('');
     }, [onSwarmSend, swarmMode, swarmModel, swarmPrompt]);
 
