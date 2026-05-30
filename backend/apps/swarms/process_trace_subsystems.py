@@ -14,6 +14,22 @@ SUBSYSTEMS: dict[str, dict[str, str]] = {
         "color_token": "trace.swarm",
         "accent_token": "trace.swarm.accent",
     },
+    "ReasoningCore": {
+        "subsystem_id": "ReasoningCore",
+        "label": "ReasoningCore",
+        "description": "Reasoning summaries, thinking traces and decision context.",
+        "icon_id": "reasoning-core",
+        "color_token": "trace.reasoning",
+        "accent_token": "trace.reasoning.accent",
+    },
+    "ContextCore": {
+        "subsystem_id": "ContextCore",
+        "label": "ContextCore",
+        "description": "Selected context, retrieval packets and active scope.",
+        "icon_id": "context-core",
+        "color_token": "trace.context",
+        "accent_token": "trace.context.accent",
+    },
     "MemoryCore": {
         "subsystem_id": "MemoryCore",
         "label": "MemoryCore",
@@ -46,6 +62,14 @@ SUBSYSTEMS: dict[str, dict[str, str]] = {
         "color_token": "trace.action",
         "accent_token": "trace.action.accent",
     },
+    "FileCore": {
+        "subsystem_id": "FileCore",
+        "label": "FileCore",
+        "description": "Files, diffs and workspace changes.",
+        "icon_id": "file-core",
+        "color_token": "trace.file",
+        "accent_token": "trace.file.accent",
+    },
     "EvidenceCore": {
         "subsystem_id": "EvidenceCore",
         "label": "EvidenceCore",
@@ -77,6 +101,30 @@ SUBSYSTEMS: dict[str, dict[str, str]] = {
         "icon_id": "handoff-core",
         "color_token": "trace.handoff",
         "accent_token": "trace.handoff.accent",
+    },
+    "MiniAgentCore": {
+        "subsystem_id": "MiniAgentCore",
+        "label": "MiniAgentCore",
+        "description": "MiniAgent task execution and worker-level trace.",
+        "icon_id": "miniagent-core",
+        "color_token": "trace.miniagent",
+        "accent_token": "trace.miniagent.accent",
+    },
+    "ValidationCore": {
+        "subsystem_id": "ValidationCore",
+        "label": "ValidationCore",
+        "description": "Validation, checks and quality gates.",
+        "icon_id": "validation-core",
+        "color_token": "trace.validation",
+        "accent_token": "trace.validation.accent",
+    },
+    "OutputCore": {
+        "subsystem_id": "OutputCore",
+        "label": "OutputCore",
+        "description": "Outputs, previews, artifacts and candidate versions.",
+        "icon_id": "output-core",
+        "color_token": "trace.output",
+        "accent_token": "trace.output.accent",
     },
     "ReviewCore": {
         "subsystem_id": "ReviewCore",
@@ -113,14 +161,20 @@ SUBSYSTEMS: dict[str, dict[str, str]] = {
 }
 
 _KIND_TO_SUBSYSTEM = {
-    "context": "MemoryCore",
+    "reasoning": "ReasoningCore",
+    "thinking": "ReasoningCore",
+    "context": "ContextCore",
     "memory": "MemoryCore",
     "skill": "SkillCore",
     "mode": "ModeCore",
     "action": "ActionCore",
     "tool": "ActionCore",
+    "file": "FileCore",
+    "diff": "FileCore",
+    "workspace": "FileCore",
     "evidence": "EvidenceCore",
     "handoff": "HandoffCore",
+    "miniagent": "MiniAgentCore",
     "metric": "MetricCore",
     "review": "ReviewCore",
     "browser": "BrowserCore",
@@ -128,10 +182,13 @@ _KIND_TO_SUBSYSTEM = {
     "model": "ModelCore",
     "timeline": "TraceCore",
     "worklog": "TraceCore",
-    "validation": "ReviewCore",
+    "validation": "ValidationCore",
+    "output": "OutputCore",
+    "artifact": "OutputCore",
     "summary": "TraceCore",
     "unknown": "TraceCore",
 }
+
 
 
 def build_subsystem_identity_registry() -> dict[str, dict[str, str]]:
