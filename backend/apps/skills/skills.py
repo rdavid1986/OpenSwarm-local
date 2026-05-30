@@ -13,6 +13,7 @@ from backend.apps.skills.candidate_install import install_approved_skill_candida
 from backend.apps.skills.candidate_validation import apply_skill_candidate_validation
 from backend.apps.skills.models import Skill, SkillCandidateApprovalRequest, SkillCandidateImprovementApplyRequest, SkillCreate, SkillSpecCandidate, SkillUpdate, SkillWorkspaceSeedRequest
 from backend.apps.skills.requirements_contract import build_skill_candidate_requirements_contract
+from backend.apps.skills.research_contract import build_skill_candidate_research_contract
 from backend.apps.skills.skill_reviewer import review_skill_candidate
 from backend.apps.skills.skill_improvement_proposal import build_skill_candidate_improvement_proposal, apply_skill_candidate_improvement_proposal
 from backend.apps.tools_lib.models import BUILTIN_TOOLS
@@ -282,6 +283,18 @@ async def get_skill_candidate_quality_review(candidate_id: str):
         raise HTTPException(status_code=400, detail=str(exc))
 
     return review_skill_candidate(candidate)
+
+
+@skills.router.get("/candidates/{candidate_id}/research-contract")
+async def get_skill_candidate_research_contract(candidate_id: str):
+    try:
+        candidate = skill_candidate_store.load(candidate_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Skill candidate not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return build_skill_candidate_research_contract(candidate)
 
 
 @skills.router.get("/candidates/{candidate_id}/improvement-proposal")
