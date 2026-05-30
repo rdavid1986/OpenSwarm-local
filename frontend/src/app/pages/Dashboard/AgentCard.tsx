@@ -13,6 +13,7 @@ import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import TerminalIcon from '@mui/icons-material/Terminal';
 import { motion } from 'framer-motion';
 import {
+  AgentMessage,
   AgentSession,
   handleApproval,
   collapseSession,
@@ -32,6 +33,7 @@ import { parseMcpToolName, getMcpShortAction } from '@/app/pages/AgentChat/ToolC
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import { useDashboardActive } from '@/shared/hooks/useDashboardActive';
 import { useOverlayScrollPassthrough } from './useOverlayScrollPassthrough';
+import ProcessTraceDropdown, { ProcessTraceItem } from './ProcessTraceDropdown';
 
 // ---------------------------------------------------------------------------
 // Helper components & functions (unchanged)
@@ -156,6 +158,144 @@ function getAgentWorkTime(
     totalMs: Math.max(0, Math.round(totalMs)),
     lastMs: Math.max(0, Math.round(lastMs)),
   };
+}
+
+function buildAgentCardProcessTraceItems(
+  session: AgentSession,
+  lastDurationMs: number,
+  isStreaming: boolean,
+  pendingApprovalCount: number,
+): ProcessTraceItem[] {
+  const visibleMessages = (session.messages || []).filter((message: AgentMessage) => !message.hidden);
+  const thinkingMessages = visibleMessages.filter((message) => message.role === 'thinking');
+  const toolCallMessages = visibleMessages.filter((message) => message.role === 'tool_call');
+  const toolResultMessages = visibleMessages.filter((message) => message.role === 'tool_result');
+  const assistantMessages = visibleMessages.filter((message) => message.role === 'assistant');
+  const userMessages = visibleMessages.filter((message) => message.role === 'user');
+
+  const lastThinking = thinkingMessages[thinkingMessages.length - 1];
+  const thinkingElapsedMs = typeof lastThinking?.elapsed_ms === 'number' ? lastThinking.elapsed_ms : null;
+  const thinkingTokens = typeof lastThinking?.tokens === 'number' ? lastThinking.tokens : null;
+  const inputTokens = typeof lastThinking?.input_tokens === 'number' ? lastThinking.input_tokens : null;
+
+  const status: ProcessTraceItem['status'] =
+    session.status === 'error'
+      ? 'failed'
+      : session.status === 'stopped'
+        ? 'cancelled'
+        : session.status === 'waiting_approval'
+          ? 'blocked'
+          : session.status === 'running'
+            ? 'running'
+            : session.status === 'completed'
+              ? 'completed'
+              : 'planned';
+
+  const items: ProcessTraceItem[] = [
+    {
+      trace_id: `agent-session-${session.id}`,
+      kind: 'summary',
+      subsystem: 'TraceCore',
+      title: 'Agent session',
+      summary: `${session.status.replace('_', ' ')} · ${visibleMessages.length} visible messages`,
+      status,
+      duration_ms: lastDurationMs,
+      icon_id: 'TraceCore',
+      badge: session.status.replace('_', ' '),
+      related_agent_id: session.id,
+      details: {
+        mode: session.mode,
+        provider: session.provider,
+        model: session.model,
+        user_messages: userMessages.length,
+        assistant_messages: assistantMessages.length,
+        thinking_messages: thinkingMessages.length,
+      },
+    },
+  ];
+
+  if (thinkingMessages.length > 0 || isStreaming) {
+    items.push({
+      trace_id: `agent-thinking-${session.id}`,
+      kind: 'metric',
+      subsystem: 'MetricCore',
+      title: isStreaming ? 'Thinking live' : 'Latest thinking',
+      summary: thinkingElapsedMs != null
+        ? `Thinking duration captured from elapsed_ms.`
+        : isStreaming
+          ? 'Agent is currently thinking.'
+          : 'Thinking event recorded without persisted duration.',
+      status: isStreaming ? 'running' : 'completed',
+      duration_ms: thinkingElapsedMs,
+      icon_id: 'MetricCore',
+      badge: isStreaming ? 'thinking' : 'thought',
+      related_agent_id: session.id,
+      details: {
+        thinking_events: thinkingMessages.length,
+        output_tokens: thinkingTokens,
+        input_tokens: inputTokens,
+        tool_count: lastThinking?.tool_count ?? null,
+      },
+    });
+  }
+
+  if (toolCallMessages.length > 0 || toolResultMessages.length > 0) {
+    items.push({
+      trace_id: `agent-tools-${session.id}`,
+      kind: 'tool',
+      subsystem: 'ActionCore',
+      title: 'Tools and actions',
+      summary: `${toolCallMessages.length} tool calls · ${toolResultMessages.length} results`,
+      status: session.status === 'error' ? 'failed' : toolCallMessages.length === toolResultMessages.length ? 'completed' : 'running',
+      icon_id: 'ActionCore',
+      badge: 'tools',
+      related_agent_id: session.id,
+      details: {
+        tool_calls: toolCallMessages.length,
+        tool_results: toolResultMessages.length,
+      },
+    });
+  }
+
+  if (pendingApprovalCount > 0) {
+    items.push({
+      trace_id: `agent-approvals-${session.id}`,
+      kind: 'validation',
+      subsystem: 'ReviewCore',
+      title: 'Pending approval',
+      summary: `${pendingApprovalCount} approval${pendingApprovalCount === 1 ? '' : 's'} waiting for review.`,
+      status: 'blocked',
+      icon_id: 'ReviewCore',
+      badge: 'review',
+      related_agent_id: session.id,
+      details: {
+        pending_approvals: pendingApprovalCount,
+      },
+    });
+  }
+
+  if (session.tokens && (session.tokens.input > 0 || session.tokens.output > 0)) {
+    items.push({
+      trace_id: `agent-model-${session.id}`,
+      kind: 'model',
+      subsystem: 'ModelCore',
+      title: 'Model usage',
+      summary: `${session.model || 'selected model'} · ${session.provider || 'provider'}`,
+      status: session.status === 'error' ? 'failed' : 'completed',
+      icon_id: 'ModelCore',
+      badge: 'model',
+      related_agent_id: session.id,
+      details: {
+        provider: session.provider,
+        model: session.model,
+        input_tokens: session.tokens.input,
+        output_tokens: session.tokens.output,
+        cache_read_tokens: session.cache_read_tokens ?? null,
+      },
+    });
+  }
+
+  return items;
 }
 
 function summarizeToolInput(toolName: string, toolInput: Record<string, any>): string {
@@ -569,6 +709,11 @@ const AgentCard: React.FC<Props> = ({
   const hasPending = session.pending_approvals.length > 0;
   const pendingReq = session.pending_approvals[0];
   const statusStyle = STATUS_COLORS[session.status] || { color: c.text.tertiary, bg: c.bg.secondary };
+  const agentWorkTime = getAgentWorkTime(session.messages, session.status);
+  const processTraceItems = useMemo(
+    () => buildAgentCardProcessTraceItems(session, agentWorkTime.lastMs, isStreaming, session.pending_approvals.length),
+    [session, agentWorkTime.lastMs, isStreaming],
+  );
 
   const noTransition = isDragging || isResizing || (isSelected && !!multiDragDelta);
 
@@ -948,7 +1093,7 @@ const AgentCard: React.FC<Props> = ({
             {session.mode}
           </Typography>
           <Typography variant="caption" sx={{ color: c.text.tertiary }}>
-            {fmtDurationMs(getAgentWorkTime(session.messages, session.status).lastMs)}
+            {fmtDurationMs(agentWorkTime.lastMs)}
           </Typography>
           {session.cost_usd > 0 && hasApiKey && (
             <Typography variant="caption" sx={{ color: c.accent.primary }}>
@@ -1020,6 +1165,27 @@ const AgentCard: React.FC<Props> = ({
               >
                 {previewContent}
               </Typography>
+            </Box>
+          )}
+
+          {processTraceItems.length > 0 && (
+            <Box
+              onClick={(e) => e.stopPropagation()}
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 0.75,
+                mb: hasPending ? 1.5 : 0,
+              }}
+            >
+              {processTraceItems.slice(0, 3).map((item) => (
+                <ProcessTraceDropdown
+                  key={item.trace_id || `${item.kind}-${item.title}`}
+                  item={item}
+                  compact
+                  defaultExpanded={item.status === 'running' || item.status === 'blocked'}
+                />
+              ))}
             </Box>
           )}
 
