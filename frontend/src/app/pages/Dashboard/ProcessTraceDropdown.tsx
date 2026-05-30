@@ -73,6 +73,35 @@ export type ProcessTraceItem = {
   metadata?: Record<string, unknown>;
 };
 
+export type ProcessTraceTurnContainer = {
+  turn_trace_kind?: string;
+  turn_trace_version?: string;
+  turn_trace_id?: string;
+  title?: string;
+  status?: ProcessTraceStatus | string;
+  turn_id?: string;
+  message_id?: string;
+  action_id?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  duration_ms?: number | null;
+  default_collapsed_after_finish?: boolean;
+  default_expanded_while_running?: boolean;
+  child_trace_ids?: unknown[];
+  item_count?: number;
+  items?: ProcessTraceItem[];
+  output_message_id?: string;
+  related_task_ids?: unknown[];
+  related_agent_ids?: unknown[];
+  related_miniagent_ids?: unknown[];
+  evidence_refs?: unknown[];
+  artifact_refs?: unknown[];
+  visible_to_user?: boolean;
+  internal_only?: boolean;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+};
+
 type ProcessTraceDropdownProps = {
   item: ProcessTraceItem;
   defaultExpanded?: boolean;
@@ -632,33 +661,40 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
 };
 
 export type ProcessTraceTurnDropdownProps = {
-  title: string;
+  container?: ProcessTraceTurnContainer | null;
+  title?: string;
   status?: ProcessTraceStatus | string;
   duration_ms?: number | null;
-  items: ProcessTraceItem[];
+  items?: ProcessTraceItem[];
   defaultExpanded?: boolean;
   compact?: boolean;
   bare?: boolean;
 };
 
 export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> = ({
-  title,
+  container = null,
+  title = 'Thought',
   status = 'completed',
   duration_ms = null,
-  items,
+  items = [],
   defaultExpanded,
   compact = true,
   bare = false,
 }) => {
   const c = useClaudeTokens();
   const cardTokens = buildCardVisualTokens(c);
-  const normalizedStatus = normalizeStatus(status);
-  const durationLabel = formatDurationMs(duration_ms);
-  const [expanded, setExpanded] = useState(defaultExpanded ?? normalizedStatus === 'running');
+  const effectiveTitle = container?.title || title || 'Thought';
+  const effectiveStatus = container?.status || status || 'completed';
+  const effectiveDurationMs = container?.duration_ms ?? duration_ms ?? null;
+  const effectiveItems = Array.isArray(container?.items) ? container.items : (Array.isArray(items) ? items : []);
+  const containerHidden = Boolean(container?.internal_only || container?.visible_to_user === false);
+  const normalizedStatus = normalizeStatus(effectiveStatus);
+  const durationLabel = formatDurationMs(effectiveDurationMs);
+  const [expanded, setExpanded] = useState(defaultExpanded ?? container?.default_expanded_while_running ?? normalizedStatus === 'running');
 
   const visibleItems = useMemo(
-    () => items.filter((item) => !item.internal_only && item.visible_to_user !== false),
-    [items],
+    () => effectiveItems.filter((item) => !item.internal_only && item.visible_to_user !== false),
+    [effectiveItems],
   );
 
   const statusColor = useMemo(() => {
@@ -669,11 +705,11 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
     return c.text.tertiary;
   }, [c, normalizedStatus]);
 
-  if (visibleItems.length === 0) return null;
+  if (containerHidden || visibleItems.length === 0) return null;
 
   const headerTitle = durationLabel
-    ? `${redactTraceText(title)} durante ${durationLabel}`
-    : redactTraceText(title);
+    ? `${redactTraceText(effectiveTitle)} durante ${durationLabel}`
+    : redactTraceText(effectiveTitle);
 
   return (
     <Box
