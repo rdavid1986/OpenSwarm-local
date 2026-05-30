@@ -160,6 +160,17 @@ function getAgentWorkTime(
   };
 }
 
+function humanizeAgentStatusLabel(status: string): string {
+  const normalized = String(status || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (normalized === 'idle' || normalized === 'draft') return 'Ready';
+  if (normalized === 'waiting_approval') return 'Needs approval';
+  if (normalized === 'running') return 'Running';
+  if (normalized === 'completed') return 'Completed';
+  if (normalized === 'error' || normalized === 'failed') return 'Failed';
+  if (normalized === 'stopped' || normalized === 'cancelled') return 'Stopped';
+  return normalized ? normalized.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ') : 'Ready';
+}
+
 function buildAgentCardProcessTraceItems(
   session: AgentSession,
   lastDurationMs: number,
@@ -197,11 +208,11 @@ function buildAgentCardProcessTraceItems(
       kind: 'summary',
       subsystem: 'TraceCore',
       title: 'Agent session',
-      summary: `${session.status.replace('_', ' ')} · ${visibleMessages.length} visible messages`,
+      summary: `${humanizeAgentStatusLabel(session.status)} · ${visibleMessages.length} visible messages`,
       status,
       duration_ms: lastDurationMs,
       icon_id: 'TraceCore',
-      badge: session.status.replace('_', ' '),
+      badge: humanizeAgentStatusLabel(session.status),
       related_agent_id: session.id,
       details: {
         mode: session.mode,
@@ -709,6 +720,7 @@ const AgentCard: React.FC<Props> = ({
   const hasPending = session.pending_approvals.length > 0;
   const pendingReq = session.pending_approvals[0];
   const statusStyle = STATUS_COLORS[session.status] || { color: c.text.tertiary, bg: c.bg.secondary };
+  const statusLabel = humanizeAgentStatusLabel(session.status);
   const agentWorkTime = getAgentWorkTime(session.messages, session.status);
   const processTraceItems = useMemo(
     () => buildAgentCardProcessTraceItems(session, agentWorkTime.lastMs, isStreaming, session.pending_approvals.length),
@@ -1059,7 +1071,7 @@ const AgentCard: React.FC<Props> = ({
               }}
             />
             <Chip
-              label={session.status.replace('_', ' ')}
+              label={statusLabel}
               size="small"
               sx={{
                 bgcolor: statusStyle.bg,

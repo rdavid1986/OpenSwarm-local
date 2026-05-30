@@ -80,7 +80,7 @@ type ProcessTraceDropdownProps = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  planned: 'Planned',
+  planned: 'Ready',
   running: 'Running',
   completed: 'Completed',
   failed: 'Failed',
@@ -127,7 +127,10 @@ function formatDurationMs(durationMs?: number | null): string | null {
 }
 
 function normalizeStatus(status?: string): ProcessTraceStatus {
-  const normalized = String(status || '').toLowerCase();
+  const normalized = String(status || '').toLowerCase().replace(/[\s-]+/g, '_');
+  if (normalized === 'idle' || normalized === 'ready' || normalized === 'queued' || normalized === 'pending') return 'planned';
+  if (normalized === 'error') return 'failed';
+  if (normalized === 'waiting_approval' || normalized === 'requires_approval') return 'blocked';
   if (['planned', 'running', 'completed', 'failed', 'blocked', 'skipped', 'cancelled', 'warning'].includes(normalized)) {
     return normalized as ProcessTraceStatus;
   }

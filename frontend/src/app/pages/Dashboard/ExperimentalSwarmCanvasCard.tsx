@@ -44,7 +44,7 @@ import ProcessTraceDropdown, { ProcessTraceItem, ProcessTraceTurnDropdown } from
 
 type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 type ImplementationVisualState =
-  | 'idle'
+  | 'ready'
   | 'running'
   | 'completed'
   | 'completed_with_output'
@@ -1048,7 +1048,7 @@ function getImplementationVisualState(params: {
   if (params.implementationStatus === 'completed') {
     return params.claimGuardStatus === 'verified' ? 'verified' : 'unverified';
   }
-  return params.hasSwarm ? 'idle' : 'idle';
+  return 'ready';
 }
 
 const HANDLE_DEFS: { dir: ResizeDir; sx: Record<string, any> }[] = [
@@ -1252,7 +1252,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     hasError: Boolean(swarmState.error),
   });
   const implementationStateMeta: Record<ImplementationVisualState, { label: string; color: string; message: string }> = {
-    idle: {
+    ready: {
       label: activeSwarmId ? 'Listo' : 'Nuevo',
       color: c.text.tertiary,
       message: activeSwarmId ? 'Listo para iniciar implementación.' : 'Creá o vinculá un swarm para implementar.',
