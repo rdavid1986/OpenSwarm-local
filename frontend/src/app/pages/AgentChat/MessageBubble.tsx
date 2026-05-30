@@ -62,6 +62,29 @@ const StreamingCursor: React.FC = () => {
   );
 };
 
+function formatMessageTime(timestamp?: string): string {
+  if (!timestamp) return '';
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function stripAssistantTechnicalLines(value: string): string {
+  const lines = value.split(/\r?\n/);
+  const filtered = lines.filter((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return true;
+    if (/^Herramienta ejecutada:/i.test(trimmed)) return false;
+    if (/^Task$/i.test(trimmed)) return false;
+    if (/^Duration$/i.test(trimmed)) return false;
+    if (/^[a-f0-9]{24,}$/i.test(trimmed)) return false;
+    if (/^\d+(?:m\s*)?\d+(?:\.\d+)?s$/i.test(trimmed)) return false;
+    return true;
+  });
+  const cleaned = filtered.join('\n').replace(/^\s+/, '').trim();
+  return cleaned || value;
+}
+
 function renderAnimatedText(value: string, baseDelayMs = 0): React.ReactNode {
   let visibleIndex = 0;
 
@@ -903,9 +926,11 @@ const MessageBubble: React.FC<Props> = React.memo(({ message, editing = false, o
 
   const isUser = role === 'user';
   const rawText = typeof content === 'string' ? content : JSON.stringify(content);
+  const visibleText = isUser ? rawText : stripAssistantTechnicalLines(rawText);
+  const messageTime = formatMessageTime(message.timestamp);
   const { userMessage: displayText, elements: selectedElements } = isUser
-    ? parseElementContext(rawText)
-    : { userMessage: rawText, elements: [] };
+    ? parseElementContext(visibleText)
+    : { userMessage: visibleText, elements: [] };
 
   const renderedMarkdown = useMemo(() => (
     <ReactMarkdown
@@ -915,8 +940,8 @@ const MessageBubble: React.FC<Props> = React.memo(({ message, editing = false, o
           <a {...props} style={{ cursor: 'pointer' }}>{children}</a>
         ),
       }}
-    >{rawText}</ReactMarkdown>
-  ), [rawText]);
+    >{visibleText}</ReactMarkdown>
+  ), [visibleText]);
 
   // upstream errors get a friendly card.
   const openswarmError = !isUser ? parseOpenSwarmError(rawText) : null;
@@ -1185,7 +1210,7 @@ const MessageBubble: React.FC<Props> = React.memo(({ message, editing = false, o
                       color: 'inherit',
                     }}
                   >
-                    {renderAnimatedText(rawText)}
+                    {renderAnimatedText(visibleText)}
                   </Box>
                 ) : (
                   renderedMarkdown
@@ -1194,6 +1219,21 @@ const MessageBubble: React.FC<Props> = React.memo(({ message, editing = false, o
               </>
             )}
           </Box>
+        )}
+        {messageTime && !editing && (
+          <Typography
+            sx={{
+              mt: 0.55,
+              color: c.text.ghost,
+              fontSize: '0.68rem',
+              lineHeight: 1,
+              textAlign: isUser ? 'right' : 'left',
+              fontVariantNumeric: 'tabular-nums',
+              userSelect: 'none',
+            }}
+          >
+            {messageTime}
+          </Typography>
         )}
       </Box>
 
