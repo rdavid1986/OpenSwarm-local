@@ -709,7 +709,9 @@ const AgentCard: React.FC<Props> = ({
     }
   }, [session.status]);
 
-  const lastMessage = session.messages[session.messages.length - 1];
+  const safeMessages = Array.isArray(session.messages) ? session.messages : [];
+  const safePendingApprovals = Array.isArray(session.pending_approvals) ? session.pending_approvals : [];
+  const lastMessage = safeMessages[safeMessages.length - 1];
   const isStreaming = !!session.streamingMessage;
   const previewContent = isStreaming
     ? (session.streamingMessage!.role === 'tool_call'
@@ -719,14 +721,14 @@ const AgentCard: React.FC<Props> = ({
     : lastMessage && typeof lastMessage.content === 'string'
       ? lastMessage.content.slice(0, 120)
       : '';
-  const hasPending = session.pending_approvals.length > 0;
-  const pendingReq = session.pending_approvals[0];
+  const hasPending = safePendingApprovals.length > 0;
+  const pendingReq = safePendingApprovals[0];
   const statusStyle = STATUS_COLORS[session.status] || { color: c.text.tertiary, bg: c.bg.secondary };
   const statusLabel = humanizeAgentStatusLabel(session.status);
-  const agentWorkTime = getAgentWorkTime(session.messages, session.status);
+  const agentWorkTime = getAgentWorkTime(safeMessages, session.status);
   const processTraceItems = useMemo(
-    () => buildAgentCardProcessTraceItems(session, agentWorkTime.lastMs, isStreaming, session.pending_approvals.length),
-    [session, agentWorkTime.lastMs, isStreaming],
+    () => buildAgentCardProcessTraceItems({ ...session, messages: safeMessages, pending_approvals: safePendingApprovals }, agentWorkTime.lastMs, isStreaming, safePendingApprovals.length),
+    [session, safeMessages, safePendingApprovals, agentWorkTime.lastMs, isStreaming],
   );
 
   const noTransition = isDragging || isResizing || (isSelected && !!multiDragDelta);
@@ -1264,7 +1266,7 @@ const AgentCard: React.FC<Props> = ({
                       </Typography>
                     </Box>
                   </Box>
-                  {session.pending_approvals.length === 1 && (
+                  {safePendingApprovals.length === 1 && (
                     <Box sx={{ display: 'flex', gap: 0.5, ml: 1 }}>
                       <Tooltip title="Approve">
                         <IconButton
@@ -1288,7 +1290,7 @@ const AgentCard: React.FC<Props> = ({
                   )}
                 </Box>
               )}
-              {session.pending_approvals.length > 1 && (
+              {safePendingApprovals.length > 1 && (
                 <Box
                   sx={{
                     display: 'flex',
@@ -1302,7 +1304,7 @@ const AgentCard: React.FC<Props> = ({
                   }}
                 >
                   <Typography sx={{ fontSize: '0.75rem', fontWeight: 700, color: c.status.warning, flex: 1 }}>
-                    {session.pending_approvals.length} pending approvals
+                    {safePendingApprovals.length} pending approvals
                   </Typography>
                   <Button
                     variant="contained"

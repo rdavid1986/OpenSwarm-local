@@ -1323,7 +1323,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                       subsystem: 'ReasoningCore',
                       icon_id: 'reasoning-core',
                       title: 'Razonamiento operativo en curso',
-                      summary: `Evaluando el turno actual y preparando una respuesta en modo ${modeConf.label}.`,
+                      summary: `Evaluando el turno actual y preparando una respuesta en modo ${session.mode || 'chat'}.`,
                       status: 'running',
                       badge: 'live',
                       related_agent_id: session.id,
