@@ -295,3 +295,168 @@ def test_turn_container_from_sources_accepts_reasoning_summary_source():
     assert container["related_agent_ids"] == ["agent1"]
     assert container["metadata"]["source_kinds"] == ["humanized_reasoning_summary", "runtime_timer"]
     assert container["items"][0]["subsystem"] == "ReasoningCore"
+
+
+def test_builder_from_tool_trace_source():
+    source = {
+        "source_kind": "tool_call",
+        "tool_call_id": "tool1",
+        "tool_name": "search_workspace",
+        "input": {"query": "process trace", "api_key": "secret"},
+        "permission_policy": "read_only",
+        "approval_status": "approved",
+        "result_summary": "Found two matches.",
+        "duration_ms": 42,
+        "evidence_refs": ["ev1"],
+        "affected_paths": ["backend/apps/swarms/process_trace_builder.py"],
+        "related_action_id": "act1",
+    }
+
+    item = build_process_trace_item_from_source(source)
+
+    assert normalize_process_trace_source_kind(source) == "tool_trace"
+    assert item["kind"] == "tool"
+    assert item["subsystem"] == "ToolCore"
+    assert item["trace_id"] == "tool1"
+    assert item["duration_ms"] == 42
+    assert item["related_action_id"] == "act1"
+    assert item["details"]["permission_policy"] == "read_only"
+    assert item["details"]["approval_status"] == "approved"
+    assert item["details"]["affected_files"] == ["backend/apps/swarms/process_trace_builder.py"]
+    assert "secret" not in str(item)
+
+
+def test_builder_from_pending_action_trace_source():
+    source = {
+        "source_kind": "pending_action",
+        "pending_action_id": "act1",
+        "action_name": "apply_patch",
+        "input_summary": "Update process trace builder.",
+        "approval_status": "pending",
+        "policy": "requires_user_approval",
+        "affected_files": ["backend/apps/swarms/process_trace_builder.py"],
+    }
+
+    item = build_process_trace_item_from_source(source)
+
+    assert normalize_process_trace_source_kind(source) == "action_trace"
+    assert item["kind"] == "action"
+    assert item["subsystem"] == "ActionCore"
+    assert item["status"] == "blocked"
+    assert item["related_action_id"] == "act1"
+    assert item["details"]["permission_policy"] == "requires_user_approval"
+
+
+def test_builder_from_skill_trace_source():
+    source = {
+        "source_kind": "skill_use",
+        "skill_id": "skill-test",
+        "skill_name": "go-testing",
+        "usage_reason": "Tests are being added.",
+        "scope": "backend",
+        "input_context": {"files": ["backend/tests/test_process_trace_builder.py"]},
+        "output_summary": "Selected test patterns.",
+        "risk_level": "low",
+        "installation_status": "already_available",
+        "approval_status": "not_required",
+        "provenance": "local_skill",
+    }
+
+    item = build_process_trace_item_from_source(source)
+
+    assert normalize_process_trace_source_kind(source) == "skill_trace"
+    assert item["kind"] == "skill"
+    assert item["subsystem"] == "SkillCore"
+    assert item["related_skill_id"] == "skill-test"
+    assert item["details"]["usage_reason"] == "Tests are being added."
+    assert item["details"]["installation_status"] == "already_available"
+    assert item["details"]["provenance"] == "local_skill"
+
+
+def test_builder_from_file_diff_workspace_trace_source():
+    source = {
+        "source_kind": "diff_trace",
+        "operation_id": "file1",
+        "workspace_path": "C:/repo",
+        "read_files": ["a.py"],
+        "created_files": ["b.py"],
+        "modified_files": ["c.py"],
+        "deleted_files": ["d.py"],
+        "diff_summary": "Added producer helpers.",
+        "candidate_id": "candidate1",
+        "stable_output_id": "stable1",
+        "output_id": "output1",
+        "validation_state": "completed",
+        "file_operation_kind": "patch",
+    }
+
+    item = build_process_trace_item_from_source(source)
+
+    assert normalize_process_trace_source_kind(source) == "file_workspace_trace"
+    assert item["kind"] == "diff"
+    assert item["subsystem"] == "FileCore"
+    assert item["status"] == "completed"
+    assert item["details"]["workspace_path"] == "C:/repo"
+    assert item["details"]["affected_paths"] == ["a.py", "b.py", "c.py", "d.py"]
+    assert item["details"]["candidate_id"] == "candidate1"
+    assert item["details"]["file_operation_kind"] == "patch"
+
+
+def test_builder_from_output_trace_source():
+    source = {
+        "source_kind": "output_trace",
+        "output_id": "out1",
+        "candidate_id": "cand1",
+        "stable_output_id": "stable1",
+        "validation_state": "warning",
+        "artifact_id": "artifact1",
+        "summary": "Output candidate prepared.",
+    }
+
+    item = build_process_trace_item_from_source(source)
+
+    assert item["kind"] == "output"
+    assert item["subsystem"] == "OutputCore"
+    assert item["trace_id"] == "out1"
+    assert item["artifact_refs"] == ["artifact1"]
+    assert item["details"]["stable_output_id"] == "stable1"
+
+
+def test_builder_from_miniagent_and_handoff_trace_sources():
+    miniagent = {
+        "source_kind": "miniagent_task",
+        "miniagent_id": "mini1",
+        "miniagent_name": "Tester",
+        "task_id": "task1",
+        "status": "completed",
+        "duration_ms": 100,
+        "input_summary": "Run focused tests.",
+        "output_summary": "Tests passed.",
+        "validation_summary": "pytest passed",
+        "evidence_refs": ["ev1"],
+    }
+    handoff = {
+        "source_kind": "handoff_trace",
+        "handoff_id": "handoff1",
+        "source_agent_id": "agent1",
+        "target_agent_id": "agent2",
+        "source_task_id": "task1",
+        "target_task_id": "task2",
+        "status": "completed",
+        "completed_work_summary": "Implementation ready for validation.",
+        "artifacts": ["art1"],
+    }
+
+    mini_item = build_process_trace_item_from_source(miniagent)
+    handoff_item = build_process_trace_item_from_source(handoff)
+
+    assert normalize_process_trace_source_kind(miniagent) == "miniagent_trace"
+    assert mini_item["kind"] == "miniagent"
+    assert mini_item["subsystem"] == "MiniAgentCore"
+    assert mini_item["related_miniagent_id"] == "mini1"
+    assert mini_item["details"]["validation"] == "pytest passed"
+    assert normalize_process_trace_source_kind(handoff) == "handoff_trace"
+    assert handoff_item["kind"] == "handoff"
+    assert handoff_item["subsystem"] == "HandoffCore"
+    assert handoff_item["related_task_id"] == "task2"
+    assert handoff_item["artifact_refs"] == ["art1"]

@@ -50,6 +50,50 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "swarm_final_audit"
     if data.get("metric_kind") == "miniagent_task_runtime_metric":
         return "miniagent_task_runtime_metric"
+    explicit_source = str(data.get("source_kind") or data.get("trace_source_kind") or data.get("producer_kind") or "").strip().lower()
+    if explicit_source in {"tool_trace", "tool_call", "tool_result", "tool_error"}:
+        return "tool_trace"
+    if explicit_source in {"action_trace", "pending_action", "approval", "action_result"}:
+        return "action_trace"
+    if explicit_source in {"skill_trace", "skill_use", "skill_result"}:
+        return "skill_trace"
+    if explicit_source in {"file_trace", "diff_trace", "workspace_trace", "workspace_file_trace"}:
+        return "file_workspace_trace"
+    if explicit_source in {"output_trace", "artifact_trace"}:
+        return "file_workspace_trace"
+    if explicit_source in {"miniagent_trace", "miniagent_task"}:
+        return "miniagent_trace"
+    if explicit_source in {"handoff_trace", "miniagent_handoff_trace"}:
+        return "handoff_trace"
+    if data.get("tool_call_id") or data.get("tool_name") or data.get("function_name") or data.get("kind") == "tool":
+        return "tool_trace"
+    if data.get("pending_action_id") or data.get("action_name") or data.get("approval_status") or data.get("kind") == "action":
+        return "action_trace"
+    if data.get("skill_trace_kind") or (data.get("skill_id") and (data.get("usage_reason") or data.get("input_context") or data.get("risk"))):
+        return "skill_trace"
+    if any(
+        data.get(key)
+        for key in (
+            "file_trace_kind",
+            "workspace_trace_kind",
+            "read_files",
+            "created_files",
+            "modified_files",
+            "deleted_files",
+            "affected_paths",
+            "workspace_path",
+            "diff_summary",
+            "file_operation_kind",
+            "candidate_id",
+            "stable_output_id",
+            "output_id",
+        )
+    ):
+        return "file_workspace_trace"
+    if data.get("miniagent_trace_kind") or (data.get("miniagent_id") and data.get("task_id")):
+        return "miniagent_trace"
+    if data.get("handoff_trace_kind") or (data.get("source_agent_id") and data.get("target_agent_id")):
+        return "handoff_trace"
     if data.get("timer_id") and data.get("scope"):
         return "runtime_timer"
     if data.get("evidence_id") or data.get("evidence_ref") or data.get("artifact_id") or data.get("artifact_ref"):
@@ -66,6 +110,270 @@ def _refs(value: Any) -> list[Any]:
         return list(value)
     text = str(value or "").strip()
     return [text] if text else []
+
+
+def _first_text(data: dict[str, Any], *keys: str, default: str = "") -> str:
+    for key in keys:
+        text = str(data.get(key) or "").strip()
+        if text:
+            return text
+    return default
+
+
+def _compact_value(value: Any, fallback: str = "unavailable") -> Any:
+    if value in (None, ""):
+        return fallback
+    safe = _safe(value)
+    if isinstance(safe, str):
+        text = safe.strip()
+        return text[:600] + "..." if len(text) > 600 else text
+    if isinstance(safe, (list, tuple)):
+        return list(safe)[:20]
+    if isinstance(safe, dict):
+        return {key: safe[key] for key in list(safe)[:20]}
+    return safe
+
+
+def _duration(data: dict[str, Any]) -> Any:
+    return data.get("duration_ms") or data.get("elapsed_ms") or data.get("latency_ms")
+
+
+def _approval_status(data: dict[str, Any]) -> str:
+    return _first_text(data, "approval_status", "approval_state", "permission_status", default="unavailable")
+
+
+def _status_from_operational_source(data: dict[str, Any]) -> str:
+    explicit = _first_text(data, "status", "state")
+    if explicit:
+        return explicit
+    approval = _approval_status(data).lower()
+    if approval in {"pending", "required", "requires_approval", "waiting_approval"}:
+        return "blocked"
+    if data.get("error") or data.get("failure_reason"):
+        return "failed"
+    if data.get("result") is not None or data.get("output") is not None or data.get("finished_at"):
+        return "completed"
+    if data.get("started_at"):
+        return "running"
+    return "planned"
+
+
+def build_tool_trace_item(data: dict[str, Any]) -> dict[str, Any]:
+    """Build a side-effect-free ToolCore trace item from a tool call/result source."""
+
+    tool_name = _first_text(data, "tool_name", "name", "function_name", default="Unknown tool")
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or data.get("tool_call_id") or data.get("call_id") or data.get("id"),
+        kind="tool",
+        subsystem="ToolCore",
+        title=f"Tool: {tool_name}",
+        summary=_first_text(data, "summary", "result_summary", "output_summary", "error", default=f"Tool {tool_name} recorded."),
+        status=_status_from_operational_source(data),
+        started_at=data.get("started_at"),
+        finished_at=data.get("finished_at") or data.get("ended_at"),
+        duration_ms=_duration(data),
+        evidence_refs=data.get("evidence_refs"),
+        artifact_refs=data.get("artifact_refs"),
+        related_task_id=data.get("task_id") or data.get("related_task_id"),
+        related_agent_id=data.get("agent_id") or data.get("related_agent_id"),
+        related_miniagent_id=data.get("miniagent_id") or data.get("related_miniagent_id"),
+        related_action_id=data.get("related_action_id") or data.get("action_id"),
+        created_at=data.get("created_at"),
+        details={
+            "tool_name": tool_name,
+            "input_summary": _compact_value(data.get("input_summary") or data.get("arguments") or data.get("input")),
+            "permission_policy": _first_text(data, "permission_policy", "policy", default="unavailable"),
+            "approval_status": _approval_status(data),
+            "result_summary": _compact_value(data.get("result_summary") or data.get("result") or data.get("output")),
+            "error": data.get("error"),
+            "affected_files": _refs(data.get("affected_files")) + _refs(data.get("affected_paths")),
+            "source_kind": _first_text(data, "source_kind", default="tool_trace"),
+        },
+    )
+
+
+def build_action_trace_item(data: dict[str, Any]) -> dict[str, Any]:
+    """Build a side-effect-free ActionCore trace item from action/pending-action data."""
+
+    action_name = _first_text(data, "action_name", "name", "type", default="Unknown action")
+    action_id = data.get("action_id") or data.get("pending_action_id") or data.get("related_action_id") or data.get("id")
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or action_id,
+        kind="action",
+        subsystem="ActionCore",
+        title=f"Action: {action_name}",
+        summary=_first_text(data, "summary", "result_summary", "error", default=f"Action {action_name} recorded."),
+        status=_status_from_operational_source(data),
+        started_at=data.get("started_at"),
+        finished_at=data.get("finished_at") or data.get("ended_at"),
+        duration_ms=_duration(data),
+        evidence_refs=data.get("evidence_refs"),
+        artifact_refs=data.get("artifact_refs"),
+        related_task_id=data.get("task_id") or data.get("related_task_id"),
+        related_agent_id=data.get("agent_id") or data.get("related_agent_id"),
+        related_miniagent_id=data.get("miniagent_id") or data.get("related_miniagent_id"),
+        related_action_id=action_id,
+        created_at=data.get("created_at"),
+        details={
+            "action_name": action_name,
+            "input_summary": _compact_value(data.get("input_summary") or data.get("payload") or data.get("input")),
+            "permission_policy": _first_text(data, "permission_policy", "policy", default="unavailable"),
+            "approval_status": _approval_status(data),
+            "result_summary": _compact_value(data.get("result_summary") or data.get("result") or data.get("output")),
+            "error": data.get("error"),
+            "affected_files": _refs(data.get("affected_files")) + _refs(data.get("affected_paths")),
+            "source_kind": _first_text(data, "source_kind", default="action_trace"),
+        },
+    )
+
+
+def build_skill_trace_item(data: dict[str, Any]) -> dict[str, Any]:
+    """Build a side-effect-free SkillCore trace item from skill-use data."""
+
+    skill_id = data.get("skill_id") or data.get("id") or data.get("related_skill_id")
+    skill_name = _first_text(data, "skill_name", "name", default=str(skill_id or "Unknown skill"))
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or skill_id,
+        kind="skill",
+        subsystem="SkillCore",
+        title=f"Skill: {skill_name}",
+        summary=_first_text(data, "summary", "reason", "usage_reason", "motivo", default=f"Skill {skill_name} recorded."),
+        status=data.get("status") or "completed",
+        evidence_refs=data.get("evidence_refs"),
+        artifact_refs=data.get("artifact_refs"),
+        related_task_id=data.get("task_id") or data.get("related_task_id"),
+        related_agent_id=data.get("agent_id") or data.get("related_agent_id"),
+        related_miniagent_id=data.get("miniagent_id") or data.get("related_miniagent_id"),
+        related_skill_id=skill_id,
+        created_at=data.get("created_at"),
+        details={
+            "skill_id": skill_id,
+            "skill_name": skill_name,
+            "usage_reason": _first_text(data, "reason", "usage_reason", "assignment_reason", default="unavailable"),
+            "scope": data.get("scope") or "unavailable",
+            "input_context": _compact_value(data.get("input_context") or data.get("context") or data.get("input")),
+            "output_summary": _compact_value(data.get("output_summary") or data.get("output")),
+            "risk": data.get("risk") or data.get("risk_level") or "unavailable",
+            "installation_status": data.get("installation_status") or data.get("install_status") or "unavailable",
+            "approval_status": _approval_status(data),
+            "provenance": data.get("provenance") or data.get("source") or "unavailable",
+        },
+    )
+
+
+def build_file_workspace_trace_item(data: dict[str, Any]) -> dict[str, Any]:
+    """Build a side-effect-free FileCore trace item from file/diff/workspace data."""
+
+    has_output = any(data.get(key) for key in ("candidate_id", "stable_output_id", "output_id", "artifact_id"))
+    if has_output and not any(data.get(key) for key in ("read_files", "created_files", "modified_files", "deleted_files", "affected_paths", "diff_summary")):
+        kind = "output"
+        subsystem = "OutputCore"
+        title = _first_text(data, "title", default="Output trace")
+    else:
+        kind = data.get("kind") or ("diff" if data.get("diff_summary") else "workspace" if data.get("workspace_path") else "file")
+        subsystem = "FileCore"
+        title = _first_text(data, "title", "file_operation_kind", default="Workspace files")
+    affected_paths = (
+        _refs(data.get("affected_paths"))
+        + _refs(data.get("read_files"))
+        + _refs(data.get("created_files"))
+        + _refs(data.get("modified_files"))
+        + _refs(data.get("deleted_files"))
+    )
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or data.get("operation_id") or data.get("output_id") or data.get("candidate_id"),
+        kind=kind,
+        subsystem=subsystem,
+        title=title,
+        summary=_first_text(data, "summary", "diff_summary", default="Workspace trace recorded."),
+        status=data.get("status") or data.get("validation_state") or "completed",
+        evidence_refs=data.get("evidence_refs"),
+        artifact_refs=_refs(data.get("artifact_refs")) + _refs(data.get("artifact_id")),
+        related_task_id=data.get("task_id") or data.get("related_task_id"),
+        related_agent_id=data.get("agent_id") or data.get("related_agent_id"),
+        created_at=data.get("created_at"),
+        details={
+            "workspace_path": data.get("workspace_path") or "unavailable",
+            "read_files": _refs(data.get("read_files")),
+            "created_files": _refs(data.get("created_files")),
+            "modified_files": _refs(data.get("modified_files")),
+            "deleted_files": _refs(data.get("deleted_files")),
+            "diff_summary": data.get("diff_summary") or "unavailable",
+            "candidate_id": data.get("candidate_id"),
+            "stable_output_id": data.get("stable_output_id"),
+            "output_id": data.get("output_id"),
+            "validation_state": data.get("validation_state") or "unavailable",
+            "affected_paths": affected_paths,
+            "file_operation_kind": data.get("file_operation_kind") or "unavailable",
+        },
+    )
+
+
+def build_miniagent_trace_item(data: dict[str, Any]) -> dict[str, Any]:
+    """Build a side-effect-free MiniAgentCore trace item from MiniAgent task data."""
+
+    miniagent_id = data.get("miniagent_id") or data.get("mini_agent_id") or data.get("id")
+    miniagent_name = _first_text(data, "miniagent_name", "name", default=str(miniagent_id or "MiniAgent"))
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or miniagent_id or data.get("task_id"),
+        kind="miniagent",
+        subsystem="MiniAgentCore",
+        title=f"MiniAgent: {miniagent_name}",
+        summary=_first_text(data, "summary", "output_summary", "failure_reason", default="MiniAgent task recorded."),
+        status=_status_from_operational_source(data),
+        started_at=data.get("started_at"),
+        finished_at=data.get("finished_at") or data.get("ended_at"),
+        duration_ms=_duration(data),
+        evidence_refs=data.get("evidence_refs") or data.get("evidence"),
+        artifact_refs=data.get("artifact_refs") or data.get("artifacts"),
+        related_task_id=data.get("task_id") or data.get("related_task_id"),
+        related_agent_id=data.get("agent_id") or data.get("related_agent_id"),
+        related_miniagent_id=miniagent_id,
+        created_at=data.get("created_at"),
+        details={
+            "miniagent_id": miniagent_id,
+            "miniagent_name": miniagent_name,
+            "task_id": data.get("task_id") or "unavailable",
+            "input_summary": _compact_value(data.get("input_summary") or data.get("input")),
+            "output_summary": _compact_value(data.get("output_summary") or data.get("output")),
+            "validation": data.get("validation") or data.get("validation_summary") or "unavailable",
+            "failure_reason": data.get("failure_reason") or data.get("error"),
+        },
+    )
+
+
+def build_handoff_trace_item(data: dict[str, Any]) -> dict[str, Any]:
+    """Build a side-effect-free HandoffCore trace item from handoff data."""
+
+    source = data.get("source_agent_id") or data.get("source") or "unknown"
+    target = data.get("target_agent_id") or data.get("target") or "unknown"
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or data.get("handoff_id") or f"{source}->{target}",
+        kind="handoff",
+        subsystem="HandoffCore",
+        title="Handoff",
+        summary=_first_text(data, "summary", "completed_work_summary", "output_summary", "failure_reason", default="Handoff recorded."),
+        status=_status_from_operational_source(data),
+        started_at=data.get("started_at"),
+        finished_at=data.get("finished_at") or data.get("ended_at"),
+        duration_ms=_duration(data),
+        evidence_refs=data.get("evidence_refs") or data.get("evidence"),
+        artifact_refs=data.get("artifact_refs") or data.get("artifacts"),
+        related_task_id=data.get("target_task_id") or data.get("source_task_id") or data.get("task_id"),
+        related_agent_id=data.get("target_agent_id") or data.get("source_agent_id") or data.get("agent_id"),
+        related_miniagent_id=data.get("miniagent_id") or data.get("target_miniagent_id"),
+        created_at=data.get("created_at"),
+        details={
+            "source": source,
+            "target": target,
+            "source_task_id": data.get("source_task_id"),
+            "target_task_id": data.get("target_task_id"),
+            "input_summary": _compact_value(data.get("input_summary") or data.get("input")),
+            "output_summary": _compact_value(data.get("output_summary") or data.get("output") or data.get("completed_work_summary")),
+            "validation": data.get("validation") or data.get("validation_summary") or "unavailable",
+            "failure_reason": data.get("failure_reason") or data.get("error"),
+        },
+    )
 
 
 
@@ -260,6 +568,18 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = _audit_item(data)
     elif source_kind == "miniagent_task_runtime_metric":
         item = process_trace_item_from_runtime_metric(data)
+    elif source_kind == "tool_trace":
+        item = build_tool_trace_item(data)
+    elif source_kind == "action_trace":
+        item = build_action_trace_item(data)
+    elif source_kind == "skill_trace":
+        item = build_skill_trace_item(data)
+    elif source_kind == "file_workspace_trace":
+        item = build_file_workspace_trace_item(data)
+    elif source_kind == "miniagent_trace":
+        item = build_miniagent_trace_item(data)
+    elif source_kind == "handoff_trace":
+        item = build_handoff_trace_item(data)
     elif source_kind == "evidence":
         item = _evidence_item(data)
     else:
