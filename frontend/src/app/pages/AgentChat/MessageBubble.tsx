@@ -559,7 +559,7 @@ const ThinkingBubble: React.FC<{
   const [startedStreamingAt, setStartedStreamingAt] = useState<number | null>(
     isStreaming ? Date.now() : null
   );
-  const [elapsed, setElapsed] = useState<number>(0);
+  const [elapsedMs, setElapsedMs] = useState<number>(0);
 
   React.useEffect(() => {
     if (isStreaming && startedStreamingAt === null) {
@@ -570,8 +570,8 @@ const ThinkingBubble: React.FC<{
   React.useEffect(() => {
     if (!isStreaming || startedStreamingAt === null) return;
     const iv = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startedStreamingAt) / 1000));
-    }, 250);
+      setElapsedMs(Math.max(0, Date.now() - startedStreamingAt));
+    }, 100);
     return () => clearInterval(iv);
   }, [isStreaming, startedStreamingAt]);
 
@@ -584,13 +584,13 @@ const ThinkingBubble: React.FC<{
   // 3.6 chars/token for English. swap for persistedTokens once the stream ends.
   const liveTokenEstimate = isStreaming ? Math.max(0, Math.round(text.length / 3.6)) : 0;
 
-  const persistedSecs = persistedElapsedMs != null
-    ? Math.max(1, Math.round(persistedElapsedMs / 1000))
+  const persistedFinalMs = persistedElapsedMs != null
+    ? Math.max(1, Math.round(persistedElapsedMs))
     : null;
-  const finalSeconds = persistedSecs
-    ?? (startedStreamingAt != null && !isStreaming
-        ? Math.max(1, Math.floor((Date.now() - startedStreamingAt) / 1000))
-        : null);
+  const fallbackFinalMs = startedStreamingAt != null && !isStreaming
+    ? Math.max(1, Date.now() - startedStreamingAt)
+    : null;
+  const finalElapsedMs = persistedFinalMs ?? fallbackFinalMs;
   const finalTokens = persistedTokens
     ?? (text && !isStreaming ? Math.max(1, Math.round(text.length / 3.6)) : null);
 
@@ -606,14 +606,14 @@ const ThinkingBubble: React.FC<{
     return String(n);
   };
 
-  // 251s reads as "4m 11s". mirrors AgentCard's fmtSeconds.
-  const fmtThoughtDuration = (sec: number) => {
-    if (sec < 60) return `${sec}s`;
-    const minutes = Math.floor(sec / 60);
-    if (minutes < 60) {
-      const remSec = sec % 60;
-      return remSec > 0 ? `${minutes}m ${remSec}s` : `${minutes}m`;
-    }
+  // UI shows compact two-decimal durations. Full precision remains in elapsed_ms.
+  const fmtThoughtDuration = (durationMs: number) => {
+    const safeMs = Math.max(0, Math.round(durationMs));
+    const seconds = safeMs / 1000;
+    if (seconds < 60) return `${seconds.toFixed(2)}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds - minutes * 60;
+    if (minutes < 60) return `${minutes}m ${remainingSeconds.toFixed(2)}s`;
     const hours = Math.floor(minutes / 60);
     const remMin = minutes % 60;
     return remMin > 0 ? `${hours}h ${remMin}m` : `${hours}h`;
@@ -639,8 +639,8 @@ const ThinkingBubble: React.FC<{
     const segments: React.ReactNode[] = [];
     segments.push(
       <span key="duration">
-        {finalSeconds != null
-          ? `${turnLabel.past} for ${fmtThoughtDuration(finalSeconds)}`
+        {finalElapsedMs != null
+          ? `${turnLabel.past} for ${fmtThoughtDuration(finalElapsedMs)}`
           : turnLabel.past}
       </span>
     );
@@ -808,7 +808,9 @@ const ProviderReasoningExplanation: React.FC<{
     if (!hasMetrics) return null;
     const segs: string[] = [];
     if (elapsedMs && elapsedMs > 0) {
-      segs.push(`${Math.max(1, Math.round(elapsedMs / 1000))}s`);
+      const safeMs = Math.max(1, Math.round(elapsedMs));
+      const seconds = safeMs / 1000;
+      segs.push(seconds < 60 ? `${seconds.toFixed(2)}s` : `${Math.floor(seconds / 60)}m ${(seconds % 60).toFixed(2)}s`);
     }
     if (tokens && tokens > 0) {
       segs.push(`${tokens.toLocaleString()} reasoning tokens`);

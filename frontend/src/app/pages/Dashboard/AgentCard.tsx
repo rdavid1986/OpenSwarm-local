@@ -72,18 +72,22 @@ const GoogleServiceIcon: React.FC<{ service: string; size?: number }> = ({ servi
   return null;
 };
 
-function fmtSeconds(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
+function fmtDurationMs(durationMs: number): string {
+  const safeMs = Math.max(0, Math.round(durationMs));
+  const seconds = safeMs / 1000;
+  if (seconds < 60) return `${seconds.toFixed(2)}s`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  const remainingSeconds = seconds - minutes * 60;
+  if (minutes < 60) return `${minutes}m ${remainingSeconds.toFixed(2)}s`;
   const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m`;
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }
 
 function getAgentWorkTime(
   messages: Array<{ role: string; timestamp: string; elapsed_ms?: number; hidden?: boolean }>,
   status: string,
-): { total: number; last: number } {
+): { totalMs: number; lastMs: number } {
   // True wall-clock duration: how long the user actually waited, from
   // their prompt to the LAST assistant/system message of that turn.
   // Covers thinking + every tool call + assistant text generation +
@@ -149,8 +153,8 @@ function getAgentWorkTime(
   }
 
   return {
-    total: Math.max(0, Math.round(totalMs / 1000)),
-    last: Math.max(0, Math.round(lastMs / 1000)),
+    totalMs: Math.max(0, Math.round(totalMs)),
+    lastMs: Math.max(0, Math.round(lastMs)),
   };
 }
 
@@ -944,7 +948,7 @@ const AgentCard: React.FC<Props> = ({
             {session.mode}
           </Typography>
           <Typography variant="caption" sx={{ color: c.text.tertiary }}>
-            {fmtSeconds(getAgentWorkTime(session.messages, session.status).last)}
+            {fmtDurationMs(getAgentWorkTime(session.messages, session.status).lastMs)}
           </Typography>
           {session.cost_usd > 0 && hasApiKey && (
             <Typography variant="caption" sx={{ color: c.accent.primary }}>
