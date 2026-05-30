@@ -174,6 +174,12 @@ function normalizeStatus(status?: string): ProcessTraceStatus {
 
 const REDACTED_TRACE_VALUE = '[redacted]';
 const MAX_TRACE_TEXT_LENGTH = 600;
+const MAX_TRACE_COPY_LENGTH = 4000;
+const MAX_TRACE_JSON_LENGTH = 5000;
+const MAX_TRACE_ARRAY_ITEMS = 20;
+const MAX_TRACE_OBJECT_KEYS = 40;
+const MAX_VISIBLE_TURN_ITEMS = 30;
+const MAX_DETAIL_ROWS = 18;
 
 const SENSITIVE_TRACE_KEYS = new Set([
   'api_key',
@@ -181,7 +187,10 @@ const SENSITIVE_TRACE_KEYS = new Set([
   'authorization',
   'bearer',
   'chain_of_thought',
+  'client_secret',
+  'connection_string',
   'content',
+  'cookie',
   'credential',
   'credentials',
   'cot',
@@ -196,9 +205,16 @@ const SENSITIVE_TRACE_KEYS = new Set([
   'raw_prompt',
   'raw_response',
   'response',
+  'refresh_token',
   'secret',
+  'session',
+  'session_id',
+  'set_cookie',
+  'set-cookie',
   'system_prompt',
+  'token',
   'user_prompt',
+  'webhook_secret',
 ]);
 
 function normalizeTraceKey(value: string): string {
@@ -213,13 +229,23 @@ function isSensitiveTraceKey(key: string): boolean {
     || normalized.endsWith('_api_key')
     || normalized.endsWith('_private_key')
     || normalized.endsWith('_access_token')
-    || normalized.endsWith('_refresh_token');
+    || normalized.endsWith('_refresh_token')
+    || normalized.endsWith('_client_secret')
+    || normalized.endsWith('_token')
+    || normalized.endsWith('_cookie')
+    || normalized.endsWith('_session')
+    || normalized.includes('webhook_secret')
+    || normalized.includes('connection_string');
 }
 
 function redactTraceText(value: string): string {
   const clean = String(value || '')
     .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s,;]+/gi, `$1${REDACTED_TRACE_VALUE}`)
-    .replace(/((?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)\s*[:=]\s*)[^\s,;]+/gi, `$1${REDACTED_TRACE_VALUE}`)
+    .replace(/\bbearer\s+[a-z0-9._~+/-]+=*/gi, `bearer ${REDACTED_TRACE_VALUE}`)
+    .replace(/((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|webhook[_-]?secret|password|secret|token|cookie|session)\s*[:=]\s*)[^\s,;]+/gi, `$1${REDACTED_TRACE_VALUE}`)
+    .replace(/((?:postgres|postgresql|mysql|mongodb(?:\+srv)?|redis|amqp|mssql|sqlserver):\/\/)[^\s'"]+/gi, `$1${REDACTED_TRACE_VALUE}`)
+    .replace(/\b(?:sk|pk|xoxb|xoxp|ghp|github_pat)[-_][a-z0-9_=-]{16,}\b/gi, REDACTED_TRACE_VALUE)
+    .replace(/\beyJ[a-z0-9_-]{20,}\.[a-z0-9_-]{20,}\.[a-z0-9_-]{10,}\b/gi, REDACTED_TRACE_VALUE)
     .replace(/(chain[_ -]?of[_ -]?thought|private[_ -]?reasoning|hidden[_ -]?reasoning)\s*[:=]\s*[^\n]+/gi, `$1: ${REDACTED_TRACE_VALUE}`);
 
   return clean.length > MAX_TRACE_TEXT_LENGTH
@@ -234,14 +260,17 @@ function sanitizeTraceValue(value: unknown, depth = 0): unknown {
   if (depth >= 3) return '[object redacted]';
 
   if (Array.isArray(value)) {
-    return value.slice(0, 20).map((item) => sanitizeTraceValue(item, depth + 1));
+    const visible = value.slice(0, MAX_TRACE_ARRAY_ITEMS).map((item) => sanitizeTraceValue(item, depth + 1));
+    return value.length > MAX_TRACE_ARRAY_ITEMS ? [...visible, `+${value.length - MAX_TRACE_ARRAY_ITEMS} more`] : visible;
   }
 
   if (typeof value === 'object') {
     const output: Record<string, unknown> = {};
-    Object.entries(value as Record<string, unknown>).forEach(([key, item]) => {
+    const entries = Object.entries(value as Record<string, unknown>);
+    entries.slice(0, MAX_TRACE_OBJECT_KEYS).forEach(([key, item]) => {
       output[key] = isSensitiveTraceKey(key) ? REDACTED_TRACE_VALUE : sanitizeTraceValue(item, depth + 1);
     });
+    if (entries.length > MAX_TRACE_OBJECT_KEYS) output.__truncated__ = `+${entries.length - MAX_TRACE_OBJECT_KEYS} more fields`;
     return output;
   }
 
@@ -254,15 +283,17 @@ function stringifyDetail(value: unknown): string {
   if (typeof sanitized === 'string') return sanitized;
   if (typeof sanitized === 'number' || typeof sanitized === 'boolean') return String(sanitized);
   try {
-    return JSON.stringify(sanitized, null, 2);
+    const json = JSON.stringify(sanitized, null, 2);
+    return json.length > MAX_TRACE_JSON_LENGTH ? `${json.slice(0, MAX_TRACE_JSON_LENGTH).trimEnd()}\n… [truncated]` : json;
   } catch {
     return REDACTED_TRACE_VALUE;
   }
 }
 
-function traceText(value: unknown, fallback = 'not provided'): string {
+function traceText(value: unknown, fallback = 'not provided', maxLength = MAX_TRACE_TEXT_LENGTH): string {
   const text = stringifyDetail(value).trim();
-  return text ? text : fallback;
+  if (!text) return fallback;
+  return text.length > maxLength ? `${text.slice(0, maxLength).trimEnd()}…` : text;
 }
 
 function getDetailValue(details: Record<string, unknown>, ...keys: string[]): unknown {
@@ -388,7 +419,7 @@ function formatTraceTimestamp(value: unknown): string | null {
 }
 
 function copySafeText(value: unknown) {
-  const text = traceText(value, '').slice(0, 4000);
+  const text = traceText(value, '', MAX_TRACE_COPY_LENGTH);
   if (!text || typeof navigator === 'undefined' || !navigator.clipboard) return;
   void navigator.clipboard.writeText(text);
 }
@@ -679,7 +710,9 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
     if (evidenceCount > 0 && !rows.some(([label]) => label === 'Evidence')) rows.push(['Evidence refs', compactTraceList(item.evidence_refs)]);
     if (artifactCount > 0 && !rows.some(([label]) => label === 'Artifacts')) rows.push(['Artifact refs', compactTraceList(item.artifact_refs)]);
     if (rows.length === 0 && !hasDebugDetails) rows.push(['Status', STATUS_LABELS[status] || status]);
-    return rows;
+    return rows.length > MAX_DETAIL_ROWS
+      ? [...rows.slice(0, MAX_DETAIL_ROWS), ['More fields', `+${rows.length - MAX_DETAIL_ROWS} more`]]
+      : rows;
   }, [item, durationLabel, evidenceCount, artifactCount, isDebugJsonTrace, hasDebugDetails, status]);
 
   const metadataChips = useMemo(() => {
@@ -1072,9 +1105,14 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
   );
   const [childExpandedOverride, setChildExpandedOverride] = useState<boolean | null>(null);
 
-  const visibleItems = useMemo(
+  const allVisibleItems = useMemo(
     () => effectiveItems.filter((item) => !item.internal_only && item.visible_to_user !== false),
     [effectiveItems],
+  );
+  const hiddenTraceItemCount = Math.max(0, allVisibleItems.length - MAX_VISIBLE_TURN_ITEMS);
+  const visibleItems = useMemo(
+    () => allVisibleItems.slice(0, MAX_VISIBLE_TURN_ITEMS),
+    [allVisibleItems],
   );
 
   const statusColor = useMemo(() => {
@@ -1085,7 +1123,7 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
     return c.text.tertiary;
   }, [c, normalizedStatus]);
 
-  if (containerHidden || visibleItems.length === 0) return null;
+  if (containerHidden || allVisibleItems.length === 0) return null;
 
   const headerTitle = durationLabel
     ? `${redactTraceText(effectiveTitle)} durante ${durationLabel}`
@@ -1103,6 +1141,7 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
     `Status: ${STATUS_LABELS[normalizedStatus] || normalizedStatus}`,
     durationLabel ? `Duration: ${durationLabel}` : '',
     ...visibleItems.map((item) => `- ${traceText(item.title || item.kind, 'Trace item')}: ${traceText(item.summary, '')}`),
+    hiddenTraceItemCount > 0 ? `+${hiddenTraceItemCount} more trace items` : '',
   ].filter(Boolean).join('\n');
 
   return (
@@ -1171,7 +1210,7 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
             flexShrink: 0,
           }}
         >
-          {visibleItems.length} paso{visibleItems.length === 1 ? '' : 's'}
+          {allVisibleItems.length} paso{allVisibleItems.length === 1 ? '' : 's'}
         </Typography>
 
         {!compact && turnMetaChips.map((chip) => <TraceChip key={chip} label={chip} />)}
@@ -1243,6 +1282,11 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
                 bare={bare}
               />
             ))}
+            {hiddenTraceItemCount > 0 && (
+              <Typography sx={{ color: c.text.ghost, fontSize: '0.66rem', textAlign: 'center', py: 0.4 }}>
+                +{hiddenTraceItemCount} more trace items hidden for performance
+              </Typography>
+            )}
           </Box>
         </Box>
       </Collapse>
