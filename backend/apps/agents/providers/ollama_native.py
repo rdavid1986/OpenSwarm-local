@@ -440,12 +440,22 @@ def normalize_ollama_tool_calls(value: Any) -> list[dict[str, Any]]:
         function = call.get("function") if isinstance(call.get("function"), dict) else call
         name = str(function.get("name") or call.get("name") or "unknown").strip() or "unknown"
         arguments = function.get("arguments") or call.get("arguments") or {}
+        if isinstance(arguments, str):
+            try:
+                parsed_arguments = json.loads(arguments)
+                arguments = parsed_arguments if isinstance(parsed_arguments, dict) else {"value": arguments}
+            except Exception:
+                arguments = {"value": arguments}
         calls.append({
             "tool_call_id": call.get("id") or f"ollama_tool_call_{idx}",
             "tool_name": name,
             "arguments": redact_ollama_value(arguments),
+            "arguments_redacted": True,
             "source": "ollama_native_tool_calls",
+            "source_kind": "tool_trace",
             "status": "requested",
+            "executed": False,
+            "approved": False,
         })
     return calls
 

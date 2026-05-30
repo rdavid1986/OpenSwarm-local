@@ -144,7 +144,12 @@ def test_tool_call_and_runtime_metric_normalizers_are_safe_and_calculate_through
         }
     )
 
-    assert calls == [{"tool_call_id": "call1", "tool_name": "search", "arguments": {"query": "x"}, "source": "ollama_native_tool_calls", "status": "requested"}]
+    assert calls[0]["tool_call_id"] == "call1"
+    assert calls[0]["tool_name"] == "search"
+    assert calls[0]["arguments"] == {"query": "x"}
+    assert calls[0]["source"] == "ollama_native_tool_calls"
+    assert calls[0]["status"] == "requested"
+    assert calls[0]["executed"] is False
     assert metrics["tokens_per_second"] == 10.0
     assert metrics["cold_start_likely"] is True
 

@@ -14,6 +14,10 @@ import urllib.error
 import urllib.request
 from typing import Any, AsyncIterator, Literal
 
+from backend.apps.agents.providers.ollama_runtime import (
+    build_effective_ollama_request_options,
+    build_ollama_runtime_metadata,
+)
 from backend.apps.agents.providers.provider_health import check_local_model_provider_health
 from backend.apps.agents.runtime import (
     ProviderCapabilities,
@@ -80,11 +84,32 @@ class OllamaAdapter:
         if model.startswith("ollama/"):
             model = model[len("ollama/"):]
 
+        reasoning_effort = (
+            context.metadata.get("reasoning_effort")
+            or context.runtime_state.get("reasoning_effort")
+            or context.provider_state.get("reasoning_effort")
+            or "auto"
+        )
+        structured_output = (
+            context.metadata.get("structured_output")
+            if isinstance(context.metadata.get("structured_output"), dict)
+            else None
+        )
+        native_options = build_effective_ollama_request_options(
+            requested_effort=str(reasoning_effort),
+            supports_thinking=bool(context.metadata.get("supports_thinking") or context.provider_state.get("supports_thinking")),
+            supports_thinking_levels=bool(context.metadata.get("supports_thinking_levels") or context.provider_state.get("supports_thinking_levels")),
+            keep_alive=context.metadata.get("keep_alive") if isinstance(context.metadata.get("keep_alive"), str) else None,
+            structured_output=structured_output,
+            config_source="ProviderTurnContext.metadata",
+        )
+
         if self.api_mode == "openai-compatible":
             payload: dict[str, Any] = {
                 "model": model,
                 "messages": messages,
                 "stream": stream,
+                "metadata": {"reasoning_effort": native_options.get("metadata", {}).get("reasoning_effort")},
             }
             if self.capabilities.supports_json_mode:
                 payload["response_format"] = {"type": "json_object"}
@@ -97,7 +122,12 @@ class OllamaAdapter:
             "messages": messages,
             "stream": stream,
             "format": "json" if self.capabilities.supports_json_mode else None,
+            "think": native_options.get("think"),
+            "keep_alive": native_options.get("keep_alive"),
+            "metadata": native_options.get("metadata"),
         }
+        if native_options.get("format") is not None:
+            payload["format"] = native_options.get("format")
         if context.tools:
             # Native Ollama has model-dependent tool support. The adapter only
             # proposes schemas; OpenSwarm Tool Runtime will execute calls.
@@ -112,6 +142,12 @@ class OllamaAdapter:
         else:
             message = response.get("message") or {}
 
+        request_payload = self.build_request_payload(context, stream=False)
+        runtime_metadata = build_ollama_runtime_metadata(
+            response_payload=response,
+            request_payload=request_payload,
+            model=context.model,
+        )
         tool_calls = message.get("tool_calls") or response.get("tool_calls") or []
         if not tool_calls and context.tools:
             extracted = self._extract_json_tool_call_from_content(message.get("content"), context)
@@ -123,7 +159,7 @@ class OllamaAdapter:
                 session_id=context.session_id,
                 agent_id=context.agent_id,
                 task_id=context.task_id,
-                payload={"provider": self.id, "api_mode": self.api_mode, "response": response},
+                payload={"provider": self.id, "api_mode": self.api_mode, "response": response, "metadata": runtime_metadata},
             )
         ]
         if tool_calls:
@@ -133,7 +169,7 @@ class OllamaAdapter:
                     session_id=context.session_id,
                     agent_id=context.agent_id,
                     task_id=context.task_id,
-                    payload={"tool_calls": tool_calls},
+                    payload={"tool_calls": tool_calls, "metadata": {"tool_calls": runtime_metadata.get("tool_calls", [])}},
                 )
             )
             return events
@@ -148,7 +184,8 @@ class OllamaAdapter:
                     "message": {
                         "role": message.get("role") or "assistant",
                         "content": message.get("content") or response.get("response") or "",
-                    }
+                    },
+                    "metadata": runtime_metadata,
                 },
             )
         )

@@ -2019,6 +2019,13 @@ class AgentManager:
             # Implementa un loop simple de herramientas locales seguras dentro de session.cwd.
             if isinstance(resolved_model, str) and resolved_model.startswith("ollama/"):
                 import urllib.request
+                from backend.apps.agents.providers.ollama_native import infer_ollama_capabilities
+                from backend.apps.agents.providers.ollama_runtime import (
+                    build_effective_ollama_request_options,
+                    build_ollama_runtime_metadata,
+                    build_ollama_runtime_trace_sources,
+                    extract_ollama_response_text,
+                )
 
                 ollama_model = resolved_model[len("ollama/"):] or session.model[len("ollama/"):]
                 ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/") + "/api/chat"
@@ -2054,6 +2061,11 @@ class AgentManager:
                     session.status = "error"
                     _save_session(session_id, session.model_dump(mode="json"))
                     return
+
+                inferred_caps = infer_ollama_capabilities(ollama_model)
+                supports_thinking = bool(inferred_caps.get("thinking", {}).get("supported"))
+                requested_effort = str(getattr(session, "thinking_level", "auto") or "auto")
+                ollama_runtime_metadata_records: list[dict] = []
 
                 def _ollama_workspace_base() -> Path:
                     base = Path(session.cwd or os.getcwd()).resolve()
@@ -2857,6 +2869,13 @@ class AgentManager:
 
 
                 def _ollama_chat(messages: list[dict], stream: bool = False) -> str:
+                    request_options = build_effective_ollama_request_options(
+                        requested_effort=requested_effort,
+                        supports_thinking=supports_thinking,
+                        supports_thinking_levels=False,
+                        structured_output={"requested": True, "json_mode": True},
+                        config_source="session.thinking_level",
+                    )
                     payload = {
                         "model": ollama_model,
                         "messages": messages,
@@ -2865,6 +2884,8 @@ class AgentManager:
                             "temperature": 0.1,
                         },
                     }
+                    payload.update({k: v for k, v in request_options.items() if k != "metadata" and v is not None})
+                    payload["metadata"] = request_options.get("metadata") or {}
 
                     req = urllib.request.Request(
                         ollama_url,
@@ -2874,6 +2895,7 @@ class AgentManager:
                     )
 
                     full_text = ""
+                    response_payload: dict = {}
 
                     with urllib.request.urlopen(req, timeout=300) as resp:
                         if stream:
@@ -2887,21 +2909,48 @@ class AgentManager:
                                     data = json.loads(line)
                                 except Exception:
                                     continue
+                                response_payload = data if isinstance(data, dict) else {}
                                 full_text += data.get("message", {}).get("content", "") or ""
                                 if data.get("done"):
                                     break
                         else:
                             data = json.loads(resp.read().decode("utf-8", errors="ignore"))
-                            full_text = data.get("message", {}).get("content", "") or ""
+                            response_payload = data if isinstance(data, dict) else {}
+                            full_text = extract_ollama_response_text(response_payload)
+
+                    runtime_metadata = build_ollama_runtime_metadata(
+                        response_payload=response_payload,
+                        request_payload=payload,
+                        model=ollama_model,
+                        status="completed",
+                        running_state={
+                            "running": bool((provider_health.get("snapshot") or {}).get("running_model_count")),
+                            "availability": provider_health.get("status") or "unknown",
+                        },
+                    )
+                    ollama_runtime_metadata_records.append(runtime_metadata)
 
                     return full_text
 
-                async def _ollama_emit_message(role: str, content: str) -> Message:
+                async def _ollama_emit_message(role: str, content: str, *, process_trace_sources: list[dict] | None = None) -> Message:
+                    process_trace_turn = None
+                    if process_trace_sources:
+                        try:
+                            process_trace_turn = build_process_trace_turn_container_from_sources(
+                                process_trace_sources,
+                                title="Ollama runtime metadata",
+                                summary="Ollama runtime metadata captured without prompts, responses or chain-of-thought.",
+                                status="completed",
+                                metadata={"provider": "ollama", "model": ollama_model, "source_kind": "ollama_runtime_metadata"},
+                            )
+                        except Exception:
+                            process_trace_turn = None
                     msg = Message(
                         id=uuid4().hex,
                         role=role,
                         content=content,
                         branch_id=session.active_branch_id,
+                        process_trace_turn=process_trace_turn,
                     )
                     session.messages.append(msg)
                     await ws_manager.send_to_session(session_id, "agent:message", {
@@ -3775,7 +3824,10 @@ Formato para respuesta final:
 
                     visible_final_content = _extract_visible_final_content(final_content)
                     _maybe_persist_plan_from_plan_mode(session, visible_final_content)
-                    await _ollama_emit_message("assistant", visible_final_content)
+                    trace_sources: list[dict] = []
+                    for metadata_record in ollama_runtime_metadata_records:
+                        trace_sources.extend(build_ollama_runtime_trace_sources(metadata_record))
+                    await _ollama_emit_message("assistant", visible_final_content, process_trace_sources=trace_sources)
                     session.status = "completed"
                     _save_session(session_id, session.model_dump(mode="json"))
                     return

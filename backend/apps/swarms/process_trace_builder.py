@@ -50,11 +50,15 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "swarm_final_audit"
     if data.get("metric_kind") == "miniagent_task_runtime_metric":
         return "miniagent_task_runtime_metric"
+    if data.get("metric_kind") == "ollama_runtime_metrics":
+        return "runtime_timer"
     explicit_source = str(data.get("source_kind") or data.get("trace_source_kind") or data.get("producer_kind") or "").strip().lower()
     if explicit_source in {"tool_trace", "tool_call", "tool_result", "tool_error"}:
         return "tool_trace"
     if explicit_source in {"action_trace", "pending_action", "approval", "action_result"}:
         return "action_trace"
+    if explicit_source in {"validation_trace", "structured_output_validation"}:
+        return "validation_trace"
     if explicit_source in {"skill_trace", "skill_use", "skill_result"}:
         return "skill_trace"
     if explicit_source in {"file_trace", "diff_trace", "workspace_trace", "workspace_file_trace"}:
@@ -572,6 +576,16 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = build_tool_trace_item(data)
     elif source_kind == "action_trace":
         item = build_action_trace_item(data)
+    elif source_kind == "validation_trace":
+        item = build_process_trace_item(
+            trace_id=data.get("trace_id") or data.get("id"),
+            kind=data.get("kind") or "validation",
+            subsystem="ValidationCore",
+            title=data.get("title") or "Validation",
+            summary=data.get("summary") or "Validation metadata recorded.",
+            status=data.get("status") or "completed",
+            details=data.get("details") if isinstance(data.get("details"), dict) else data,
+        )
     elif source_kind == "skill_trace":
         item = build_skill_trace_item(data)
     elif source_kind == "file_workspace_trace":

@@ -15,12 +15,16 @@ from typing import Any
 
 from backend.apps.agents.providers.ollama_native import (
     build_embedding_request,
+    build_ollama_chat_options,
     build_ollama_capability_snapshot_from_payloads,
     build_keep_alive_policy,
     normalize_base_url,
     normalize_embedding_response,
+    normalize_ollama_tool_calls,
+    normalize_ollama_thinking_metadata,
     normalize_ollama_runtime_metrics,
     normalize_openai_compatibility_adapter_metadata,
+    validate_structured_output,
     redact_ollama_value,
 )
 from backend.apps.agents.providers.provider_health import normalize_ollama_model_name
@@ -389,3 +393,158 @@ def build_modelcore_process_trace_item(model: dict[str, Any], *, health: dict[st
         },
         "metadata": {"provider": "ollama", "source_kind": "ollama_native_snapshot", "model": model.get("model") or model.get("name")},
     }
+
+
+def extract_ollama_response_text(response_payload: dict[str, Any]) -> str:
+    message = response_payload.get("message") if isinstance(response_payload.get("message"), dict) else {}
+    return str(message.get("content") or response_payload.get("response") or response_payload.get("content") or "")
+
+
+def has_ollama_metric_fields(payload: dict[str, Any]) -> bool:
+    return any(
+        key in payload
+        for key in ("total_duration", "load_duration", "prompt_eval_count", "prompt_eval_duration", "eval_count", "eval_duration")
+    )
+
+
+def build_effective_ollama_request_options(
+    *,
+    requested_effort: str | None = "auto",
+    supports_thinking: bool = False,
+    supports_thinking_levels: bool = False,
+    keep_alive: str | None = None,
+    structured_output: dict[str, Any] | None = None,
+    config_source: str = "session.thinking_level",
+) -> dict[str, Any]:
+    options = build_ollama_chat_options(
+        reasoning_effort=requested_effort,
+        supports_thinking=supports_thinking,
+        supports_thinking_levels=supports_thinking_levels,
+        keep_alive=keep_alive,
+        structured_output=structured_output,
+    )
+    effort = dict(options.get("metadata", {}).get("reasoning_effort") or {})
+    effort.update({
+        "requested_effort": effort.get("requested_level", requested_effort or "auto"),
+        "applied_effort": effort.get("applied_level", "off"),
+        "provider_support": "level" if supports_thinking_levels else ("boolean_think" if supports_thinking else "unsupported"),
+        "config_source": config_source,
+        "payload_applied": {"think": options.get("think")},
+    })
+    options.setdefault("metadata", {})["reasoning_effort"] = effort
+    return options
+
+
+def normalize_ollama_structured_output_metadata(
+    *,
+    request_payload: dict[str, Any] | None = None,
+    response_payload: dict[str, Any] | None = None,
+    response_text: Any = None,
+    provider_support: str = "ollama_native_option",
+) -> dict[str, Any]:
+    request = request_payload if isinstance(request_payload, dict) else {}
+    structured = {}
+    metadata = request.get("metadata") if isinstance(request.get("metadata"), dict) else {}
+    if isinstance(metadata.get("structured_output"), dict):
+        structured = dict(metadata["structured_output"])
+    elif request.get("format") is not None:
+        structured = {
+            "requested": True,
+            "applied": True,
+            "schema_used": isinstance(request.get("format"), dict),
+        }
+    else:
+        structured = {"requested": False, "applied": False, "schema_used": False, "fallback_reason": "not_requested"}
+
+    text = response_text if response_text is not None else extract_ollama_response_text(response_payload or {})
+    validation = validate_structured_output(text) if structured.get("requested") else {"validation_status": "not_requested", "error": ""}
+    return {
+        "requested": bool(structured.get("requested")),
+        "applied": bool(structured.get("applied")),
+        "schema_used": bool(structured.get("schema_used")),
+        "validation_status": validation.get("validation_status"),
+        "fallback_reason": structured.get("fallback_reason") or (validation.get("error") if validation.get("validation_status") == "invalid" else ""),
+        "provider_support": provider_support,
+        "source": "ollama_structured_output_metadata",
+    }
+
+
+def build_ollama_runtime_metadata(
+    *,
+    response_payload: dict[str, Any] | None = None,
+    request_payload: dict[str, Any] | None = None,
+    model: str | None = None,
+    status: str = "completed",
+    running_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    response = response_payload if isinstance(response_payload, dict) else {}
+    request = request_payload if isinstance(request_payload, dict) else {}
+    message = response.get("message") if isinstance(response.get("message"), dict) else {}
+    response_text = extract_ollama_response_text(response)
+    metric_payload = {**response, "model": response.get("model") or model or request.get("model") or ""}
+    metrics = normalize_ollama_runtime_metrics(metric_payload) if has_ollama_metric_fields(response) else {
+        "metric_kind": "ollama_runtime_metrics",
+        "provider": "ollama",
+        "model": model or request.get("model") or "",
+        "status": "not_reported",
+        "source": "ollama_response_metrics",
+    }
+    if running_state:
+        metrics["running"] = bool(running_state.get("running"))
+        metrics["availability"] = running_state.get("availability") or "unknown"
+    tool_calls = normalize_ollama_tool_calls(message.get("tool_calls") or response.get("tool_calls"))
+    structured_output = normalize_ollama_structured_output_metadata(
+        request_payload=request,
+        response_payload=response,
+        response_text=response_text,
+    )
+    thinking_text = message.get("thinking") or response.get("thinking")
+    request_metadata = request.get("metadata") if isinstance(request.get("metadata"), dict) else {}
+    reasoning_effort = dict(request_metadata.get("reasoning_effort") if isinstance(request_metadata.get("reasoning_effort"), dict) else {})
+    if not reasoning_effort:
+        reasoning_effort = {
+            "requested_effort": "auto",
+            "applied_effort": "off",
+            "provider_support": "unknown",
+            "fallback_reason": "not_configured",
+            "config_source": "not_reported",
+            "payload_applied": {},
+        }
+    return {
+        "metadata_kind": "ollama_runtime_metadata",
+        "provider": "ollama",
+        "model": model or response.get("model") or request.get("model") or "",
+        "status": status,
+        "metrics": metrics,
+        "reasoning_effort": reasoning_effort,
+        "tool_calls": tool_calls,
+        "tool_call_count": len(tool_calls),
+        "structured_output": structured_output,
+        "thinking": normalize_ollama_thinking_metadata(thinking_text),
+        "source": "Ollama /api/chat",
+    }
+
+
+def build_ollama_runtime_trace_sources(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    sources: list[dict[str, Any]] = []
+    metrics = metadata.get("metrics") if isinstance(metadata.get("metrics"), dict) else {}
+    if metrics:
+        sources.append({**metrics, "source_kind": "runtime_timer", "label": "Ollama runtime metrics"})
+    for call in metadata.get("tool_calls") or []:
+        if isinstance(call, dict):
+            sources.append({
+                **call,
+                "summary": f"Ollama requested tool {call.get('tool_name') or 'unknown'}; execution is handled separately.",
+                "source_kind": "tool_trace",
+            })
+    structured = metadata.get("structured_output") if isinstance(metadata.get("structured_output"), dict) else {}
+    if structured.get("requested"):
+        sources.append({
+            "source_kind": "validation_trace",
+            "kind": "validation",
+            "title": "Structured output validation",
+            "summary": f"Structured output validation: {structured.get('validation_status') or 'unknown'}.",
+            "status": "completed" if structured.get("validation_status") in {"valid", "warning"} else "warning",
+            "details": structured,
+        })
+    return sources
