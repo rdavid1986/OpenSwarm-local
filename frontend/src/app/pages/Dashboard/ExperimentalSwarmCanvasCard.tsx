@@ -964,6 +964,59 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
   const implementationMeta = implementationStateMeta[implementationVisualState];
   const isImplementationActionRunning = isStartingImplementation || (swarmState.actionLoading && startImplementationInFlightRef.current);
+  const [swarmActionStartedAt, setSwarmActionStartedAt] = useState<number | null>(null);
+  const [swarmActionElapsedMs, setSwarmActionElapsedMs] = useState(0);
+  const [lastSwarmActionDurationMs, setLastSwarmActionDurationMs] = useState<number | null>(null);
+  const [lastSwarmActionWasImplementation, setLastSwarmActionWasImplementation] = useState(false);
+  const isImplementationActionRunningRef = useRef(false);
+
+  useEffect(() => {
+    isImplementationActionRunningRef.current = isImplementationActionRunning;
+  }, [isImplementationActionRunning]);
+
+  useEffect(() => {
+    if (!swarmState.actionLoading) {
+      setSwarmActionStartedAt((previousStartedAt) => {
+        if (previousStartedAt) {
+          setLastSwarmActionDurationMs(Math.max(0, Date.now() - previousStartedAt));
+          setLastSwarmActionWasImplementation(isImplementationActionRunningRef.current);
+        }
+        return null;
+      });
+      setSwarmActionElapsedMs(0);
+      return;
+    }
+
+    const startedAt = Date.now();
+    setSwarmActionStartedAt(startedAt);
+    setSwarmActionElapsedMs(0);
+    setLastSwarmActionDurationMs(null);
+    setLastSwarmActionWasImplementation(isImplementationActionRunningRef.current);
+
+    const interval = window.setInterval(() => {
+      setSwarmActionElapsedMs(Math.max(0, Date.now() - startedAt));
+    }, 100);
+
+    return () => window.clearInterval(interval);
+  }, [swarmState.actionLoading]);
+
+  const formatSwarmActionDuration = useCallback((durationMs: number): string => {
+    // UI displays a compact two-decimal label. Full precision remains in durationMs
+    // for future persisted metrics and audit comparisons.
+    const safeMs = Math.max(0, Math.round(durationMs));
+    const seconds = safeMs / 1000;
+    if (seconds < 60) return `${seconds.toFixed(2)}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds - minutes * 60;
+    return `${minutes}m ${remainingSeconds.toFixed(2)}s`;
+  }, []);
+
+  const swarmActionElapsedLabel = formatSwarmActionDuration(swarmActionElapsedMs);
+  const swarmActionStatusLabel = isImplementationActionRunning ? 'Implementation running' : 'Thinking';
+  const lastSwarmActionLabel = lastSwarmActionDurationMs != null
+    ? `${lastSwarmActionWasImplementation ? 'Implementation ran' : 'Thought'} for ${formatSwarmActionDuration(lastSwarmActionDurationMs)}`
+    : null;
+
   const chatMessages = hasLoadedActiveSwarm
     ? (swarmState.messages || []).filter((message: any) => getVisibleSwarmMessageText(getSwarmMessageText(message)))
     : [];
@@ -1648,7 +1701,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             </Typography>
           </Box>
           <Typography sx={{ color: c.text.tertiary, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {activeSwarmModel || 'No model selected'}
+            {activeSwarmModel || 'No model selected'}{swarmState.actionLoading ? ` · ${swarmActionStatusLabel} ${swarmActionElapsedLabel}` : ''}
           </Typography>
         </Box>
         {(stableOutputBridgeOutputId || canCreateOutputBridge) && (
@@ -2361,6 +2414,26 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 </Box>
               ))}
 
+              {lastSwarmActionLabel && !swarmState.actionLoading && (
+                <Box
+                  sx={{
+                    alignSelf: 'stretch',
+                    maxWidth: '100%',
+                    bgcolor: 'transparent',
+                    border: 'none',
+                    borderRadius: 0,
+                    px: 0.5,
+                    py: 0.35,
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Typography sx={{ fontSize: '0.72rem', color: c.text.tertiary, fontStyle: 'italic' }}>
+                    {lastSwarmActionLabel}
+                  </Typography>
+                </Box>
+              )}
+
               {swarmState.actionLoading && (
                 <Box
                   sx={{
@@ -2398,7 +2471,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         animation: 'swarm-text-shimmer 5.1s linear infinite',
                       }}
                     >
-                      Swarm is working
+                      {swarmActionStatusLabel} · {swarmActionElapsedLabel}
                     </Box>
                     <Box
                       component="span"
