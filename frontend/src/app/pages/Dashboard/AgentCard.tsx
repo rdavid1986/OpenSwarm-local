@@ -34,6 +34,7 @@ import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import { useDashboardActive } from '@/shared/hooks/useDashboardActive';
 import { useOverlayScrollPassthrough } from './useOverlayScrollPassthrough';
 import ProcessTraceDropdown, { ProcessTraceItem } from './ProcessTraceDropdown';
+import { buildCardVisualTokens } from './cardVisualTokens';
 
 // ---------------------------------------------------------------------------
 // Helper components & functions (unchanged)
@@ -439,6 +440,7 @@ const AgentCard: React.FC<Props> = ({
   shakeDirection,
 }) => {
   const c = useClaudeTokens();
+  const cardTokens = buildCardVisualTokens(c);
   const dispatch = useAppDispatch();
   const isDashboardActive = useDashboardActive();
   const hasApiKey = !!useAppSelector((s) => s.settings.data.anthropic_api_key);
@@ -791,7 +793,7 @@ const AgentCard: React.FC<Props> = ({
         contain: 'layout style',
         width: localResize ? activeW : Math.max(cardWidth, MIN_W),
         height: localResize ? activeH : (expanded ? Math.max(EXPANDED_OVERLAY_H, cardHeight) : 'auto'),
-        bgcolor: c.bg.surface,
+        bgcolor: cardTokens.surface.background,
         border: isHighlighted
           ? `2px solid ${c.accent.primary}`
           : (isGlowingRedux && !glowFading)
@@ -801,27 +803,27 @@ const AgentCard: React.FC<Props> = ({
               : hasPending && !expanded
                 ? `1px solid ${c.status.warning}`
                 : expanded
-                  ? `1px solid ${c.border.strong}`
-                  : `1px solid ${c.border.subtle}`,
-        borderRadius: 1.25,
-        p: 2,
+                  ? `1px solid ${cardTokens.surface.selectedBorder}`
+                  : `1px solid ${cardTokens.surface.border}`,
+        borderRadius: cardTokens.surface.radius,
+        p: cardTokens.surface.padding,
         cursor: expanded ? 'default' : 'pointer',
         transition: noTransition
           ? 'none'
           : glowFading
             ? `border ${GLOW_FADE_MS}ms ease-out, box-shadow ${GLOW_FADE_MS}ms ease-out`
-            : c.transition,
+            : cardTokens.surface.transition,
         boxShadow: isHighlighted
-          ? `0 0 0 3px ${c.accent.primary}50, 0 0 20px ${c.accent.primary}35, 0 0 40px ${c.accent.primary}15`
+          ? cardTokens.surface.highlightedGlowShadow
           : (isGlowingRedux && !glowFading)
             ? `0 0 0 2px ${accentColor}40, 0 0 18px ${accentColor}30, 0 0 40px ${accentColor}15`
             : isDragging
-              ? c.shadow.lg
+              ? cardTokens.surface.highlightedShadow
               : isSelected
-                ? `0 0 0 1px #3b82f6, ${c.shadow.md}`
+                ? `0 0 0 1px ${cardTokens.surface.selectedBorder}, ${cardTokens.surface.shadow}`
                 : expanded
-                  ? c.shadow.md
-                  : c.shadow.sm,
+                  ? cardTokens.surface.shadow
+                  : cardTokens.surface.subtleShadow,
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
@@ -866,7 +868,7 @@ const AgentCard: React.FC<Props> = ({
               boxShadow: `0 0 0 2px ${c.accent.primary}25, 0 0 14px ${c.accent.primary}18, 0 0 28px ${c.accent.primary}08`,
             },
             '100%': {
-              boxShadow: c.shadow.sm,
+              boxShadow: cardTokens.surface.subtleShadow,
             },
           },
         }),
@@ -883,7 +885,7 @@ const AgentCard: React.FC<Props> = ({
         }),
         ...(!isHighlighted && !(isGlowingRedux && !glowFading) && !expanded && !isDragging && !isSelected && {
           '&:hover': {
-            boxShadow: c.shadow.md,
+            boxShadow: cardTokens.surface.shadow,
             borderColor: hasPending ? c.status.warning : c.border.strong,
           },
         }),

@@ -33,6 +33,7 @@ import RuleOutlinedIcon from '@mui/icons-material/RuleOutlined';
 import OutputOutlinedIcon from '@mui/icons-material/OutputOutlined';
 
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
+import { buildCardVisualTokens } from './cardVisualTokens';
 
 export type ProcessTraceStatus =
   | 'planned'
@@ -314,6 +315,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
   showRawDetails = false,
 }) => {
   const c = useClaudeTokens();
+  const cardTokens = buildCardVisualTokens(c);
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [debugExpanded, setDebugExpanded] = useState(showRawDetails);
 
@@ -367,12 +369,12 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
   return (
     <Box
       sx={{
-        bgcolor: c.bg.elevated,
-        border: `1px solid ${status === 'running' ? `${c.accent.primary}80` : c.border.subtle}`,
-        borderRadius: `${c.radius.md}px`,
+        bgcolor: cardTokens.trace.background,
+        border: `1px solid ${status === 'running' ? cardTokens.trace.runningBorder : cardTokens.trace.border}`,
+        borderRadius: cardTokens.trace.radius,
         overflow: 'hidden',
         transition: 'border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease',
-        boxShadow: status === 'running' ? `0 0 0 1px ${c.accent.primary}25, 0 0 18px ${c.accent.primary}18` : 'none',
+        boxShadow: status === 'running' ? cardTokens.trace.runningShadow : cardTokens.trace.shadow,
       }}
     >
       <Box
@@ -381,11 +383,11 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
           display: 'flex',
           alignItems: 'center',
           gap: 0.75,
-          px: compact ? 1 : 1.25,
-          py: compact ? 0.65 : 0.85,
+          px: compact ? cardTokens.trace.compactPx : cardTokens.trace.px,
+          py: compact ? cardTokens.trace.compactPy : cardTokens.trace.py,
           cursor: 'pointer',
           userSelect: 'none',
-          '&:hover': { bgcolor: c.bg.secondary },
+          '&:hover': { bgcolor: cardTokens.trace.headerHoverBackground },
         }}
       >
         <Tooltip title={subsystem} arrow>
@@ -476,10 +478,10 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
       <Collapse in={expanded} timeout={180}>
         <Box
           sx={{
-            borderTop: `1px solid ${c.border.subtle}`,
-            px: compact ? 1 : 1.25,
-            py: 1,
-            bgcolor: c.bg.surface,
+            borderTop: `1px solid ${cardTokens.trace.border}`,
+            px: compact ? cardTokens.trace.compactPx : cardTokens.trace.px,
+            py: cardTokens.trace.panelPadding,
+            bgcolor: cardTokens.trace.expandedBackground,
           }}
         >
           {!isDebugJsonTrace && (
@@ -503,9 +505,9 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
               sx={{
                 m: 0,
                 p: 0.75,
-                border: `1px solid ${c.border.subtle}`,
-                borderRadius: `${c.radius.sm}px`,
-                bgcolor: c.bg.page,
+                border: `1px solid ${cardTokens.trace.border}`,
+                borderRadius: cardTokens.trace.nestedRadius,
+                bgcolor: cardTokens.trace.nestedBackground,
                 color: c.text.tertiary,
                 fontSize: '0.68rem',
                 fontFamily: c.font.mono,
@@ -565,9 +567,9 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
                 }}
                 sx={{
                   width: '100%',
-                  border: `1px solid ${c.border.subtle}`,
-                  borderRadius: `${c.radius.sm}px`,
-                  bgcolor: c.bg.elevated,
+                  border: `1px solid ${cardTokens.trace.border}`,
+                  borderRadius: cardTokens.trace.nestedRadius,
+                  bgcolor: cardTokens.trace.background,
                   color: c.text.tertiary,
                   cursor: 'pointer',
                   display: 'flex',
@@ -580,7 +582,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
                   fontSize: '0.68rem',
                   fontWeight: 700,
                   textAlign: 'left',
-                  '&:hover': { bgcolor: c.bg.secondary },
+                  '&:hover': { bgcolor: cardTokens.trace.headerHoverBackground },
                 }}
               >
                 <span>Debug data · redacted JSON</span>
@@ -601,9 +603,9 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
                     mt: 0.65,
                     mb: 0,
                     p: 0.75,
-                    border: `1px solid ${c.border.subtle}`,
-                    borderRadius: `${c.radius.sm}px`,
-                    bgcolor: c.bg.page,
+                    border: `1px solid ${cardTokens.trace.border}`,
+                    borderRadius: cardTokens.trace.nestedRadius,
+                    bgcolor: cardTokens.trace.nestedBackground,
                     color: c.text.tertiary,
                     fontSize: '0.66rem',
                     fontFamily: c.font.mono,
@@ -642,6 +644,7 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
   compact = true,
 }) => {
   const c = useClaudeTokens();
+  const cardTokens = buildCardVisualTokens(c);
   const normalizedStatus = normalizeStatus(status);
   const durationLabel = formatDurationMs(duration_ms);
   const [expanded, setExpanded] = useState(defaultExpanded ?? normalizedStatus === 'running');
@@ -668,11 +671,11 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
   return (
     <Box
       sx={{
-        bgcolor: c.bg.surface,
-        border: `1px solid ${normalizedStatus === 'running' ? `${c.accent.primary}80` : c.border.subtle}`,
-        borderRadius: `${c.radius.lg}px`,
+        bgcolor: cardTokens.trace.turnBackground,
+        border: `1px solid ${normalizedStatus === 'running' ? cardTokens.trace.runningBorder : cardTokens.trace.border}`,
+        borderRadius: cardTokens.trace.turnRadius,
         overflow: 'hidden',
-        boxShadow: normalizedStatus === 'running' ? `0 0 0 1px ${c.accent.primary}20, 0 0 18px ${c.accent.primary}12` : c.shadow.sm,
+        boxShadow: normalizedStatus === 'running' ? cardTokens.trace.runningTurnShadow : cardTokens.trace.turnShadow,
       }}
     >
       <Box
@@ -681,11 +684,11 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
           display: 'flex',
           alignItems: 'center',
           gap: 0.75,
-          px: compact ? 1 : 1.25,
-          py: compact ? 0.7 : 0.9,
+          px: compact ? cardTokens.trace.compactPx : cardTokens.trace.px,
+          py: compact ? cardTokens.trace.turnCompactPy : cardTokens.trace.py,
           cursor: 'pointer',
           userSelect: 'none',
-          '&:hover': { bgcolor: c.bg.secondary },
+          '&:hover': { bgcolor: cardTokens.trace.headerHoverBackground },
         }}
       >
         <Tooltip title="Turn work trace" arrow>
@@ -744,8 +747,8 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
       </Box>
 
       <Collapse in={expanded} timeout={180}>
-        <Box sx={{ borderTop: `1px solid ${c.border.subtle}`, p: compact ? 0.75 : 1, bgcolor: c.bg.elevated }}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.65 }}>
+        <Box sx={{ borderTop: `1px solid ${cardTokens.trace.border}`, p: compact ? cardTokens.trace.compactPanelPadding : cardTokens.trace.panelPadding, bgcolor: cardTokens.trace.background }}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: cardTokens.trace.itemGap }}>
             {visibleItems.map((item) => (
               <ProcessTraceDropdown
                 key={item.trace_id || `${item.kind}-${item.title}`}

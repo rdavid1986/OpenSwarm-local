@@ -41,6 +41,7 @@ import { DEFAULT_SWARM_MODE, getSwarmModeOption } from './SwarmModePicker';
 import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
 import { API_BASE } from '@/shared/config';
 import ProcessTraceDropdown, { ProcessTraceItem, ProcessTraceTurnDropdown } from './ProcessTraceDropdown';
+import { buildCardVisualTokens } from './cardVisualTokens';
 
 type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 type ImplementationVisualState =
@@ -1093,6 +1094,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   dashboardId,
 }) => {
   const c = useClaudeTokens();
+  const cardTokens = buildCardVisualTokens(c);
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const swarmState = useAppSelector((s) => s.experimentalSwarms);
@@ -2002,11 +2004,11 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
         width: displayW,
         height: displayH,
         zIndex: isDragging ? 999999 : cardZOrder,
-        bgcolor: c.bg.surface,
-        border: `1px solid ${isSelected ? c.accent.primary : c.border.subtle}`,
-        borderRadius: 1.25,
+        bgcolor: cardTokens.surface.background,
+        border: `1px solid ${isSelected ? cardTokens.surface.selectedBorder : cardTokens.surface.border}`,
+        borderRadius: cardTokens.surface.radius,
         overflow: 'hidden',
-        boxShadow: isHighlighted ? c.shadow.lg : c.shadow.md,
+        boxShadow: isHighlighted ? cardTokens.surface.highlightedShadow : cardTokens.surface.shadow,
         display: 'flex',
         flexDirection: 'column',
       }}
@@ -2057,12 +2059,12 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         sx={{
-          px: 2,
-          py: 1.15,
+          px: cardTokens.surface.headerPaddingX,
+          py: cardTokens.surface.headerPaddingY,
           display: 'flex',
           alignItems: 'center',
           gap: 1,
-          borderBottom: collapsed ? 'none' : `1px solid ${c.border.subtle}`,
+          borderBottom: collapsed ? 'none' : `1px solid ${cardTokens.surface.border}`,
           cursor: isDragging ? 'grabbing' : 'grab',
           touchAction: 'none',
           userSelect: 'none',
@@ -2192,11 +2194,11 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
           gridTemplateColumns: `minmax(0, 1fr) 8px ${displaySideW}px`,
         }}
       >
-        <Box sx={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', bgcolor: c.bg.page, overflow: 'hidden' }}>
+        <Box sx={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', bgcolor: cardTokens.surface.bodyBackground, overflow: 'hidden' }}>
           <Box
             ref={chatScrollRef}
             onWheel={(e) => e.stopPropagation()}
-            sx={{ flex: '1 1 0', height: 0, overflowY: 'auto', overflowX: 'hidden', p: 2, minHeight: 0 }}
+            sx={{ flex: '1 1 0', height: 0, overflowY: 'auto', overflowX: 'hidden', p: cardTokens.surface.padding, minHeight: 0 }}
           >
             <Box sx={{ maxWidth: 860, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 1.5 }}>
               {chatMessages.length === 0 && events.length === 0 && (
@@ -2965,7 +2967,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             </Box>
           </Box>
 
-          <Box sx={{ flexShrink: 0, p: 1.5, borderTop: `1px solid ${c.border.subtle}`, bgcolor: c.bg.surface }}>
+          <Box sx={{ flexShrink: 0, p: cardTokens.density.inputPadding, borderTop: `1px solid ${cardTokens.surface.border}`, bgcolor: cardTokens.surface.background }}>
             {pendingPreviewRefinementDraft && (
               <Box
                 sx={{
@@ -3016,7 +3018,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
           }}
         />
 
-        <Box sx={{ borderLeft: `1px solid ${c.border.subtle}`, bgcolor: c.bg.surface, overflow: 'auto', p: 1.5 }}>
+        <Box sx={{ borderLeft: `1px solid ${cardTokens.surface.border}`, bgcolor: cardTokens.surface.background, overflow: 'auto', p: cardTokens.density.sidebarPadding }}>
           <Typography sx={{ color: c.text.muted, fontSize: '0.72rem', mb: 1 }}>
             Swarm {activeSwarmId ? `· ${activeSwarmId}` : '· not started'}
           </Typography>
