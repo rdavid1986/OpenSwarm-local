@@ -105,6 +105,8 @@ const Skills: React.FC = () => {
     candidateResearchContractsError,
     candidateResearchApprovalLoading,
     candidateResearchApprovalError,
+    candidateResearchExecutionLoading,
+    candidateResearchExecutionError,
     candidateImprovementProposals,
     candidateImprovementProposalsLoading,
     candidateImprovementProposalsError,
@@ -240,6 +242,10 @@ const Skills: React.FC = () => {
     selectedCandidate ? !!candidateResearchApprovalLoading[selectedCandidate.candidate_id] : false;
   const selectedResearchApprovalError =
     selectedCandidate ? candidateResearchApprovalError[selectedCandidate.candidate_id] ?? null : null;
+  const selectedResearchExecutionLoading =
+    selectedCandidate ? !!candidateResearchExecutionLoading[selectedCandidate.candidate_id] : false;
+  const selectedResearchExecutionError =
+    selectedCandidate ? candidateResearchExecutionError[selectedCandidate.candidate_id] ?? null : null;
   const selectedImprovementProposal: SkillCandidateImprovementProposal | null =
     selectedCandidate ? candidateImprovementProposals[selectedCandidate.candidate_id] ?? null : null;
   const selectedImprovementProposalLoading =
@@ -431,6 +437,21 @@ const Skills: React.FC = () => {
     } catch (err) {
       console.error('Failed to update skill candidate research permission:', err);
       setSnackbar({ open: true, message: err instanceof Error ? err.message : 'Failed to update research permission' });
+    }
+  };
+
+  const handleExecuteCandidateResearch = async () => {
+    if (!selectedCandidate) return;
+    try {
+      const result = await dispatch(executeSkillCandidateResearch(selectedCandidate.candidate_id)).unwrap();
+      setSnackbar({
+        open: true,
+        message: `Research evidence saved for "${result.candidate.skill_spec.name}". Candidate content was not changed.`,
+      });
+      dispatch(fetchSkillCandidateImprovementProposal(selectedCandidate.candidate_id));
+    } catch (err) {
+      console.error('Failed to execute skill candidate research:', err);
+      setSnackbar({ open: true, message: err instanceof Error ? err.message : 'Failed to execute research' });
     }
   };
 
@@ -674,8 +695,11 @@ const Skills: React.FC = () => {
     error: string | null;
     approvalLoading: boolean;
     approvalError: string | null;
+    executionLoading: boolean;
+    executionError: string | null;
     onSetResearchPermission: (approved: boolean) => void;
-  }> = ({ contract, loading, error, approvalLoading, approvalError, onSetResearchPermission }) => {
+    onExecuteResearch: () => void;
+  }> = ({ contract, loading, error, approvalLoading, approvalError, executionLoading, executionError, onSetResearchPermission, onExecuteResearch }) => {
     const requiresResearch = contract?.requires_web_research === true;
     const researchAllowed = contract?.research_allowed === true;
     const webExecuted = contract?.web_research_executed === true;
@@ -687,6 +711,7 @@ const Skills: React.FC = () => {
     const sourceTypes = Array.isArray(contract?.expected_source_types) ? contract.expected_source_types : [];
     const gaps = Array.isArray(contract?.research_gap_items) ? contract.research_gap_items : [];
     const guardrails = Array.isArray(contract?.guardrails) ? contract.guardrails : [];
+    const canExecuteResearch = requiresResearch && researchAllowed && !webExecuted;
     const summary = requiresResearch
       ? 'This skill may need current external documentation before finalizing.'
       : 'No current-information dependency detected.';
@@ -766,6 +791,42 @@ const Skills: React.FC = () => {
                 {approvalError && (
                   <Typography sx={{ fontSize: '0.72rem', color: c.status.error, lineHeight: 1.4, mt: 0.8 }}>
                     {approvalError}
+                  </Typography>
+                )}
+              </ReviewSection>
+            )}
+
+            {requiresResearch && researchAllowed && (
+              <ReviewSection title="Research execution" tone={webExecuted ? 'success' : 'warning'}>
+                <Typography sx={{ fontSize: '0.74rem', color: c.text.secondary, lineHeight: 1.45, mb: 1 }}>
+                  This runs approved web research and stores evidence on the candidate. It does not change candidate content, install the skill, apply improvements, activate tools, or activate MCP.
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, alignItems: 'center' }}>
+                  {webExecuted ? (
+                    <MetaChip label="Research evidence saved" tone="success" />
+                  ) : (
+                    <Button
+                      variant="contained"
+                      size="small"
+                      disabled={!canExecuteResearch || executionLoading}
+                      onClick={onExecuteResearch}
+                      startIcon={executionLoading ? <CircularProgress size={14} sx={{ color: 'inherit' }} /> : undefined}
+                      sx={{
+                        bgcolor: c.accent.primary,
+                        '&:hover': { bgcolor: c.accent.pressed },
+                        textTransform: 'none',
+                        borderRadius: `${c.radius.md}px`,
+                        fontSize: '0.74rem',
+                        boxShadow: 'none',
+                      }}
+                    >
+                      Run approved research
+                    </Button>
+                  )}
+                </Box>
+                {executionError && (
+                  <Typography sx={{ fontSize: '0.72rem', color: c.status.error, lineHeight: 1.4, mt: 0.8 }}>
+                    {executionError}
                   </Typography>
                 )}
               </ReviewSection>
@@ -2233,7 +2294,10 @@ const Skills: React.FC = () => {
                 error={selectedResearchContractError}
                 approvalLoading={selectedResearchApprovalLoading}
                 approvalError={selectedResearchApprovalError}
+                executionLoading={selectedResearchExecutionLoading}
+                executionError={selectedResearchExecutionError}
                 onSetResearchPermission={handleApproveCandidateResearch}
+                onExecuteResearch={handleExecuteCandidateResearch}
               />
             </CollapsibleCandidatePanel>
 

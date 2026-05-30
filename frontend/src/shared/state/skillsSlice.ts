@@ -222,6 +222,8 @@ interface SkillsState {
   candidateResearchContractsError: Record<string, string | null>;
   candidateResearchApprovalLoading: Record<string, boolean>;
   candidateResearchApprovalError: Record<string, string | null>;
+  candidateResearchExecutionLoading: Record<string, boolean>;
+  candidateResearchExecutionError: Record<string, string | null>;
   candidateImprovementProposals: Record<string, SkillCandidateImprovementProposal>;
   candidateImprovementProposalsLoading: Record<string, boolean>;
   candidateImprovementProposalsError: Record<string, string | null>;
@@ -247,6 +249,8 @@ const initialState: SkillsState = {
   candidateResearchContractsError: {},
   candidateResearchApprovalLoading: {},
   candidateResearchApprovalError: {},
+  candidateResearchExecutionLoading: {},
+  candidateResearchExecutionError: {},
   candidateImprovementProposals: {},
   candidateImprovementProposalsLoading: {},
   candidateImprovementProposalsError: {},
@@ -354,6 +358,26 @@ export const approveSkillCandidateResearch = createAsyncThunk(
     return {
       candidate: data.candidate as SkillSpecCandidate,
       researchContract: data.research_contract as SkillCandidateResearchContract | undefined,
+      audit: data.audit as Record<string, any>,
+    };
+  },
+);
+
+export const executeSkillCandidateResearch = createAsyncThunk(
+  'skills/executeCandidateResearch',
+  async (candidateId: string) => {
+    const res = await fetch(`${SKILLS_API}/candidates/${candidateId}/research-execute`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Failed to execute skill candidate research');
+    }
+    const data = await res.json();
+    return {
+      candidate: data.candidate as SkillSpecCandidate,
+      researchContract: data.research_contract as SkillCandidateResearchContract | undefined,
+      evidence: Array.isArray(data.evidence) ? data.evidence as Record<string, any>[] : [],
       audit: data.audit as Record<string, any>,
     };
   },
@@ -554,6 +578,25 @@ const skillsSlice = createSlice({
       .addCase(approveSkillCandidateResearch.rejected, (state, action) => {
         state.candidateResearchApprovalLoading[action.meta.arg.candidateId] = false;
         state.candidateResearchApprovalError[action.meta.arg.candidateId] = action.error.message || 'Failed to update research permission';
+      })
+      .addCase(executeSkillCandidateResearch.pending, (state, action) => {
+        state.candidateResearchExecutionLoading[action.meta.arg] = true;
+        state.candidateResearchExecutionError[action.meta.arg] = null;
+      })
+      .addCase(executeSkillCandidateResearch.fulfilled, (state, action) => {
+        const candidateId = action.payload.candidate.candidate_id;
+        state.candidateResearchExecutionLoading[candidateId] = false;
+        state.candidates[candidateId] = action.payload.candidate;
+        if (action.payload.researchContract) {
+          state.candidateResearchContracts[candidateId] = action.payload.researchContract;
+          state.candidateResearchContractsLoading[candidateId] = false;
+          state.candidateResearchContractsError[candidateId] = null;
+        }
+        delete state.candidateImprovementProposals[candidateId];
+      })
+      .addCase(executeSkillCandidateResearch.rejected, (state, action) => {
+        state.candidateResearchExecutionLoading[action.meta.arg] = false;
+        state.candidateResearchExecutionError[action.meta.arg] = action.error.message || 'Failed to execute research';
       })
       .addCase(fetchSkillCandidateImprovementProposal.pending, (state, action) => {
         state.candidateImprovementProposalsLoading[action.meta.arg] = true;
