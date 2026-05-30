@@ -2260,25 +2260,21 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 ].filter(Boolean).join(' · ');
                 const showMessageDebugMetadata = false;
                 const messagePreview = body.length > 180 ? `${body.slice(0, 180).trimEnd()}…` : body;
-                const isLiveMessageTrace = !isUser && isLatestChatMessage && swarmState.actionLoading;
+                const isLatestCompletedAssistantTrace = !isUser && isLatestChatMessage && !swarmState.actionLoading;
                 const messageTraceItems: ProcessTraceItem[] = [];
                 if (!isUser) {
                   messageTraceItems.push({
                     trace_id: `swarm-message-${message.id || idx}`,
                     kind: 'message',
-                    subsystem: 'TraceCore',
-                    icon_id: 'trace-core',
-                    title: isLiveMessageTrace ? `${swarmActionStatusLabel} live` : 'Swarm response action',
-                    summary: isLiveMessageTrace
-                      ? `Model is working on this turn with ${activeSwarmModel || 'selected model'} in ${getSwarmModeOption(activeSwarmMode).label}.`
-                      : (messagePreview || 'Swarm response recorded.'),
-                    status: isLiveMessageTrace ? 'running' : 'completed',
-                    duration_ms: isLiveMessageTrace ? swarmActionElapsedMs : undefined,
-                    badge: isLiveMessageTrace ? 'running' : 'message',
+                    subsystem: 'ReasoningCore',
+                    icon_id: 'reasoning-core',
+                    title: 'Respuesta del Swarm',
+                    summary: messagePreview || 'Respuesta del Swarm registrada.',
+                    status: 'completed',
+                    duration_ms: isLatestCompletedAssistantTrace ? lastSwarmActionDurationMs : undefined,
+                    badge: 'message',
                     related_task_id: activeSwarmId || undefined,
                     details: {
-                      mode: getSwarmModeOption(activeSwarmMode).label,
-                      model: activeSwarmModel || null,
                       route: metadata.route || null,
                       source: metadata.source || null,
                       guard: metadata.guard || null,
@@ -2287,7 +2283,6 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                       available_actions: metadata.availableActions,
                       message_preview: messagePreview || null,
                       visible_message_index: idx,
-                      process_trace_items_available: swarmProcessTraceItems.length,
                     },
                   });
                   if (projectIntake.options.length > 0 || currentProjectIntakeAction?.type) {
@@ -2296,11 +2291,10 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                       kind: 'intake',
                       subsystem: 'ActionCore',
                       icon_id: 'action-core',
-                      title: 'Intake action',
-                      summary: projectIntake.question || currentProjectIntakeAction?.label || 'Waiting for a structured user choice.',
-                      status: isLiveMessageTrace ? 'running' : 'planned',
-                      duration_ms: isLiveMessageTrace ? swarmActionElapsedMs : undefined,
-                      badge: projectIntake.options.length > 0 ? `${projectIntake.options.length} options` : 'action',
+                      title: 'Acción de intake',
+                      summary: projectIntake.question || currentProjectIntakeAction?.label || 'Esperando una elección estructurada del usuario.',
+                      status: 'planned',
+                      badge: projectIntake.options.length > 0 ? `${projectIntake.options.length} opciones` : 'action',
                       related_action_id: currentProjectIntakeAction?.type || undefined,
                       details: {
                         question: projectIntake.question || null,
@@ -2338,12 +2332,12 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                     {messageTraceItems.length > 0 && (
                       <Box sx={{ mb: 1 }}>
                         <ProcessTraceTurnDropdown
-                          title={isLiveMessageTrace ? 'Pensando' : 'Pensado'}
-                          status={isLiveMessageTrace ? 'running' : 'completed'}
-                          duration_ms={isLiveMessageTrace ? swarmActionElapsedMs : (isLatestChatMessage ? lastSwarmActionDurationMs : undefined)}
+                          title="Pensado"
+                          status="completed"
+                          duration_ms={isLatestCompletedAssistantTrace ? lastSwarmActionDurationMs : undefined}
                           items={messageTraceItems}
                           compact
-                          defaultExpanded={isLiveMessageTrace}
+                          defaultExpanded={false}
                         />
                       </Box>
                     )}
@@ -2917,57 +2911,42 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                     borderRadius: 0,
                     px: 0.5,
                     py: 0.75,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'flex-start',
-                    gap: 0.55,
                   }}
                 >
-                  <style>{`@keyframes swarm-text-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }`}</style>
-                  <Typography
-                    sx={{
-                      fontSize: '0.78rem',
-                      letterSpacing: '0.01em',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <Box
-                      component="span"
-                      sx={{
-                        background: `linear-gradient(90deg, ${c.text.ghost} 0%, ${c.text.ghost} 40%, ${c.text.primary} 50%, ${c.text.ghost} 60%, ${c.text.ghost} 100%)`,
-                        backgroundSize: '200% 100%',
-                        WebkitBackgroundClip: 'text',
-                        backgroundClip: 'text',
-                        WebkitTextFillColor: 'transparent',
-                        color: 'transparent',
-                        animation: 'swarm-text-shimmer 5.1s linear infinite',
-                      }}
-                    >
-                      {swarmActionStatusLabel} · {swarmActionElapsedLabel}
-                    </Box>
-                    <Box
-                      component="span"
-                      sx={{
-                        display: 'inline-flex',
-                        ml: 0.45,
-                        '& span': {
-                          animation: 'swarmDotBlink 1s infinite',
-                          opacity: 0.25,
-                        },
-                        '& span:nth-of-type(2)': { animationDelay: '0.15s' },
-                        '& span:nth-of-type(3)': { animationDelay: '0.3s' },
-                        '@keyframes swarmDotBlink': {
-                          '0%, 80%, 100%': { opacity: 0.25, transform: 'translateY(0)' },
-                          '40%': { opacity: 1, transform: 'translateY(-1px)' },
-                        },
-                      }}
-                    >
-                      <span>.</span>
-                      <span>.</span>
-                      <span>.</span>
-                    </Box>
-                  </Typography>
+                  <ProcessTraceTurnDropdown
+                    title={swarmActionStatusLabel === 'Thinking' ? 'Pensando' : swarmActionStatusLabel}
+                    status="running"
+                    duration_ms={swarmActionElapsedMs}
+                    defaultExpanded={false}
+                    items={[
+                      {
+                        trace_id: `swarm-live-reasoning-${activeSwarmId || swarmCardId}`,
+                        kind: 'reasoning',
+                        subsystem: 'ReasoningCore',
+                        icon_id: 'reasoning-core',
+                        title: 'Razonamiento operativo en curso',
+                        summary: lastSubmittedPrompt
+                          ? `Evaluando la solicitud visible: "${lastSubmittedPrompt.length > 180 ? `${lastSubmittedPrompt.slice(0, 180).trimEnd()}…` : lastSubmittedPrompt}".`
+                          : 'Evaluando el turno actual y preparando una respuesta útil.',
+                        status: 'running',
+                        duration_ms: swarmActionElapsedMs,
+                        badge: 'live',
+                        related_task_id: activeSwarmId || undefined,
+                      },
+                      {
+                        trace_id: `swarm-live-model-${activeSwarmId || swarmCardId}`,
+                        kind: 'model',
+                        subsystem: 'ModelCore',
+                        icon_id: 'model-core',
+                        title: 'Modelo generando respuesta',
+                        summary: `El modelo está trabajando en este turno. Se muestra un resumen operativo, no razonamiento privado paso a paso.`,
+                        status: 'running',
+                        duration_ms: swarmActionElapsedMs,
+                        badge: 'running',
+                        related_task_id: activeSwarmId || undefined,
+                      },
+                    ]}
+                  />
                 </Box>
               )}
 

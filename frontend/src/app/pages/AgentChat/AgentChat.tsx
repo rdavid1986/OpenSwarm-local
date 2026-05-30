@@ -1221,14 +1221,14 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                         status="completed"
                         items={[{
                           trace_id: `agent-message-trace-${msg.id}`,
-                          kind: 'message',
-                          subsystem: 'ReasoningCore',
-                          icon_id: 'reasoning-core',
-                          title: 'Agent response action',
-                          summary: rawText.length > 180 ? `${rawText.slice(0, 180).trimEnd()}…` : rawText || 'Agent response recorded.',
+                          kind: 'debug',
+                          subsystem: 'TraceCore',
+                          icon_id: 'trace-core',
+                          title: 'Debug data · redacted JSON',
+                          summary: 'Datos técnicos redactados de la respuesta.',
                           status: 'completed',
-                          badge: 'message',
-                          related_agent_id: session.id,
+                          badge: 'JSON',
+                          metadata: { display_mode: 'debug_json' },
                           details: {
                             mode,
                             model,
@@ -1236,7 +1236,6 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                             message_id: msg.id,
                             branch_id: (msg as any).branch_id || null,
                             latest_assistant_message: msg.id === latestAssistantMessageId,
-                            preview: rawText.length > 240 ? `${rawText.slice(0, 240).trimEnd()}…` : rawText,
                           },
                         }]}
                       />
@@ -1312,39 +1311,37 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
               )
             )}
             {(awaitingResponse || (session.status === 'running' && !session.streamingMessage)) && (
-              <>
-                <ThinkingBubble
-                  label={session.turn_label?.label}
-                  seedKey={`${session.id}:${session.messages?.length ?? 0}`}
-                />
-                <Box sx={{ mt: -0.15, mb: 0.75 }}>
-                  <ProcessTraceTurnDropdown
-                    title="Pensando"
-                    status="running"
-                    defaultExpanded
-                    items={[{
+              <Box sx={{ my: 0.75 }}>
+                <ProcessTraceTurnDropdown
+                  title={session.turn_label?.label || 'Pensando'}
+                  status="running"
+                  defaultExpanded={false}
+                  items={[
+                    {
+                      trace_id: `agent-live-reasoning-${session.id}`,
+                      kind: 'reasoning',
+                      subsystem: 'ReasoningCore',
+                      icon_id: 'reasoning-core',
+                      title: 'Razonamiento operativo en curso',
+                      summary: `Evaluando el turno actual y preparando una respuesta en modo ${modeConf.label}.`,
+                      status: 'running',
+                      badge: 'live',
+                      related_agent_id: session.id,
+                    },
+                    {
                       trace_id: `agent-live-thinking-${session.id}`,
                       kind: 'thinking',
                       subsystem: 'ModelCore',
                       icon_id: 'model-core',
-                      title: session.turn_label?.label ? `${session.turn_label.label} live` : 'Thinking live',
-                      summary: `Agent is working with ${model} in ${modeConf.label}.`,
+                      title: 'Modelo generando respuesta',
+                      summary: `El modelo está trabajando. Se muestra un resumen operativo, no razonamiento privado paso a paso.`,
                       status: 'running',
                       badge: 'running',
                       related_agent_id: session.id,
-                      details: {
-                        mode: modeConf.label,
-                        model,
-                        status: session.status,
-                        awaiting_response: awaitingResponse,
-                        streaming_message: Boolean(session.streamingMessage),
-                        queue_length: queueLength,
-                        active_branch_id: session.active_branch_id || null,
-                      },
-                    }]}
-                  />
-                </Box>
-              </>
+                    },
+                  ]}
+                />
+              </Box>
             )}
             {showResumeBubble && session.status === 'stopped' && (
               <Box sx={{ display: 'flex', justifyContent: 'flex-start', my: 0.75 }}>

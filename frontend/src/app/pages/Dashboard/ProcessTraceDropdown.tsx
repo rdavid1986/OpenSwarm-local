@@ -223,7 +223,7 @@ function stringifyDetail(value: unknown): string {
 }
 
 function StatusIcon({ status, color }: { status: ProcessTraceStatus; color: string }) {
-  const sx = { fontSize: 15, color, flexShrink: 0 };
+  const sx = { fontSize: 19, color, flexShrink: 0 };
   if (status === 'completed') return <CheckCircleOutlineIcon sx={sx} />;
   if (status === 'failed') return <ErrorOutlineIcon sx={sx} />;
   if (status === 'blocked' || status === 'warning') return <WarningAmberIcon sx={sx} />;
@@ -263,7 +263,7 @@ function SubsystemIcon({
   label: string;
   color: string;
 }) {
-  const sx = { fontSize: 14, color };
+  const sx = { fontSize: 18, color };
   const iconKey = normalizeIconKey(iconId || subsystem);
 
   if (iconKey === 'swarm-core' || iconKey === 'swarmcore') return <AccountTreeOutlinedIcon sx={sx} />;
@@ -327,6 +327,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
   const evidenceCount = Array.isArray(item.evidence_refs) ? item.evidence_refs.length : 0;
   const artifactCount = Array.isArray(item.artifact_refs) ? item.artifact_refs.length : 0;
   const hasDebugDetails = Boolean(item.details && Object.keys(item.details).length > 0);
+  const isDebugJsonTrace = item.kind === 'debug' || item.metadata?.display_mode === 'debug_json';
   const sanitizedDebugDetails = useMemo(
     () => (hasDebugDetails ? sanitizeTraceValue(item.details) : null),
     [hasDebugDetails, item.details],
@@ -342,18 +343,19 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
 
   const detailRows = useMemo(() => {
     const rows: Array<[string, unknown]> = [];
-    if (item.related_task_id) rows.push(['Task', redactTraceText(item.related_task_id)]);
-    if (item.related_agent_id) rows.push(['Agent', redactTraceText(item.related_agent_id)]);
-    if (item.related_miniagent_id) rows.push(['MiniAgent', redactTraceText(item.related_miniagent_id)]);
+    const showInternalRefs = item.metadata?.show_internal_refs === true;
+    if (showInternalRefs && item.related_task_id) rows.push(['Task', redactTraceText(item.related_task_id)]);
+    if (showInternalRefs && item.related_agent_id) rows.push(['Agent', redactTraceText(item.related_agent_id)]);
+    if (showInternalRefs && item.related_miniagent_id) rows.push(['MiniAgent', redactTraceText(item.related_miniagent_id)]);
     if (item.related_skill_id) rows.push(['Skill', redactTraceText(item.related_skill_id)]);
     if (item.related_action_id) rows.push(['Action', redactTraceText(item.related_action_id)]);
     if (item.started_at) rows.push(['Started', item.started_at]);
     if (item.finished_at) rows.push(['Finished', item.finished_at]);
-    if (durationLabel) rows.push(['Duration', durationLabel]);
+    if (durationLabel && !isDebugJsonTrace) rows.push(['Duration', durationLabel]);
     if (evidenceCount > 0) rows.push(['Evidence refs', evidenceCount]);
     if (artifactCount > 0) rows.push(['Artifact refs', artifactCount]);
     return rows;
-  }, [item, durationLabel, evidenceCount, artifactCount]);
+  }, [item, durationLabel, evidenceCount, artifactCount, isDebugJsonTrace]);
 
   if (shouldHideTraceItem) {
     return null;
@@ -386,8 +388,8 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
         <Tooltip title={subsystem} arrow>
           <Box
             sx={{
-              width: 24,
-              height: 24,
+              width: 30,
+              height: 30,
               borderRadius: '50%',
               display: 'grid',
               placeItems: 'center',
@@ -477,20 +479,44 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
             bgcolor: c.bg.surface,
           }}
         >
-          <Typography
-            sx={{
-              color: c.text.secondary,
-              fontSize: '0.76rem',
-              lineHeight: 1.55,
-              mb: detailRows.length > 0 ? 1 : 0,
-              whiteSpace: 'pre-wrap',
-              overflowWrap: 'anywhere',
-            }}
-          >
-            {summary}
-          </Typography>
+          {!isDebugJsonTrace && (
+            <Typography
+              sx={{
+                color: c.text.secondary,
+                fontSize: '0.76rem',
+                lineHeight: 1.55,
+                mb: detailRows.length > 0 ? 1 : 0,
+                whiteSpace: 'pre-wrap',
+                overflowWrap: 'anywhere',
+              }}
+            >
+              {summary}
+            </Typography>
+          )}
 
-          {detailRows.length > 0 && (
+          {isDebugJsonTrace && hasDebugDetails && (
+            <Typography
+              component="pre"
+              sx={{
+                m: 0,
+                p: 0.75,
+                border: `1px solid ${c.border.subtle}`,
+                borderRadius: `${c.radius.sm}px`,
+                bgcolor: c.bg.page,
+                color: c.text.tertiary,
+                fontSize: '0.68rem',
+                fontFamily: c.font.mono,
+                whiteSpace: 'pre-wrap',
+                overflowWrap: 'anywhere',
+                maxHeight: 260,
+                overflow: 'auto',
+              }}
+            >
+              {stringifyDetail(sanitizedDebugDetails)}
+            </Typography>
+          )}
+
+          {!isDebugJsonTrace && detailRows.length > 0 && (
             <Box sx={{ display: 'grid', gap: 0.45 }}>
               {detailRows.map(([label, value]) => (
                 <Box
@@ -525,7 +551,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
             </Box>
           )}
 
-          {hasDebugDetails && (
+          {!isDebugJsonTrace && hasDebugDetails && (
             <Box sx={{ mt: detailRows.length > 0 ? 0.9 : 0 }}>
               <Box
                 component="button"
@@ -662,8 +688,8 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
         <Tooltip title="Turn work trace" arrow>
           <Box
             sx={{
-              width: 24,
-              height: 24,
+              width: 30,
+              height: 30,
               borderRadius: '50%',
               display: 'grid',
               placeItems: 'center',
@@ -672,7 +698,7 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
               border: `1px solid ${statusColor}45`,
             }}
           >
-            <TimelineOutlinedIcon sx={{ fontSize: 14, color: statusColor }} />
+            <TimelineOutlinedIcon sx={{ fontSize: 18, color: statusColor }} />
           </Box>
         </Tooltip>
 
