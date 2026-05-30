@@ -213,12 +213,21 @@ def _save_session(session_id: str, doc_data: dict):
         json.dump(doc_data, f, indent=2)
 
 
+def _normalize_legacy_session_data(data: dict | None) -> dict | None:
+    if not isinstance(data, dict):
+        return data
+    if data.get("status") == "idle":
+        data = dict(data)
+        data["status"] = "completed"
+    return data
+
+
 def _load_session_data(session_id: str) -> dict | None:
     path = os.path.join(SESSIONS_DIR, f"{session_id}.json")
     if not os.path.exists(path):
         return None
     with open(path) as f:
-        return json.load(f)
+        return _normalize_legacy_session_data(json.load(f))
 
 
 def _delete_session_file(session_id: str):
@@ -333,7 +342,7 @@ def _load_all_session_data() -> list[tuple[str, dict]]:
     for fname in os.listdir(SESSIONS_DIR):
         if fname.endswith(".json"):
             with open(os.path.join(SESSIONS_DIR, fname)) as f:
-                results.append((fname[:-5], json.load(f)))
+                results.append((fname[:-5], _normalize_legacy_session_data(json.load(f))))
     return results
 
 FULL_TOOLS = [
@@ -3301,7 +3310,7 @@ Formato para respuesta final:
                             + ". No hay una herramienta válida para continuar con esas reglas."
                         )
                         await _ollama_emit_message("assistant", final_content)
-                        session.status = "idle"
+                        session.status = "completed"
                         _save_session(session_id, session.model_dump(mode="json"))
                         return
 
@@ -3313,7 +3322,7 @@ Formato para respuesta final:
                             "para cumplir la instrucción de ejecutar una herramienta real."
                         )
                         await _ollama_emit_message("assistant", final_content)
-                        session.status = "idle"
+                        session.status = "completed"
                         _save_session(session_id, session.model_dump(mode="json"))
                         return
 
@@ -3752,7 +3761,7 @@ Formato para respuesta final:
                     visible_final_content = _extract_visible_final_content(final_content)
                     _maybe_persist_plan_from_plan_mode(session, visible_final_content)
                     await _ollama_emit_message("assistant", visible_final_content)
-                    session.status = "idle"
+                    session.status = "completed"
                     _save_session(session_id, session.model_dump(mode="json"))
                     return
 
