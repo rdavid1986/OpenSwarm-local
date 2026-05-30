@@ -16,6 +16,7 @@ REQUIRED = {
     "SkillCore",
     "ModeCore",
     "ActionCore",
+    "ToolCore",
     "FileCore",
     "EvidenceCore",
     "TraceCore",
@@ -38,6 +39,7 @@ def test_registry_contains_required_subsystems():
     assert {item["subsystem_id"] for item in list_subsystem_identities()} == set(registry)
     assert get_subsystem_identity("SwarmCore")["description"] == "Multi-agent orchestration."
     assert get_subsystem_identity("ReasoningCore")["icon_id"] == "reasoning-core"
+    assert get_subsystem_identity("ToolCore")["icon_id"] == "tool-core"
     assert get_subsystem_identity("OutputCore")["icon_id"] == "output-core"
 
 
@@ -57,7 +59,7 @@ def test_subsystem_identity_for_trace_kind_maps_expected_kinds():
         "skill": "SkillCore",
         "mode": "ModeCore",
         "action": "ActionCore",
-        "tool": "ActionCore",
+        "tool": "ToolCore",
         "file": "FileCore",
         "diff": "FileCore",
         "workspace": "FileCore",
@@ -102,3 +104,13 @@ def test_apply_subsystem_identity_preserves_explicit_known_subsystem():
     assert updated["subsystem"] == "ReasoningCore"
     assert updated["icon_id"] == "reasoning-core"
     assert updated["metadata"]["color_token"] == "trace.reasoning"
+
+
+def test_apply_subsystem_identity_maps_tool_kind_to_toolcore():
+    item = {"kind": "tool", "title": "Tool call"}
+
+    updated = apply_subsystem_identity_to_trace_item(item)
+
+    assert updated["subsystem"] == "ToolCore"
+    assert updated["icon_id"] == "tool-core"
+    assert updated["metadata"]["color_token"] == "trace.tool"

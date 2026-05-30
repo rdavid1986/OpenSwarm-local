@@ -57,10 +57,18 @@ SUBSYSTEMS: dict[str, dict[str, str]] = {
     "ActionCore": {
         "subsystem_id": "ActionCore",
         "label": "ActionCore",
-        "description": "Executable tools and actions.",
+        "description": "Executable actions, pending actions and user-confirmed operations.",
         "icon_id": "action-core",
         "color_token": "trace.action",
         "accent_token": "trace.action.accent",
+    },
+    "ToolCore": {
+        "subsystem_id": "ToolCore",
+        "label": "ToolCore",
+        "description": "Tool calls, tool inputs, tool results and tool execution state.",
+        "icon_id": "tool-core",
+        "color_token": "trace.tool",
+        "accent_token": "trace.tool.accent",
     },
     "FileCore": {
         "subsystem_id": "FileCore",
@@ -168,7 +176,7 @@ _KIND_TO_SUBSYSTEM = {
     "skill": "SkillCore",
     "mode": "ModeCore",
     "action": "ActionCore",
-    "tool": "ActionCore",
+    "tool": "ToolCore",
     "file": "FileCore",
     "diff": "FileCore",
     "workspace": "FileCore",
