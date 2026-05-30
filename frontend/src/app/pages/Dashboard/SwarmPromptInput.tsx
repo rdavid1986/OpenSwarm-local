@@ -99,9 +99,10 @@ const SwarmPromptInput: React.FC<Props> = ({
         maxWidth: embedded ? '100%' : 860,
         mx: embedded ? 0 : 'auto',
         border: `1px solid ${c.border.subtle}`,
-        borderRadius: 1.25,
+        borderRadius: '16px',
         bgcolor: c.bg.surface,
         boxShadow: embedded ? 'none' : c.shadow.md,
+        transition: 'border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease',
       }}
     >
       <Box
@@ -132,8 +133,8 @@ const SwarmPromptInput: React.FC<Props> = ({
         />
       </Box>
 
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, px: 1, pb: 0.75 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0, flexWrap: 'wrap' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25, px: 1, pb: 0.75, pt: 0 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0, flexWrap: 'wrap' }}>
           <SwarmModePicker mode={mode} onChange={onModeChange} disabled={disabled || loading} />
           {selectedModel && (
             <ModelPicker
@@ -145,28 +146,30 @@ const SwarmPromptInput: React.FC<Props> = ({
           )}
           <Tooltip title="Select UI element todavía no está conectado para Swarm">
             <span>
-              <IconButton size="small" disabled sx={{ width: 28, height: 28 }}>
+              <IconButton size="small" disabled sx={{ width: 26, height: 26, p: 0.5 }}>
                 <AdsClickOutlinedIcon sx={{ fontSize: 16 }} />
               </IconButton>
             </span>
           </Tooltip>
           <Tooltip title="Attach file todavía no está conectado para Swarm">
             <span>
-              <IconButton size="small" disabled sx={{ width: 28, height: 28 }}>
+              <IconButton size="small" disabled sx={{ width: 26, height: 26, p: 0.5 }}>
                 <AttachFileIcon sx={{ fontSize: 16 }} />
               </IconButton>
             </span>
           </Tooltip>
           <Tooltip title="Voice chat coming soon">
             <span>
-              <IconButton size="small" disabled sx={{ width: 28, height: 28 }}>
+              <IconButton size="small" disabled sx={{ width: 26, height: 26, p: 0.5 }}>
                 <MicNoneIcon sx={{ fontSize: 16 }} />
               </IconButton>
             </span>
           </Tooltip>
         </Box>
 
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Box sx={{ flex: 1 }} />
+
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
           {contextEstimate && (
             <ContextRing
               used={contextEstimate.used}
@@ -186,8 +189,8 @@ const SwarmPromptInput: React.FC<Props> = ({
               bgcolor: c.accent.primary,
               color: c.text.inverse,
               p: 0.5,
-              width: 28,
-              height: 28,
+              width: 26,
+              height: 26,
               '&:hover': { bgcolor: c.accent.hover },
               '&.Mui-disabled': { bgcolor: c.bg.secondary, color: c.text.ghost },
             }}
