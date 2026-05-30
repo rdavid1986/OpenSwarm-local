@@ -37,11 +37,29 @@ def test_improvement_proposal_is_read_only_and_not_auto_apply():
     assert proposal["proposal_kind"] == "skill_improvement_proposal"
     assert proposal["candidate_id"] == candidate.candidate_id
     assert proposal["safe_to_auto_apply"] is False
-    assert proposal["can_generate_diff"] is False
+    assert proposal["can_generate_diff"] is True
     assert proposal["can_update_candidate"] is False
+    assert proposal["preview_diff"].startswith("--- current/SKILL.md")
+    assert "# OpenSwarm proposed improvements" in proposal["proposed_content"]
     assert proposal["requires_user_approval"] is True
     assert proposal["proposal_items"]
     assert candidate.model_dump(mode="json") == before
+
+
+def test_improvement_proposal_diff_preview_is_read_only():
+    candidate = _candidate("# Tiny Skill\n\nHelp with tasks using best practices.")
+    before = deepcopy(candidate.model_dump(mode="json"))
+
+    proposal = build_skill_candidate_improvement_proposal(candidate)
+
+    assert proposal["can_generate_diff"] is True
+    assert proposal["can_update_candidate"] is False
+    assert proposal["preview_diff"]
+    assert "--- current/SKILL.md" in proposal["preview_diff"]
+    assert "+++ proposed/SKILL.md" in proposal["preview_diff"]
+    assert "# OpenSwarm proposed improvements" in proposal["proposed_content"]
+    assert candidate.model_dump(mode="json") == before
+
 
 
 def test_improvement_proposal_groups_review_taxonomy_sources():

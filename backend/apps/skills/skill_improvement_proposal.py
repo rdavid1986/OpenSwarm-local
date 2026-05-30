@@ -7,6 +7,7 @@ activates tools, activates MCP, or performs web research.
 
 from __future__ import annotations
 
+from difflib import unified_diff
 from typing import Any
 
 from backend.apps.skills.models import SkillSpec, SkillSpecCandidate
@@ -34,11 +35,57 @@ def _proposal_item(source: str, item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _section_block(item: dict[str, Any]) -> str:
+    title = str(item.get("target_section") or item.get("title") or "Improvement").strip()
+    proposed_change = str(item.get("proposed_change") or "").strip()
+    rationale = str(item.get("rationale") or "").strip()
+    source = str(item.get("source") or "review").strip()
+    code = str(item.get("code") or "unknown").strip()
+
+    lines = [
+        f"## {title}",
+        "",
+        f"Source: {source}",
+        f"Code: {code}",
+    ]
+    if proposed_change:
+        lines.extend(["", proposed_change])
+    if rationale:
+        lines.extend(["", f"Rationale: {rationale}"])
+    return "\n".join(lines).strip()
+
+
+def _build_proposed_content(current_content: str, proposal_items: list[dict[str, Any]]) -> str:
+    base = str(current_content or "").rstrip()
+    if not proposal_items:
+        return base
+
+    blocks = [_section_block(item) for item in proposal_items]
+    appendix = "\n\n".join(block for block in blocks if block)
+    if not appendix:
+        return base
+
+    prefix = "\n\n" if base else ""
+    return f"{base}{prefix}# OpenSwarm proposed improvements\n\n{appendix}\n"
+
+
+def _build_preview_diff(current_content: str, proposed_content: str) -> str:
+    return "".join(
+        unified_diff(
+            str(current_content or "").splitlines(keepends=True),
+            str(proposed_content or "").splitlines(keepends=True),
+            fromfile="current/SKILL.md",
+            tofile="proposed/SKILL.md",
+        )
+    )
+
+
 def build_skill_improvement_proposal_from_review(
     review: dict[str, Any],
     *,
     candidate_id: str | None = None,
     skill_name: str = "",
+    current_content: str = "",
 ) -> dict[str, Any]:
     """Build a JSON-safe improvement proposal from an existing review."""
 
@@ -56,6 +103,8 @@ def build_skill_improvement_proposal_from_review(
 
     requires_web_research = any(item["source"] == "research_gap" for item in proposal_items)
     requires_user_approval = bool(proposal_items)
+    proposed_content = _build_proposed_content(current_content, proposal_items)
+    preview_diff = _build_preview_diff(current_content, proposed_content)
 
     return {
         "proposal_kind": PROPOSAL_KIND,
@@ -73,11 +122,13 @@ def build_skill_improvement_proposal_from_review(
         "requires_user_approval": requires_user_approval,
         "requires_web_research": requires_web_research,
         "safe_to_auto_apply": False,
-        "can_generate_diff": False,
+        "can_generate_diff": bool(preview_diff),
         "can_update_candidate": False,
+        "proposed_content": proposed_content,
+        "preview_diff": preview_diff,
         "next_step": (
-            "Generate a reviewable diff in a later phase after explicit approval."
-            if proposal_items
+            "Review the generated diff, then request candidate update in a later approval-gated phase."
+            if preview_diff
             else "No proposal action is needed."
         ),
         "guardrails": [
@@ -86,6 +137,7 @@ def build_skill_improvement_proposal_from_review(
             "It does not install or approve the skill.",
             "It does not activate tools, MCP, or permissions.",
             "It does not browse the web.",
+            "The diff preview is not applied automatically.",
         ],
     }
 
@@ -96,6 +148,7 @@ def build_skill_improvement_proposal(spec: SkillSpec) -> dict[str, Any]:
         review,
         candidate_id=None,
         skill_name=spec.name,
+        current_content=spec.content,
     )
 
 
@@ -105,4 +158,5 @@ def build_skill_candidate_improvement_proposal(candidate: SkillSpecCandidate) ->
         review,
         candidate_id=candidate.candidate_id,
         skill_name=candidate.skill_spec.name,
+        current_content=candidate.skill_spec.content,
     )
