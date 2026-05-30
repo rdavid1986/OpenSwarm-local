@@ -14,6 +14,7 @@ import MicNoneIcon from '@mui/icons-material/MicNone';
 import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import CommandPicker, { CommandPickerItem, getToolGroupIcon } from '@/app/components/CommandPicker';
+import ComposerContextPreview from '@/app/components/ComposerContextPreview';
 import { useElementSelection } from '@/app/components/ElementSelectionContext';
 import ModelPicker from '@/app/components/ModelPicker';
 import SwarmModePicker, { getSwarmModeOption } from './SwarmModePicker';
@@ -24,6 +25,7 @@ import type { ContextPath } from '@/app/components/DirectoryBrowser';
 import {
   createDisabledVoiceState,
   contextRefFromPath,
+  contextRefFromCatalog,
   selectionRefFromElement,
   toolRefFromNames,
   type UnifiedComposerState,
@@ -114,8 +116,9 @@ const SwarmPromptInput: React.FC<Props> = ({
   const fallbackOwnerIdRef = useRef(`swarm-composer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`);
   const composerOwnerId = ownerId || cardId || fallbackOwnerIdRef.current;
   const [contextPaths, setContextPaths] = useState<ContextPath[]>([]);
+  const [explicitContextRefs, setExplicitContextRefs] = useState<ReturnType<typeof contextRefFromCatalog>[]>([]);
   const [forcedTools, setForcedTools] = useState<Array<{ label: string; tools: string[]; icon?: React.ReactNode; iconKey?: string }>>([]);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [picker, setPicker] = useState<{ open: boolean; trigger: '@' | '/' | '#'; filter: string }>({ open: false, trigger: '@', filter: '' });
   const [isUploading, setIsUploading] = useState(false);
   const modeOption = getSwarmModeOption(mode);
   const selectedModel = model || modelLabel || '';
@@ -124,8 +127,11 @@ const SwarmPromptInput: React.FC<Props> = ({
   const submitDisabled = disabled || loading || (!value.trim() && !canContinue);
   const placeholder = placeholderOverride || (customIntakeMode ? 'Escribí tu respuesta personalizada…' : modeOption.placeholder);
   const contextRefs = useMemo(() => (
-    contextPaths.map((cp) => contextRefFromPath(cp.path, cp.type === 'directory' ? 'directory' : 'file', 'upload'))
-  ), [contextPaths]);
+    [
+      ...contextPaths.map((cp) => contextRefFromPath(cp.path, cp.type === 'directory' ? 'directory' : 'file', 'upload')),
+      ...explicitContextRefs,
+    ]
+  ), [contextPaths, explicitContextRefs]);
   const selectedToolRefs = useMemo<UnifiedComposerToolRef[]>(() => (
     forcedTools.map((tool) => toolRefFromNames(tool.label, tool.tools, tool.iconKey))
   ), [forcedTools]);
@@ -175,13 +181,28 @@ const SwarmPromptInput: React.FC<Props> = ({
   }, []);
 
   const handlePickerSelect = useCallback((item: CommandPickerItem) => {
-    if (item.type === 'context' && item.command === 'file') {
+    if (item.enabled === false) return;
+    if (item.type === 'slash' && item.actionKind === 'set_mode' && typeof item.payload?.mode === 'string') {
+      onModeChange(item.payload.mode as SwarmMode);
+      onChange(value.replace(/^\/\S*\s*/, ''));
+    } else if (item.type === 'slash' && item.actionKind === 'open_context_picker') {
+      onChange(value.replace(/^\/\S*\s*/, ''));
+      setPicker({ open: true, trigger: '#', filter: '' });
+      return;
+    } else if (item.type === 'slash' && item.actionKind === 'open_tools_picker') {
+      onChange(value.replace(/^\/\S*\s*/, ''));
+      setPicker({ open: true, trigger: '@', filter: '' });
+      return;
+    } else if ((item.type === 'slash' || item.type === 'context') && item.actionKind === 'open_file_picker') {
+      if (item.type === 'slash') onChange(value.replace(/^\/\S*\s*/, ''));
       fileInputRef.current?.click();
+    } else if (item.type === 'context' && item.actionKind === 'add_context_ref' && item.contextRef) {
+      setExplicitContextRefs((prev) => prev.some((ref) => ref.id === item.contextRef!.id) ? prev : [...prev, item.contextRef!]);
     } else if (item.type === 'context' && item.toolNames?.length) {
       setForcedTools((prev) => [...prev, { label: item.name, tools: item.toolNames!, icon: item.icon, iconKey: item.iconKey }]);
     }
-    setPickerOpen(false);
-  }, []);
+    setPicker((p) => ({ ...p, open: false }));
+  }, [onChange, onModeChange, value]);
 
   const buildSubmitPayload = useCallback((): UnifiedComposerSubmitPayload => ({
     source_surface: 'swarm',
@@ -202,11 +223,29 @@ const SwarmPromptInput: React.FC<Props> = ({
 
   const handleSubmit = useCallback(() => {
     if (submitDisabled) return;
+    const slash = value.trim().match(/^\/(\S+)/);
+    if (slash) {
+      const command = slash[1].toLowerCase();
+      const modeByCommand: Record<string, SwarmMode> = { ask: 'ask', plan: 'plan', app: 'app_builder', debug: 'debug', skill: 'skill_builder' };
+      if (modeByCommand[command]) {
+        onModeChange(modeByCommand[command]);
+        onChange(value.replace(/^\/\S*\s*/, ''));
+      } else if (command === 'file') {
+        fileInputRef.current?.click();
+        onChange(value.replace(/^\/\S*\s*/, ''));
+      } else if (command === 'context') {
+        setPicker({ open: true, trigger: '#', filter: '' });
+      } else if (command === 'tool') {
+        setPicker({ open: true, trigger: '@', filter: '' });
+      }
+      return;
+    }
     onSend(buildSubmitPayload());
     setContextPaths([]);
+    setExplicitContextRefs([]);
     setForcedTools([]);
     elementSelection?.clearOwnerElements(composerOwnerId);
-  }, [buildSubmitPayload, composerOwnerId, elementSelection, onSend, submitDisabled]);
+  }, [buildSubmitPayload, composerOwnerId, elementSelection, onChange, onModeChange, onSend, submitDisabled, value]);
 
   const isSelectingForThisSwarm = Boolean(elementSelection?.selectMode && elementSelection.activeOwnerId === composerOwnerId);
 
@@ -225,7 +264,7 @@ const SwarmPromptInput: React.FC<Props> = ({
       data-composer-surface={unifiedComposerState.source_surface}
       data-composer-owner-id={unifiedComposerState.owner_id}
     >
-      <CommandPicker trigger="@" filter="" visible={pickerOpen} onSelect={handlePickerSelect} onClose={() => setPickerOpen(false)} />
+      <CommandPicker trigger={picker.trigger} filter={picker.filter} visible={picker.open} surface="swarm" onSelect={handlePickerSelect} onClose={() => setPicker((p) => ({ ...p, open: false }))} />
       <Box onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} sx={{ px: 1.5, pt: 1.25, pb: 0.25 }}>
         <InputBase
           multiline
@@ -235,7 +274,12 @@ const SwarmPromptInput: React.FC<Props> = ({
           inputRef={inputRef}
           autoFocus={autoFocus}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value;
+            onChange(next);
+            const match = next.match(/(?:^|\s)([\/#])([^\s]*)$/);
+            if (match) setPicker({ open: true, trigger: match[1] as '/' | '#', filter: match[2] || '' });
+          }}
           onKeyDownCapture={(e) => {
             e.stopPropagation();
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -297,7 +341,7 @@ const SwarmPromptInput: React.FC<Props> = ({
           </Tooltip>
           <Tooltip title="Tools/actions selection only; no execution or MCP activation">
             <span>
-              <IconButton size="small" disabled={disabled || loading} onClick={() => setPickerOpen((open) => !open)} sx={{ width: 26, height: 26, p: 0.5 }}>
+              <IconButton size="small" disabled={disabled || loading} onClick={() => setPicker((p) => ({ open: !(p.open && p.trigger === '@'), trigger: '@', filter: '' }))} sx={{ width: 26, height: 26, p: 0.5 }}>
                 <TuneOutlinedIcon sx={{ fontSize: 16 }} />
               </IconButton>
             </span>
@@ -348,10 +392,15 @@ const SwarmPromptInput: React.FC<Props> = ({
         </Box>
       </Box>
 
+      <ComposerContextPreview state={unifiedComposerState} compact />
+
       {(contextRefs.length > 0 || selectedToolRefs.length > 0 || selectionRefs.length > 0) && (
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, px: 1.5, pb: 0.75 }}>
           {contextRefs.map((ref, idx) => (
-            <Chip key={`ctx-${ref.id}-${idx}`} size="small" icon={<AttachFileIcon sx={{ fontSize: 14 }} />} label={ref.label} onDelete={() => setContextPaths((prev) => prev.filter((_, i) => i !== idx))} sx={{ height: 24, fontSize: '0.7rem', color: c.accent.primary, bgcolor: `${c.accent.primary}12`, fontFamily: c.font.mono }} />
+            <Chip key={`ctx-${ref.id}-${idx}`} size="small" icon={<AttachFileIcon sx={{ fontSize: 14 }} />} label={ref.kind === 'file' ? ref.label : `#${ref.kind}:${ref.label}`} onDelete={() => {
+              if (ref.source === 'catalog') setExplicitContextRefs((prev) => prev.filter((ctx) => ctx.id !== ref.id));
+              else setContextPaths((prev) => prev.filter((_, i) => i !== idx));
+            }} sx={{ height: 24, fontSize: '0.7rem', color: c.accent.primary, bgcolor: `${c.accent.primary}12`, fontFamily: c.font.mono }} />
           ))}
           {selectedToolRefs.map((tool, idx) => (
             <Chip key={`tool-${tool.id}-${idx}`} size="small" icon={<>{getToolGroupIcon(tool.icon_key || tool.label, 14)}</>} label={`@${tool.label.toLowerCase()}`} onDelete={() => setForcedTools((prev) => prev.filter((_, i) => i !== idx))} sx={{ height: 24, fontSize: '0.7rem', color: c.status.info, bgcolor: `${c.status.info}15`, fontFamily: c.font.mono }} />
@@ -364,6 +413,7 @@ const SwarmPromptInput: React.FC<Props> = ({
               size="small"
               onClick={() => {
                 setContextPaths([]);
+                setExplicitContextRefs([]);
                 setForcedTools([]);
                 elementSelection?.clearOwnerElements(composerOwnerId);
               }}

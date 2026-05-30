@@ -136,7 +136,7 @@ export function serializeEditorContent(editor: HTMLElement, skills: Record<strin
 
 export interface TriggerState {
   visible: boolean;
-  trigger: '/' | '@';
+  trigger: '/' | '@' | '#';
   filter: string;
   triggerNode: Text | null;
   triggerOffset: number;
@@ -162,14 +162,14 @@ export function detectEditorTrigger(): TriggerState | null {
   const before = text.slice(0, offset);
 
   let triggerIdx = -1;
-  let triggerChar: '/' | '@' | null = null;
+  let triggerChar: '/' | '@' | '#' | null = null;
   for (let i = before.length - 1; i >= 0; i--) {
     const ch = before[i];
     if (ch === ' ' || ch === '\n') break;
-    if (ch === '@') {
+    if (ch === '@' || ch === '#') {
       if (i === 0 || before[i - 1] === ' ' || before[i - 1] === '\n') {
         triggerIdx = i;
-        triggerChar = '@';
+        triggerChar = ch;
       }
       break;
     }

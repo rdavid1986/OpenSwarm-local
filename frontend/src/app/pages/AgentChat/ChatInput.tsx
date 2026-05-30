@@ -29,17 +29,21 @@ import CircularProgress from '@mui/material/CircularProgress';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import AdsClickIcon from '@mui/icons-material/AdsClick';
 import CommandPicker, { CommandPickerItem, getToolGroupIcon } from '@/app/components/CommandPicker';
+import ComposerContextPreview from '@/app/components/ComposerContextPreview';
 import ModelPicker from '@/app/components/ModelPicker';
 import { useElementSelection, SelectedElement } from '@/app/components/ElementSelectionContext';
 import { getClipboardCards, clearClipboard } from '@/shared/dashboardClipboard';
 import { getWebview } from '@/shared/browserRegistry';
 import { API_BASE, getAuthToken } from '@/shared/config';
+import { SHARED_SLASH_COMMANDS } from '@/shared/types/composerCatalog';
 import {
   createDisabledVoiceState,
+  contextRefFromCatalog,
   contextRefFromPath,
   selectionRefFromElement,
   toolRefFromNames,
   type UnifiedComposerState,
+  type UnifiedComposerContextRef,
 } from '@/shared/types/unifiedComposer';
 
 // Slash command parser (Phase 2). Returns true if the command was handled
@@ -335,6 +339,7 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
   const [isDragOver, setIsDragOver] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [contextPaths, setContextPaths] = useState<ContextPath[]>([]);
+  const [explicitContextRefs, setExplicitContextRefs] = useState<UnifiedComposerContextRef[]>([]);
   const [forcedTools, setForcedTools] = useState<ForcedToolGroup[]>([]);
   const [copiedPathIdx, setCopiedPathIdx] = useState<number | null>(null);
 
@@ -351,6 +356,7 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
         setHasContent(!!prompt);
       }
       if (newContextPaths) setContextPaths(newContextPaths);
+      setExplicitContextRefs([]);
       if (newForcedTools) setForcedTools(newForcedTools);
     },
   }), [contextPaths, forcedTools]);
@@ -466,6 +472,18 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
         setHasContent(false);
         return;
       }
+      const shared = SHARED_SLASH_COMMANDS.find((entry) => `/${entry.command}` === cmd);
+      if (shared) {
+        if (shared.enabled && shared.action_kind === 'set_mode' && typeof shared.payload?.mode === 'string') {
+          onModeChange(shared.payload.mode);
+        }
+        if (shared.enabled && shared.action_kind === 'open_file_picker') generalFileInputRef.current?.click();
+        if (shared.enabled && shared.action_kind === 'open_context_picker') window.dispatchEvent(new CustomEvent('openswarm:context-drawer', { detail: { sessionId, open: true } }));
+        editor.innerHTML = '';
+        _draftStore.delete(ownerId);
+        setHasContent(false);
+        return;
+      }
     }
 
     const selectedEls = elementSelection?.elementsByOwner?.[ownerId] ?? [];
@@ -547,11 +565,12 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
     _draftStore.delete(ownerId);
     setImages([]);
     setContextPaths([]);
+    setExplicitContextRefs([]);
     setForcedTools([]);
     setAttachedSkills({});
     setHasContent(false);
     elementSelection?.clearOwnerElements(ownerId);
-  }, [disabled, images, contextPaths, forcedTools, onSend, elementSelection, ownerId]);
+  }, [disabled, images, contextPaths, forcedTools, onSend, elementSelection, ownerId, onModeChange, sessionId]);
 
   const detectTrigger = useCallback(() => {
     const result = detectEditorTrigger();
@@ -600,7 +619,21 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
       if (sel) { sel.removeAllRanges(); sel.addRange(range); }
     }
 
-    if (item.type === 'skill') {
+    if (item.enabled === false) return;
+
+    if (item.type === 'slash') {
+      if (item.actionKind === 'set_mode' && typeof item.payload?.mode === 'string') {
+        onModeChange(item.payload.mode);
+      } else if (item.actionKind === 'open_file_picker') {
+        generalFileInputRef.current?.click();
+      } else if (item.actionKind === 'open_tools_picker') {
+        setPicker((p) => ({ ...p, visible: true, trigger: '@', filter: '' }));
+        return;
+      } else if (item.actionKind === 'open_context_picker') {
+        setPicker((p) => ({ ...p, visible: true, trigger: '#', filter: '' }));
+        return;
+      }
+    } else if (item.type === 'skill') {
       const skill = skills[item.id];
       if (!skill) return;
       if (editor.querySelector(`[${SKILL_PILL_ATTR}="${skill.id}"]`)) return;
@@ -633,7 +666,9 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
     } else if (item.type === 'mode') {
       onModeChange(item.id);
     } else if (item.type === 'context') {
-      if (item.command === 'file') {
+      if (item.actionKind === 'add_context_ref' && item.contextRef) {
+        setExplicitContextRefs((prev) => prev.some((ref) => ref.id === item.contextRef!.id) ? prev : [...prev, item.contextRef!]);
+      } else if (item.command === 'file' || item.actionKind === 'open_file_picker') {
         generalFileInputRef.current?.click();
       } else if (item.toolNames && item.toolNames.length > 0) {
         setForcedTools((prev) => [...prev, { label: item.name, tools: item.toolNames!, icon: item.icon, iconKey: item.iconKey }]);
@@ -786,8 +821,16 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
   };
 
   const selectedElements = elementSelection?.elementsByOwner?.[ownerId] ?? [];
-  const hasAttachments = images.length > 0 || contextPaths.length > 0 || forcedTools.length > 0 || selectedElements.length > 0;
+  const hasAttachments = images.length > 0 || contextPaths.length > 0 || explicitContextRefs.length > 0 || forcedTools.length > 0 || selectedElements.length > 0;
   const voiceState = useMemo(() => createDisabledVoiceState(), []);
+  const attachedSkillRefs = useMemo(() => (
+    Object.values(attachedSkills).map((skill) => contextRefFromCatalog(`skill:${skill.id}`, skill.name, 'skill', { skill_id: skill.id }))
+  ), [attachedSkills]);
+  const selectedBrowserRefs = useMemo(() => (
+    selectedElements
+      .filter((el) => el.semanticType === 'browser-card' && el.semanticData?.selectId)
+      .map((el) => contextRefFromCatalog(`browser:${el.semanticData!.selectId}`, el.semanticLabel || String(el.semanticData!.selectId), 'browser', { browser_id: el.semanticData!.selectId }))
+  ), [selectedElements]);
   const unifiedComposerState: UnifiedComposerState = useMemo(() => ({
     source_surface: 'agent',
     owner_id: ownerId,
@@ -800,7 +843,12 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
     disabled_reasons: disabled ? [{ code: 'running', message: 'Composer is disabled by the current session state.' }] : [],
     tools_available: [],
     tools_selected: forcedTools.map((tool) => toolRefFromNames(tool.label, tool.tools, tool.iconKey)),
-    context_refs: contextPaths.map((cp) => contextRefFromPath(cp.path, cp.type === 'directory' ? 'directory' : 'file', 'existing')),
+    context_refs: [
+      ...contextPaths.map((cp) => contextRefFromPath(cp.path, cp.type === 'directory' ? 'directory' : 'file', 'existing')),
+      ...explicitContextRefs,
+      ...attachedSkillRefs,
+      ...selectedBrowserRefs,
+    ],
     attachment_refs: contextPaths.map((cp) => ({ ...contextRefFromPath(cp.path, cp.type === 'directory' ? 'directory' : 'file', 'existing'), source: 'existing' as const })),
     selected_ui_elements: selectedElements.map((el) => selectionRefFromElement(el, ownerId)),
     voice: voiceState,
@@ -809,7 +857,7 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
     pending_action_capability: 'available',
     evidence_refs: [],
     trace_refs: [],
-  }), [contextPaths, disabled, forcedTools, hasContent, isRunning, mode, model, onStop, ownerId, selectedElements, sessionId, voiceState]);
+  }), [attachedSkillRefs, contextPaths, disabled, explicitContextRefs, forcedTools, hasContent, isRunning, mode, model, onStop, ownerId, selectedBrowserRefs, selectedElements, sessionId, voiceState]);
 
   return (
     <Box
@@ -882,6 +930,7 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
         onSelect={handlePickerSelect}
         onClose={() => setPicker((p) => ({ ...p, visible: false }))}
         visible={picker.visible}
+        surface="agent"
       />
 
       {images.length > 0 && (
@@ -998,8 +1047,31 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
         </Box>
       )}
 
-      {forcedTools.length > 0 && (
+      {explicitContextRefs.length > 0 && (
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, px: 1.5, pt: (images.length > 0 || contextPaths.length > 0) ? 0.25 : 1, pb: 0 }}>
+          {explicitContextRefs.map((ref) => (
+            <Chip
+              key={ref.id}
+              icon={<InsertDriveFileOutlinedIcon sx={{ fontSize: 14 }} />}
+              label={`#${ref.kind}:${ref.label}`}
+              size="small"
+              onDelete={() => setExplicitContextRefs((prev) => prev.filter((ctx) => ctx.id !== ref.id))}
+              sx={{
+                bgcolor: `${c.accent.primary}12`,
+                color: c.accent.primary,
+                fontSize: '0.72rem',
+                fontFamily: c.font.mono,
+                height: 26,
+                maxWidth: 220,
+                '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' },
+              }}
+            />
+          ))}
+        </Box>
+      )}
+
+      {forcedTools.length > 0 && (
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, px: 1.5, pt: (images.length > 0 || contextPaths.length > 0 || explicitContextRefs.length > 0) ? 0.25 : 1, pb: 0 }}>
           {forcedTools.map((ft, idx) => (
             <Chip
               key={`ft-${ft.label}-${idx}`}
@@ -1083,6 +1155,8 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
         </Box>
       )}
 
+      <ComposerContextPreview state={unifiedComposerState} compact />
+
       <Box sx={{ px: 1.5, pt: hasAttachments ? 0.5 : 1.25, pb: 0.25, position: 'relative' }}>
         <div
           ref={editorRef}
@@ -1130,7 +1204,7 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
               userSelect: 'none',
             }}
           >
-            {disabled ? 'Agent is working...' : autoRunMode ? 'Describe what data to generate…' : isRunning ? (queueLength > 0 ? `${queueLength} queued — type another or wait…` : 'Agent is working — messages will queue…') : `${modeConf.label}, @ for context, / for commands`}
+            {disabled ? 'Agent is working...' : autoRunMode ? 'Describe what data to generate…' : isRunning ? (queueLength > 0 ? `${queueLength} queued — type another or wait…` : 'Agent is working — messages will queue…') : `${modeConf.label}, / commands, # context, @ tools`}
           </div>
         )}
       </Box>

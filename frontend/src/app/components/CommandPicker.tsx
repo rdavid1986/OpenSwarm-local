@@ -18,6 +18,8 @@ import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import { fetchBuiltinTools, fetchTools } from '@/shared/state/toolsSlice';
 import { fetchOutputs } from '@/shared/state/outputsSlice';
 import { fetchSkills } from '@/shared/state/skillsSlice';
+import { SHARED_CONTEXT_COMMANDS, SHARED_SLASH_COMMANDS, commandForSurface, type ComposerActionKind } from '@/shared/types/composerCatalog';
+import { contextRefFromCatalog, type UnifiedComposerContextRef, type UnifiedComposerSurface } from '@/shared/types/unifiedComposer';
 
 const GoogleIcon: React.FC<{ sx?: object }> = ({ sx }) => (
   <SvgIcon sx={sx} viewBox="0 0 24 24">
@@ -49,7 +51,7 @@ export function getToolGroupIcon(groupName: string, size: number = 15): React.Re
 
 export interface CommandPickerItem {
   id: string;
-  type: 'skill' | 'mode' | 'context';
+  type: 'skill' | 'mode' | 'context' | 'slash';
   category: string;
   name: string;
   description: string;
@@ -57,14 +59,20 @@ export interface CommandPickerItem {
   icon: React.ReactNode;
   toolNames?: string[];
   iconKey?: string;
+  enabled?: boolean;
+  disabledReason?: string;
+  actionKind?: ComposerActionKind;
+  payload?: Record<string, unknown>;
+  contextRef?: UnifiedComposerContextRef;
 }
 
 interface Props {
-  trigger: '/' | '@';
+  trigger: '/' | '@' | '#';
   filter: string;
   onSelect: (item: CommandPickerItem) => void;
   onClose: () => void;
   visible: boolean;
+  surface?: UnifiedComposerSurface;
 }
 
 const MODE_ICON_MAP: Record<string, React.ComponentType<{ sx?: object }>> = {
@@ -73,6 +81,21 @@ const MODE_ICON_MAP: Record<string, React.ComponentType<{ sx?: object }>> = {
   map: MapOutlinedIcon,
   category: CategoryOutlinedIcon,
   tune: TuneOutlinedIcon,
+};
+
+const COMMAND_ICON_MAP: Record<string, React.ComponentType<{ sx?: object }>> = {
+  ask: QuestionAnswerOutlinedIcon,
+  plan: MapOutlinedIcon,
+  app: ViewQuiltOutlinedIcon,
+  debug: TuneOutlinedIcon,
+  skill: PsychologyIcon,
+  context: InsertDriveFileOutlinedIcon,
+  file: InsertDriveFileOutlinedIcon,
+  folder: InsertDriveFileOutlinedIcon,
+  symbol: CategoryOutlinedIcon,
+  tool: BuildOutlinedIcon,
+  research: LanguageIcon,
+  output: ViewQuiltOutlinedIcon,
 };
 
 function highlightMatch(text: string, query: string, color: string): React.ReactNode {
@@ -88,7 +111,7 @@ function highlightMatch(text: string, query: string, color: string): React.React
   );
 }
 
-const CommandPicker: React.FC<Props> = ({ trigger, filter, onSelect, onClose, visible }) => {
+const CommandPicker: React.FC<Props> = ({ trigger, filter, onSelect, onClose, visible, surface }) => {
   const c = useClaudeTokens();
   const dispatch = useAppDispatch();
   const skills = useAppSelector((s) => s.skills.items);
@@ -115,6 +138,25 @@ const CommandPicker: React.FC<Props> = ({ trigger, filter, onSelect, onClose, vi
     let all: CommandPickerItem[] = [];
 
     if (trigger === '/') {
+      const slashItems: CommandPickerItem[] = SHARED_SLASH_COMMANDS
+        .filter((cmd) => commandForSurface(cmd, surface))
+        .map((cmd) => {
+          const IconComp = COMMAND_ICON_MAP[cmd.command] || BuildOutlinedIcon;
+          return {
+            id: cmd.id,
+            type: 'slash' as const,
+            category: cmd.category,
+            name: cmd.label,
+            description: cmd.enabled ? cmd.description : `${cmd.description} (${cmd.disabled_reason?.message || 'disabled'})`,
+            command: cmd.command,
+            icon: <IconComp sx={{ fontSize: 15 }} />,
+            enabled: cmd.enabled,
+            disabledReason: cmd.disabled_reason?.message,
+            actionKind: cmd.action_kind,
+            payload: cmd.payload,
+          };
+        });
+
       const skillItems: CommandPickerItem[] = Object.values(skills).map((s) => ({
         id: s.id,
         type: 'skill' as const,
@@ -138,7 +180,53 @@ const CommandPicker: React.FC<Props> = ({ trigger, filter, onSelect, onClose, vi
         };
       });
 
-      all = [...skillItems, ...modeItems];
+      all = [...slashItems, ...skillItems, ...modeItems];
+    } else if (trigger === '#') {
+      const staticItems: CommandPickerItem[] = SHARED_CONTEXT_COMMANDS
+        .filter((cmd) => commandForSurface(cmd, surface))
+        .map((cmd) => {
+          const IconComp = COMMAND_ICON_MAP[cmd.command] || InsertDriveFileOutlinedIcon;
+          return {
+            id: cmd.id,
+            type: 'context' as const,
+            category: cmd.category,
+            name: cmd.label,
+            description: cmd.enabled ? cmd.description : `${cmd.description} (${cmd.disabled_reason?.message || 'disabled'})`,
+            command: cmd.command,
+            icon: <IconComp sx={{ fontSize: 15 }} />,
+            enabled: cmd.enabled,
+            disabledReason: cmd.disabled_reason?.message,
+            actionKind: cmd.action_kind,
+            payload: cmd.payload,
+          };
+        });
+      const outputRefs: CommandPickerItem[] = Object.values(outputItems)
+        .filter((out) => out.permission !== 'deny')
+        .map((out) => ({
+          id: `ctx-output-${out.id}`,
+          type: 'context' as const,
+          category: 'Outputs',
+          name: out.name,
+          description: out.description || 'Attach output reference',
+          command: `output/${out.name.toLowerCase().replace(/\s+/g, '-')}`,
+          icon: <ViewQuiltOutlinedIcon sx={{ fontSize: 15 }} />,
+          enabled: true,
+          actionKind: 'add_context_ref' as const,
+          contextRef: contextRefFromCatalog(`output:${out.id}`, out.name, 'output', { output_id: out.id }),
+        }));
+      const skillRefs: CommandPickerItem[] = Object.values(skills).map((s) => ({
+        id: `ctx-skill-${s.id}`,
+        type: 'context' as const,
+        category: 'Skills',
+        name: s.name,
+        description: s.description || 'Attach skill reference',
+        command: `skill/${s.command || s.id}`,
+        icon: <PsychologyIcon sx={{ fontSize: 15 }} />,
+        enabled: true,
+        actionKind: 'add_context_ref' as const,
+        contextRef: contextRefFromCatalog(`skill:${s.id}`, s.name, 'skill', { skill_id: s.id }),
+      }));
+      all = [...staticItems, ...outputRefs, ...skillRefs];
     } else {
       const atItems: CommandPickerItem[] = [
         {
@@ -279,7 +367,7 @@ const CommandPicker: React.FC<Props> = ({ trigger, filter, onSelect, onClose, vi
         item.command.toLowerCase().includes(lower) ||
         item.description.toLowerCase().includes(lower),
     );
-  }, [trigger, skills, modesMap, builtinTools, customTools, outputItems, filter]);
+  }, [trigger, skills, modesMap, builtinTools, customTools, outputItems, filter, surface]);
 
   const flatItems = useMemo(() => {
     const result: { item: CommandPickerItem; isGroupStart: boolean; category: string }[] = [];
@@ -294,6 +382,7 @@ const CommandPicker: React.FC<Props> = ({ trigger, filter, onSelect, onClose, vi
   const getIconColor = (item: CommandPickerItem): string => {
     switch (item.type) {
       case 'skill': return c.status.success;
+      case 'slash': return item.enabled === false ? c.text.ghost : c.accent.primary;
       case 'mode': {
         const mode = modesMap[item.id];
         return mode?.color || c.accent.primary;
@@ -329,7 +418,7 @@ const CommandPicker: React.FC<Props> = ({ trigger, filter, onSelect, onClose, vi
         case 'Tab':
           if (items[selectedIndex]) {
             e.preventDefault();
-            onSelect(items[selectedIndex]);
+            if (items[selectedIndex].enabled !== false) onSelect(items[selectedIndex]);
           }
           break;
         case 'Escape':
@@ -397,7 +486,10 @@ const CommandPicker: React.FC<Props> = ({ trigger, filter, onSelect, onClose, vi
             )}
             <Box
               data-picker-idx={idx}
-              onClick={() => onSelect(item)}
+              onClick={() => {
+                if (item.enabled === false) return;
+                onSelect(item);
+              }}
               onMouseEnter={() => setSelectedIndex(idx)}
               sx={{
                 display: 'flex',
@@ -407,9 +499,10 @@ const CommandPicker: React.FC<Props> = ({ trigger, filter, onSelect, onClose, vi
                 py: 0.5,
                 mx: 0.5,
                 borderRadius: '8px',
-                cursor: 'pointer',
+                cursor: item.enabled === false ? 'not-allowed' : 'pointer',
+                opacity: item.enabled === false ? 0.55 : 1,
                 bgcolor: idx === selectedIndex ? `${c.accent.primary}0a` : 'transparent',
-                '&:hover': { bgcolor: `${c.accent.primary}0a` },
+                '&:hover': { bgcolor: item.enabled === false ? 'transparent' : `${c.accent.primary}0a` },
                 transition: 'background-color 60ms ease',
               }}
             >
@@ -454,7 +547,7 @@ const CommandPicker: React.FC<Props> = ({ trigger, filter, onSelect, onClose, vi
                   lineHeight: 1.3,
                 }}
               >
-                {item.description}
+                {item.disabledReason || item.description}
               </Typography>
             </Box>
           </React.Fragment>

@@ -14,11 +14,12 @@ export interface UnifiedComposerDisabledReason {
 
 export interface UnifiedComposerContextRef {
   id: string;
-  kind: 'file' | 'directory' | 'context_ref' | 'image';
+  kind: 'file' | 'directory' | 'context_ref' | 'image' | 'symbol' | 'workspace' | 'output' | 'candidate' | 'skill' | 'memory' | 'terminal' | 'error' | 'browser' | 'evidence';
   path?: string;
   label: string;
-  source: 'upload' | 'directory_browser' | 'selection' | 'existing';
+  source: 'upload' | 'directory_browser' | 'selection' | 'existing' | 'catalog' | 'redux' | 'element_selection';
   metadata?: Record<string, unknown>;
+  disabled_reason?: UnifiedComposerDisabledReason;
 }
 
 export interface UnifiedComposerToolRef {
@@ -87,6 +88,7 @@ export interface UnifiedComposerState {
   pending_action_capability: 'available' | 'disabled' | 'not_supported';
   evidence_refs: string[];
   trace_refs: string[];
+  warnings?: string[];
 }
 
 export interface UnifiedComposerSubmitPayload {
@@ -104,6 +106,7 @@ export interface UnifiedComposerSubmitPayload {
   voice: UnifiedComposerVoiceState;
   evidence_refs: string[];
   trace_refs: string[];
+  warnings?: string[];
 }
 
 export const DISABLED_VOICE_NO_BACKEND: UnifiedComposerDisabledReason = {
@@ -150,6 +153,21 @@ export function contextRefFromPath(path: string, kind: 'file' | 'directory' = 'f
     path: cleanPath,
     label: parts.slice(-2).join('/') || cleanPath || 'context',
     source,
+  };
+}
+
+export function contextRefFromCatalog(
+  id: string,
+  label: string,
+  kind: UnifiedComposerContextRef['kind'] = 'context_ref',
+  metadata?: Record<string, unknown>,
+): UnifiedComposerContextRef {
+  return {
+    id,
+    kind,
+    label,
+    source: 'catalog',
+    metadata,
   };
 }
 
