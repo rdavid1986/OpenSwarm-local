@@ -33,11 +33,12 @@ const ComposerContextPreview: React.FC<Props> = ({ state, compact = false }) => 
     if (state.tools_selected.length) rows.push({ label: 'Tools', values: state.tools_selected.map((r) => r.label), color: c.status.info });
     const research = (state.research_sources || []).filter((src) => src.state === 'selected' || src.state === 'requires_approval');
     if (research.length) rows.push({ label: 'Research', values: research.map((src) => `${src.label}${src.state === 'requires_approval' ? ' · approval' : ''}`), color: c.status.warning });
+    if (state.edit_target) rows.push({ label: 'Edit', values: [`${state.edit_target.kind}:${state.edit_target.label}`], color: c.status.info });
     if (disabled.length) rows.push({ label: 'Disabled', values: disabled, color: c.text.tertiary });
     return rows;
   }, [c, state]);
 
-  const totalRefs = state.context_refs.length + state.attachment_refs.length + state.selected_ui_elements.length + state.tools_selected.length + (state.research_sources || []).filter((src) => src.state === 'selected' || src.state === 'requires_approval').length;
+  const totalRefs = state.context_refs.length + state.attachment_refs.length + state.selected_ui_elements.length + state.tools_selected.length + (state.research_sources || []).filter((src) => src.state === 'selected' || src.state === 'requires_approval').length + (state.edit_target ? 1 : 0);
   if (!totalRefs && !state.disabled_reasons.length && !state.voice.disabled_reason && !state.mode && !state.model) return null;
 
   return (

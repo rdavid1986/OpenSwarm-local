@@ -150,6 +150,20 @@ const SwarmPromptInput: React.FC<Props> = ({
     browserRefIds: contextRefs.filter((ref) => ref.kind === 'browser').map((ref) => ref.id),
     evidenceRefIds: contextRefs.filter((ref) => ref.kind === 'evidence').map((ref) => ref.id),
   }).map((source) => researchOverrides[source.id] ? { ...source, state: researchOverrides[source.id] } : source), [attachmentRefs, contextRefs, researchOverrides]);
+  const editTarget = useMemo(() => {
+    const ref = explicitContextRefs.find((item) => item.kind === 'output' || item.kind === 'candidate');
+    if (!ref) return null;
+    return {
+      id: `edit:${ref.id}`,
+      kind: ref.kind === 'candidate' ? 'candidate' as const : 'output' as const,
+      label: ref.label,
+      source: 'context_ref' as const,
+      output_id: ref.metadata?.output_id as string | undefined,
+      candidate_iteration_id: ref.metadata?.candidate_iteration_id as string | undefined,
+      metadata: ref.metadata,
+      disabled_reason: { code: 'unsupported' as const, message: 'Targeted edit is prepared; Swarm applies changes through candidate/refinement flow only.' },
+    };
+  }, [explicitContextRefs]);
   const unifiedComposerState: UnifiedComposerState = useMemo(() => ({
     source_surface: 'swarm',
     owner_id: composerOwnerId,
@@ -172,7 +186,8 @@ const SwarmPromptInput: React.FC<Props> = ({
     evidence_refs: [],
     trace_refs: [],
     research_sources: showResearchSources ? researchSources : [],
-  }), [attachmentRefs, cardId, composerOwnerId, contextRefs, disabled, loading, mode, researchSources, selectedModel, selectedToolRefs, selectionRefs, showResearchSources, submitDisabled, value, voiceState]);
+    edit_target: editTarget,
+  }), [attachmentRefs, cardId, composerOwnerId, contextRefs, disabled, editTarget, loading, mode, researchSources, selectedModel, selectedToolRefs, selectionRefs, showResearchSources, submitDisabled, value, voiceState]);
 
   const uploadAndAttachFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
@@ -235,7 +250,8 @@ const SwarmPromptInput: React.FC<Props> = ({
     evidence_refs: [],
     trace_refs: [],
     research_sources: showResearchSources ? researchSources : [],
-  }), [attachmentRefs, cardId, composerOwnerId, contextRefs, mode, researchSources, selectedModel, selectedToolRefs, selectionRefs, showResearchSources, value, voiceState]);
+    edit_target: editTarget,
+  }), [attachmentRefs, cardId, composerOwnerId, contextRefs, editTarget, mode, researchSources, selectedModel, selectedToolRefs, selectionRefs, showResearchSources, value, voiceState]);
 
   const handleSubmit = useCallback(() => {
     if (submitDisabled) return;

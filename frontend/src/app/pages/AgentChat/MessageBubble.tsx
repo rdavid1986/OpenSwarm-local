@@ -27,6 +27,7 @@ import ViewBubble from './ViewBubble';
 import PlanPicker from '@/app/components/PlanPicker';
 import { ErrorSlime } from '@/app/components/ErrorSlime';
 import SourceEvidencePanel from '@/app/components/SourceEvidencePanel';
+import ChangeReviewPanel from '@/app/components/ChangeReviewPanel';
 
 const streamingCursorKeyframes = `
 @keyframes blink-cursor {
@@ -1069,6 +1070,7 @@ const MessageBubble: React.FC<Props> = React.memo(({ message, editing = false, o
                 {renderUserTextWithPills(displayText, c)}
               </Typography>
               <AttachedContextSection elements={selectedElements} message={message} c={c} />
+              <ChangeReviewPanel source={message} compact />
               <SourceEvidencePanel message={message} compact />
             </Box>
           )
@@ -1221,6 +1223,7 @@ const MessageBubble: React.FC<Props> = React.memo(({ message, editing = false, o
               </>
             )}
             <SourceEvidencePanel message={message} compact />
+            <ChangeReviewPanel source={message} compact />
           </Box>
         )}
         {messageTime && !editing && (

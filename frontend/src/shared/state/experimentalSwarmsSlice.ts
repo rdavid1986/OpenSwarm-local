@@ -176,6 +176,7 @@ export const chatExperimentalSwarm = createAsyncThunk(
         evidence_refs: composerPayload.evidence_refs,
         trace_refs: composerPayload.trace_refs,
         research_sources: composerPayload.research_sources || [],
+        edit_target: composerPayload.edit_target || null,
       };
     }
     const res = await fetch(`${SWARMS_API}/${swarmId}/experimental/chat`, {

@@ -21,6 +21,7 @@ import ViewPreview, { ViewPreviewHandle } from '@/app/pages/Views/ViewPreview';
 import { getDefault } from '@/app/pages/Views/InputSchemaForm';
 import { useOverlayScrollPassthrough } from './useOverlayScrollPassthrough';
 import OutputDiffPanel, { OutputDiffRow } from './OutputDiffPanel';
+import EditableOutputSurface from '@/app/components/EditableOutputSurface';
 
 type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 
@@ -1012,6 +1013,21 @@ const DashboardViewCard: React.FC<Props> = ({
           changedCount={changedDiffCount}
           onClose={() => setShowDiffPanel(false)}
           c={c}
+        />
+        <EditableOutputSurface
+          output={output}
+          previewMode={previewMode}
+          candidateIteration={candidateIteration}
+          changedCount={changedDiffCount}
+          actionLoading={Boolean(iterationActionLoading)}
+          onRefine={output.source_swarm_id ? () => onRefineOutput?.(output, selectedPreset) : undefined}
+          onCompare={compareCandidateIteration && compareCandidateServeUrl && `${output.id}::candidate::${compareCandidateIteration.iteration_id}` !== viewCardId ? () => {
+            const syntheticEvent = { stopPropagation: () => {} } as React.MouseEvent;
+            handleOpenCandidatePreview(syntheticEvent);
+          } : undefined}
+          onOpenDiff={candidateIteration ? () => setShowDiffPanel(true) : undefined}
+          onAccept={candidateIteration ? handleAcceptCandidate : undefined}
+          onDiscard={candidateIteration ? handleDiscardCandidate : undefined}
         />
 
         <Box

@@ -80,6 +80,7 @@ export function extractSourceEvidenceRefs(message: any): SourceEvidenceRef[] {
   pushMany(asArray(message?.output_refs), 'output');
   pushMany(asArray(message?.tool_refs), 'tool');
   pushMany(asArray(message?.evidence_refs || message?.evidenceRefs), 'evidence');
+  pushMany(asArray(message?.validation_refs || message?.validationRefs), 'test');
 
   const trace = message?.process_trace_turn || message?.process_trace_turn_container || message?.trace_turn || message?.turnTrace;
   const items = asArray(trace?.items || message?.traceItems || message?.process_trace_items);

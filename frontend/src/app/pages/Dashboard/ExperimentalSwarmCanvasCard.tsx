@@ -42,6 +42,7 @@ import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
 import type { UnifiedComposerSubmitPayload } from '@/shared/types/unifiedComposer';
 import { API_BASE } from '@/shared/config';
 import SourceEvidencePanel from '@/app/components/SourceEvidencePanel';
+import ChangeReviewPanel from '@/app/components/ChangeReviewPanel';
 import ProcessTraceDropdown, { ProcessTraceItem, ProcessTraceTurnDropdown, normalizeProcessTraceTurnContainer } from './ProcessTraceDropdown';
 import { buildCardVisualTokens } from './cardVisualTokens';
 
@@ -2323,6 +2324,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                     >
                       {isLatestChatMessage ? renderAnimatedText(body) : body}
                     </Typography>
+                    <ChangeReviewPanel source={{ ...message, refinement_execution_trace: refinementExecutionTrace, targetOutputId: metadata.targetOutputId }} compact />
                     <SourceEvidencePanel message={message} compact />
                     {shouldShowIntakeTrace && (
                       <Box

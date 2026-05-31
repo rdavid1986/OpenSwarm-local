@@ -853,6 +853,20 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
       evidenceRefIds: explicitContextRefs.filter((ref) => ref.kind === 'evidence').map((ref) => ref.id),
     }).map((source) => researchOverrides[source.id] ? { ...source, state: researchOverrides[source.id] } : source);
   }, [attachedSkillRefs, contextPaths, explicitContextRefs, researchOverrides, selectedBrowserRefs]);
+  const editTarget = useMemo(() => {
+    const ref = explicitContextRefs.find((item) => item.kind === 'output' || item.kind === 'candidate');
+    if (!ref) return null;
+    return {
+      id: `edit:${ref.id}`,
+      kind: ref.kind === 'candidate' ? 'candidate' as const : 'output' as const,
+      label: ref.label,
+      source: 'context_ref' as const,
+      output_id: ref.metadata?.output_id as string | undefined,
+      candidate_iteration_id: ref.metadata?.candidate_iteration_id as string | undefined,
+      metadata: ref.metadata,
+      disabled_reason: { code: 'unsupported' as const, message: 'Targeted edit is prepared as a contract; AgentChat does not apply frontend patches directly.' },
+    };
+  }, [explicitContextRefs]);
   const unifiedComposerState: UnifiedComposerState = useMemo(() => ({
     source_surface: 'agent',
     owner_id: ownerId,
@@ -880,7 +894,8 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
     evidence_refs: [],
     trace_refs: [],
     research_sources: showResearchSources ? researchSources : [],
-  }), [attachedSkillRefs, contextPaths, disabled, explicitContextRefs, forcedTools, hasContent, isRunning, mode, model, onStop, ownerId, researchSources, selectedBrowserRefs, selectedElements, sessionId, showResearchSources, voiceState]);
+    edit_target: editTarget,
+  }), [attachedSkillRefs, contextPaths, disabled, editTarget, explicitContextRefs, forcedTools, hasContent, isRunning, mode, model, onStop, ownerId, researchSources, selectedBrowserRefs, selectedElements, sessionId, showResearchSources, voiceState]);
 
   return (
     <Box

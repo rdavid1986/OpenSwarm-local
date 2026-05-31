@@ -88,6 +88,18 @@ export interface UnifiedComposerResearchSourceRef {
   metadata?: Record<string, unknown>;
 }
 
+export interface UnifiedComposerEditTargetRef {
+  id: string;
+  kind: 'output' | 'candidate' | 'file' | 'section' | 'message' | 'unknown';
+  label: string;
+  source: 'context_ref' | 'selection' | 'preview' | 'message' | 'catalog';
+  output_id?: string;
+  candidate_iteration_id?: string;
+  path?: string;
+  disabled_reason?: UnifiedComposerDisabledReason;
+  metadata?: Record<string, unknown>;
+}
+
 export interface UnifiedComposerState {
   source_surface: UnifiedComposerSurface;
   owner_id: string;
@@ -111,6 +123,7 @@ export interface UnifiedComposerState {
   trace_refs: string[];
   warnings?: string[];
   research_sources?: UnifiedComposerResearchSourceRef[];
+  edit_target?: UnifiedComposerEditTargetRef | null;
 }
 
 export interface UnifiedComposerSubmitPayload {
@@ -130,6 +143,7 @@ export interface UnifiedComposerSubmitPayload {
   trace_refs: string[];
   warnings?: string[];
   research_sources?: UnifiedComposerResearchSourceRef[];
+  edit_target?: UnifiedComposerEditTargetRef | null;
 }
 
 export const DISABLED_VOICE_NO_BACKEND: UnifiedComposerDisabledReason = {
