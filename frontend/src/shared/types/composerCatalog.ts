@@ -7,6 +7,7 @@ export type ComposerActionKind =
   | 'open_file_picker'
   | 'open_context_picker'
   | 'open_tools_picker'
+  | 'toggle_research_sources'
   | 'add_context_ref'
   | 'prepared';
 
@@ -39,7 +40,7 @@ export const SHARED_SLASH_COMMANDS: ComposerCatalogCommand[] = [
   { id: 'slash-folder', command: 'folder', label: 'Folder', description: 'Folder context picker is not connected yet.', category: 'Context', surface: 'both', enabled: false, action_kind: 'prepared', disabled_reason: PREPARED_ONLY },
   { id: 'slash-symbol', command: 'symbol', label: 'Symbol', description: 'Symbol index context is not connected yet.', category: 'Context', surface: 'both', enabled: false, action_kind: 'prepared', disabled_reason: PREPARED_ONLY },
   { id: 'slash-tool', command: 'tool', label: 'Tool', description: 'Open tools/actions selector without executing tools.', category: 'Tools', surface: 'both', enabled: true, action_kind: 'open_tools_picker' },
-  { id: 'slash-research', command: 'research', label: 'Research', description: 'Research source control belongs to CHAT-UX.TRANSFORM.5.', category: 'Future', surface: 'both', enabled: false, action_kind: 'prepared', disabled_reason: PREPARED_ONLY },
+  { id: 'slash-research', command: 'research', label: 'Research', description: 'Open research source control without running research.', category: 'Research', surface: 'both', enabled: true, action_kind: 'toggle_research_sources', payload: { requires_approval: true } },
   { id: 'slash-skill-candidate', command: 'skill-candidate', label: 'Skill Candidate', description: 'Prepared for skill candidate context/actions.', category: 'Future', surface: 'both', enabled: false, action_kind: 'prepared', disabled_reason: PREPARED_ONLY },
   { id: 'slash-refine', command: 'refine', label: 'Refine', description: 'Prepared for targeted refine flow; no output is created here.', category: 'Future', surface: 'both', enabled: false, action_kind: 'prepared', disabled_reason: PREPARED_ONLY },
   { id: 'slash-preview', command: 'preview', label: 'Preview', description: 'Prepared for preview/canvas flow; no output is created here.', category: 'Future', surface: 'both', enabled: false, action_kind: 'prepared', disabled_reason: PREPARED_ONLY },

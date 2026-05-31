@@ -26,6 +26,7 @@ import { SKILL_COLOR } from '@/app/components/richEditorUtils';
 import ViewBubble from './ViewBubble';
 import PlanPicker from '@/app/components/PlanPicker';
 import { ErrorSlime } from '@/app/components/ErrorSlime';
+import SourceEvidencePanel from '@/app/components/SourceEvidencePanel';
 
 const streamingCursorKeyframes = `
 @keyframes blink-cursor {
@@ -1068,6 +1069,7 @@ const MessageBubble: React.FC<Props> = React.memo(({ message, editing = false, o
                 {renderUserTextWithPills(displayText, c)}
               </Typography>
               <AttachedContextSection elements={selectedElements} message={message} c={c} />
+              <SourceEvidencePanel message={message} compact />
             </Box>
           )
         ) : (
@@ -1218,6 +1220,7 @@ const MessageBubble: React.FC<Props> = React.memo(({ message, editing = false, o
                 {isStreaming && <StreamingCursor />}
               </>
             )}
+            <SourceEvidencePanel message={message} compact />
           </Box>
         )}
         {messageTime && !editing && (

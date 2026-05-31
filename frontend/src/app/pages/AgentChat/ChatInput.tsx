@@ -30,6 +30,7 @@ import AttachFileIcon from '@mui/icons-material/AttachFile';
 import AdsClickIcon from '@mui/icons-material/AdsClick';
 import CommandPicker, { CommandPickerItem, getToolGroupIcon } from '@/app/components/CommandPicker';
 import ComposerContextPreview from '@/app/components/ComposerContextPreview';
+import ComposerResearchSourceControl from '@/app/components/ComposerResearchSourceControl';
 import ModelPicker from '@/app/components/ModelPicker';
 import { useElementSelection, SelectedElement } from '@/app/components/ElementSelectionContext';
 import { getClipboardCards, clearClipboard } from '@/shared/dashboardClipboard';
@@ -38,12 +39,14 @@ import { API_BASE, getAuthToken } from '@/shared/config';
 import { SHARED_SLASH_COMMANDS } from '@/shared/types/composerCatalog';
 import {
   createDisabledVoiceState,
+  createDefaultResearchSources,
   contextRefFromCatalog,
   contextRefFromPath,
   selectionRefFromElement,
   toolRefFromNames,
   type UnifiedComposerState,
   type UnifiedComposerContextRef,
+  type UnifiedComposerResearchSourceRef,
 } from '@/shared/types/unifiedComposer';
 
 // Slash command parser (Phase 2). Returns true if the command was handled
@@ -340,6 +343,8 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
   const [isUploading, setIsUploading] = useState(false);
   const [contextPaths, setContextPaths] = useState<ContextPath[]>([]);
   const [explicitContextRefs, setExplicitContextRefs] = useState<UnifiedComposerContextRef[]>([]);
+  const [showResearchSources, setShowResearchSources] = useState(false);
+  const [researchOverrides, setResearchOverrides] = useState<Record<string, UnifiedComposerResearchSourceRef['state']>>({});
   const [forcedTools, setForcedTools] = useState<ForcedToolGroup[]>([]);
   const [copiedPathIdx, setCopiedPathIdx] = useState<number | null>(null);
 
@@ -479,6 +484,7 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
         }
         if (shared.enabled && shared.action_kind === 'open_file_picker') generalFileInputRef.current?.click();
         if (shared.enabled && shared.action_kind === 'open_context_picker') window.dispatchEvent(new CustomEvent('openswarm:context-drawer', { detail: { sessionId, open: true } }));
+        if (shared.enabled && shared.action_kind === 'toggle_research_sources') setShowResearchSources(true);
         editor.innerHTML = '';
         _draftStore.delete(ownerId);
         setHasContent(false);
@@ -632,6 +638,8 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
       } else if (item.actionKind === 'open_context_picker') {
         setPicker((p) => ({ ...p, visible: true, trigger: '#', filter: '' }));
         return;
+      } else if (item.actionKind === 'toggle_research_sources') {
+        setShowResearchSources(true);
       }
     } else if (item.type === 'skill') {
       const skill = skills[item.id];
@@ -831,6 +839,20 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
       .filter((el) => el.semanticType === 'browser-card' && el.semanticData?.selectId)
       .map((el) => contextRefFromCatalog(`browser:${el.semanticData!.selectId}`, el.semanticLabel || String(el.semanticData!.selectId), 'browser', { browser_id: el.semanticData!.selectId }))
   ), [selectedElements]);
+  const researchSources = useMemo(() => {
+    const contextRefIds = [
+      ...contextPaths.map((cp) => cp.path),
+      ...explicitContextRefs.map((ref) => ref.id),
+      ...attachedSkillRefs.map((ref) => ref.id),
+      ...selectedBrowserRefs.map((ref) => ref.id),
+    ];
+    return createDefaultResearchSources({
+      contextRefIds,
+      attachmentRefIds: contextPaths.map((cp) => cp.path),
+      browserRefIds: selectedBrowserRefs.map((ref) => ref.id),
+      evidenceRefIds: explicitContextRefs.filter((ref) => ref.kind === 'evidence').map((ref) => ref.id),
+    }).map((source) => researchOverrides[source.id] ? { ...source, state: researchOverrides[source.id] } : source);
+  }, [attachedSkillRefs, contextPaths, explicitContextRefs, researchOverrides, selectedBrowserRefs]);
   const unifiedComposerState: UnifiedComposerState = useMemo(() => ({
     source_surface: 'agent',
     owner_id: ownerId,
@@ -857,7 +879,8 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
     pending_action_capability: 'available',
     evidence_refs: [],
     trace_refs: [],
-  }), [attachedSkillRefs, contextPaths, disabled, explicitContextRefs, forcedTools, hasContent, isRunning, mode, model, onStop, ownerId, selectedBrowserRefs, selectedElements, sessionId, voiceState]);
+    research_sources: showResearchSources ? researchSources : [],
+  }), [attachedSkillRefs, contextPaths, disabled, explicitContextRefs, forcedTools, hasContent, isRunning, mode, model, onStop, ownerId, researchSources, selectedBrowserRefs, selectedElements, sessionId, showResearchSources, voiceState]);
 
   return (
     <Box
@@ -1156,6 +1179,17 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
       )}
 
       <ComposerContextPreview state={unifiedComposerState} compact />
+      <ComposerResearchSourceControl
+        sources={researchSources}
+        visible={showResearchSources}
+        onToggleSource={(id) => {
+          setResearchOverrides((prev) => {
+            const source = researchSources.find((item) => item.id === id);
+            if (!source || source.state === 'disabled' || source.state === 'not_configured' || source.state === 'unsupported') return prev;
+            return { ...prev, [id]: source.state === 'selected' ? 'available' : 'selected' };
+          });
+        }}
+      />
 
       <Box sx={{ px: 1.5, pt: hasAttachments ? 0.5 : 1.25, pb: 0.25, position: 'relative' }}>
         <div

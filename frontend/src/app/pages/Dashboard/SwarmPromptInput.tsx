@@ -15,6 +15,7 @@ import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import CommandPicker, { CommandPickerItem, getToolGroupIcon } from '@/app/components/CommandPicker';
 import ComposerContextPreview from '@/app/components/ComposerContextPreview';
+import ComposerResearchSourceControl from '@/app/components/ComposerResearchSourceControl';
 import { useElementSelection } from '@/app/components/ElementSelectionContext';
 import ModelPicker from '@/app/components/ModelPicker';
 import SwarmModePicker, { getSwarmModeOption } from './SwarmModePicker';
@@ -24,6 +25,7 @@ import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
 import type { ContextPath } from '@/app/components/DirectoryBrowser';
 import {
   createDisabledVoiceState,
+  createDefaultResearchSources,
   contextRefFromPath,
   contextRefFromCatalog,
   selectionRefFromElement,
@@ -31,6 +33,7 @@ import {
   type UnifiedComposerState,
   type UnifiedComposerSubmitPayload,
   type UnifiedComposerToolRef,
+  type UnifiedComposerResearchSourceRef,
 } from '@/shared/types/unifiedComposer';
 
 function formatTokenCount(n: number): string {
@@ -117,6 +120,8 @@ const SwarmPromptInput: React.FC<Props> = ({
   const composerOwnerId = ownerId || cardId || fallbackOwnerIdRef.current;
   const [contextPaths, setContextPaths] = useState<ContextPath[]>([]);
   const [explicitContextRefs, setExplicitContextRefs] = useState<ReturnType<typeof contextRefFromCatalog>[]>([]);
+  const [showResearchSources, setShowResearchSources] = useState(false);
+  const [researchOverrides, setResearchOverrides] = useState<Record<string, UnifiedComposerResearchSourceRef['state']>>({});
   const [forcedTools, setForcedTools] = useState<Array<{ label: string; tools: string[]; icon?: React.ReactNode; iconKey?: string }>>([]);
   const [picker, setPicker] = useState<{ open: boolean; trigger: '@' | '/' | '#'; filter: string }>({ open: false, trigger: '@', filter: '' });
   const [isUploading, setIsUploading] = useState(false);
@@ -139,6 +144,12 @@ const SwarmPromptInput: React.FC<Props> = ({
     selectedElements.map((el) => selectionRefFromElement(el, composerOwnerId))
   ), [composerOwnerId, selectedElements]);
   const attachmentRefs = useMemo(() => contextRefs.map((ref) => ({ ...ref, source: ref.source === 'upload' ? 'upload' as const : 'existing' as const })), [contextRefs]);
+  const researchSources = useMemo(() => createDefaultResearchSources({
+    contextRefIds: contextRefs.map((ref) => ref.id),
+    attachmentRefIds: attachmentRefs.map((ref) => ref.id),
+    browserRefIds: contextRefs.filter((ref) => ref.kind === 'browser').map((ref) => ref.id),
+    evidenceRefIds: contextRefs.filter((ref) => ref.kind === 'evidence').map((ref) => ref.id),
+  }).map((source) => researchOverrides[source.id] ? { ...source, state: researchOverrides[source.id] } : source), [attachmentRefs, contextRefs, researchOverrides]);
   const unifiedComposerState: UnifiedComposerState = useMemo(() => ({
     source_surface: 'swarm',
     owner_id: composerOwnerId,
@@ -160,7 +171,8 @@ const SwarmPromptInput: React.FC<Props> = ({
     pending_action_capability: 'disabled',
     evidence_refs: [],
     trace_refs: [],
-  }), [attachmentRefs, cardId, composerOwnerId, contextRefs, disabled, loading, mode, selectedModel, selectedToolRefs, selectionRefs, submitDisabled, value, voiceState]);
+    research_sources: showResearchSources ? researchSources : [],
+  }), [attachmentRefs, cardId, composerOwnerId, contextRefs, disabled, loading, mode, researchSources, selectedModel, selectedToolRefs, selectionRefs, showResearchSources, submitDisabled, value, voiceState]);
 
   const uploadAndAttachFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
@@ -193,6 +205,9 @@ const SwarmPromptInput: React.FC<Props> = ({
       onChange(value.replace(/^\/\S*\s*/, ''));
       setPicker({ open: true, trigger: '@', filter: '' });
       return;
+    } else if (item.type === 'slash' && item.actionKind === 'toggle_research_sources') {
+      onChange(value.replace(/^\/\S*\s*/, ''));
+      setShowResearchSources(true);
     } else if ((item.type === 'slash' || item.type === 'context') && item.actionKind === 'open_file_picker') {
       if (item.type === 'slash') onChange(value.replace(/^\/\S*\s*/, ''));
       fileInputRef.current?.click();
@@ -219,7 +234,8 @@ const SwarmPromptInput: React.FC<Props> = ({
     voice: voiceState,
     evidence_refs: [],
     trace_refs: [],
-  }), [attachmentRefs, cardId, composerOwnerId, contextRefs, mode, selectedModel, selectedToolRefs, selectionRefs, value, voiceState]);
+    research_sources: showResearchSources ? researchSources : [],
+  }), [attachmentRefs, cardId, composerOwnerId, contextRefs, mode, researchSources, selectedModel, selectedToolRefs, selectionRefs, showResearchSources, value, voiceState]);
 
   const handleSubmit = useCallback(() => {
     if (submitDisabled) return;
@@ -237,12 +253,16 @@ const SwarmPromptInput: React.FC<Props> = ({
         setPicker({ open: true, trigger: '#', filter: '' });
       } else if (command === 'tool') {
         setPicker({ open: true, trigger: '@', filter: '' });
+      } else if (command === 'research') {
+        setShowResearchSources(true);
+        onChange(value.replace(/^\/\S*\s*/, ''));
       }
       return;
     }
     onSend(buildSubmitPayload());
     setContextPaths([]);
     setExplicitContextRefs([]);
+    setShowResearchSources(false);
     setForcedTools([]);
     elementSelection?.clearOwnerElements(composerOwnerId);
   }, [buildSubmitPayload, composerOwnerId, elementSelection, onChange, onModeChange, onSend, submitDisabled, value]);
@@ -393,6 +413,17 @@ const SwarmPromptInput: React.FC<Props> = ({
       </Box>
 
       <ComposerContextPreview state={unifiedComposerState} compact />
+      <ComposerResearchSourceControl
+        sources={researchSources}
+        visible={showResearchSources}
+        onToggleSource={(id) => {
+          setResearchOverrides((prev) => {
+            const source = researchSources.find((item) => item.id === id);
+            if (!source || source.state === 'disabled' || source.state === 'not_configured' || source.state === 'unsupported') return prev;
+            return { ...prev, [id]: source.state === 'selected' ? 'available' : 'selected' };
+          });
+        }}
+      />
 
       {(contextRefs.length > 0 || selectedToolRefs.length > 0 || selectionRefs.length > 0) && (
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, px: 1.5, pb: 0.75 }}>

@@ -31,11 +31,13 @@ const ComposerContextPreview: React.FC<Props> = ({ state, compact = false }) => 
     if (state.attachment_refs.length) rows.push({ label: 'Files', values: state.attachment_refs.map((r) => r.label), color: c.status.success });
     if (state.selected_ui_elements.length) rows.push({ label: 'UI', values: state.selected_ui_elements.map((r) => r.label), color: '#3b82f6' });
     if (state.tools_selected.length) rows.push({ label: 'Tools', values: state.tools_selected.map((r) => r.label), color: c.status.info });
+    const research = (state.research_sources || []).filter((src) => src.state === 'selected' || src.state === 'requires_approval');
+    if (research.length) rows.push({ label: 'Research', values: research.map((src) => `${src.label}${src.state === 'requires_approval' ? ' · approval' : ''}`), color: c.status.warning });
     if (disabled.length) rows.push({ label: 'Disabled', values: disabled, color: c.text.tertiary });
     return rows;
   }, [c, state]);
 
-  const totalRefs = state.context_refs.length + state.attachment_refs.length + state.selected_ui_elements.length + state.tools_selected.length;
+  const totalRefs = state.context_refs.length + state.attachment_refs.length + state.selected_ui_elements.length + state.tools_selected.length + (state.research_sources || []).filter((src) => src.state === 'selected' || src.state === 'requires_approval').length;
   if (!totalRefs && !state.disabled_reasons.length && !state.voice.disabled_reason && !state.mode && !state.model) return null;
 
   return (

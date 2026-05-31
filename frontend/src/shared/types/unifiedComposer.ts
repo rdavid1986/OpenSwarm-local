@@ -67,6 +67,27 @@ export interface UnifiedComposerCapability {
   disabled_reason?: UnifiedComposerDisabledReason;
 }
 
+export type UnifiedComposerResearchSourceState =
+  | 'available'
+  | 'selected'
+  | 'disabled'
+  | 'requires_approval'
+  | 'not_configured'
+  | 'unsupported';
+
+export interface UnifiedComposerResearchSourceRef {
+  id: string;
+  kind: 'current_project' | 'selected_context_refs' | 'uploaded_or_attached_files' | 'browser_refs' | 'evidence_refs' | 'public_web' | 'outputs' | 'candidates';
+  label: string;
+  state: UnifiedComposerResearchSourceState;
+  source_ref_ids?: string[];
+  allowed_domains?: string[];
+  depth?: 'shallow' | 'standard' | 'deep';
+  requires_approval?: boolean;
+  disabled_reason?: UnifiedComposerDisabledReason;
+  metadata?: Record<string, unknown>;
+}
+
 export interface UnifiedComposerState {
   source_surface: UnifiedComposerSurface;
   owner_id: string;
@@ -89,6 +110,7 @@ export interface UnifiedComposerState {
   evidence_refs: string[];
   trace_refs: string[];
   warnings?: string[];
+  research_sources?: UnifiedComposerResearchSourceRef[];
 }
 
 export interface UnifiedComposerSubmitPayload {
@@ -107,6 +129,7 @@ export interface UnifiedComposerSubmitPayload {
   evidence_refs: string[];
   trace_refs: string[];
   warnings?: string[];
+  research_sources?: UnifiedComposerResearchSourceRef[];
 }
 
 export const DISABLED_VOICE_NO_BACKEND: UnifiedComposerDisabledReason = {
@@ -179,4 +202,65 @@ export function toolRefFromNames(label: string, toolNames: string[], iconKey?: s
     state: 'selected',
     icon_key: iconKey,
   };
+}
+
+export const RESEARCH_PUBLIC_WEB_REQUIRES_APPROVAL: UnifiedComposerDisabledReason = {
+  code: 'permission_missing',
+  message: 'Public web research requires explicit approval and a connected safe research runtime.',
+};
+
+export function createDefaultResearchSources(params: {
+  contextRefIds?: string[];
+  attachmentRefIds?: string[];
+  browserRefIds?: string[];
+  evidenceRefIds?: string[];
+} = {}): UnifiedComposerResearchSourceRef[] {
+  const contextRefIds = params.contextRefIds || [];
+  const attachmentRefIds = params.attachmentRefIds || [];
+  const browserRefIds = params.browserRefIds || [];
+  const evidenceRefIds = params.evidenceRefIds || [];
+  return [
+    { id: 'research-current-project', kind: 'current_project', label: 'Current project', state: 'selected', depth: 'standard' },
+    {
+      id: 'research-selected-context',
+      kind: 'selected_context_refs',
+      label: 'Selected context refs',
+      state: contextRefIds.length > 0 ? 'selected' : 'disabled',
+      source_ref_ids: contextRefIds,
+      disabled_reason: contextRefIds.length ? undefined : { code: 'not_configured', message: 'No context refs selected yet.' },
+    },
+    {
+      id: 'research-attached-files',
+      kind: 'uploaded_or_attached_files',
+      label: 'Attached files',
+      state: attachmentRefIds.length > 0 ? 'selected' : 'disabled',
+      source_ref_ids: attachmentRefIds,
+      disabled_reason: attachmentRefIds.length ? undefined : { code: 'not_configured', message: 'No attached files selected yet.' },
+    },
+    {
+      id: 'research-browser-refs',
+      kind: 'browser_refs',
+      label: 'Browser refs',
+      state: browserRefIds.length > 0 ? 'selected' : 'disabled',
+      source_ref_ids: browserRefIds,
+      disabled_reason: browserRefIds.length ? undefined : { code: 'not_configured', message: 'No browser refs selected yet.' },
+    },
+    {
+      id: 'research-evidence-refs',
+      kind: 'evidence_refs',
+      label: 'Evidence refs',
+      state: evidenceRefIds.length > 0 ? 'selected' : 'disabled',
+      source_ref_ids: evidenceRefIds,
+      disabled_reason: evidenceRefIds.length ? undefined : { code: 'not_configured', message: 'No evidence refs selected yet.' },
+    },
+    {
+      id: 'research-public-web',
+      kind: 'public_web',
+      label: 'Public web',
+      state: 'requires_approval',
+      requires_approval: true,
+      depth: 'shallow',
+      disabled_reason: RESEARCH_PUBLIC_WEB_REQUIRES_APPROVAL,
+    },
+  ];
 }
