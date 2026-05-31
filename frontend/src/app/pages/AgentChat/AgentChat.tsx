@@ -41,6 +41,8 @@ import ContextDrawer from './ContextDrawer';
 import { ErrorSlime } from '@/app/components/ErrorSlime';
 import TaskQueuePanel from '@/app/components/TaskQueuePanel';
 import LongRunningTaskMonitor from '@/app/components/LongRunningTaskMonitor';
+import ChatDebugContextView from '@/app/components/ChatDebugContextView';
+import ProjectMemoryContextPanel from '@/app/components/ProjectMemoryContextPanel';
 import { ContextPath } from '@/app/components/DirectoryBrowser';
 import DiffViewer from './DiffViewer';
 import { setGlowingBrowserCards, fadeGlowingBrowserCards, clearGlowingBrowserCards } from '@/shared/state/dashboardLayoutSlice';
@@ -1510,6 +1512,28 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
             latestActivity={latestAgentActivity}
             onStop={sessionRunning ? handleStop : undefined}
             stopLabel="Stop"
+          />
+          <ChatDebugContextView
+            title="Agent debug context"
+            runtime={{
+              surfaceLabel: 'AgentChat',
+              sessionId: session.id,
+              status: session.status,
+              mode,
+              model,
+              queueCount,
+              pendingApprovalsCount: session.pending_approvals.length,
+              traceCount: activeBranchMessages.filter((m: any) => m.process_trace_turn || m.process_trace_turn_container || m.trace_turn || m.turnTrace || m.traceItems || m.process_trace_items).length,
+              evidenceCount: activeBranchMessages.filter((m: any) => m.evidence_refs || m.evidenceRefs || m.sources || m.citations).length,
+              artifactCount: 0,
+              latestActivity: session.streamingMessage ? 'Streaming response' : (agentBusy ? 'Agent is running' : null),
+            }}
+            processTraceItems={activeBranchMessages.flatMap((m: any) => m.traceItems || m.process_trace_items || m.process_trace_turn?.items || m.process_trace_turn_container?.items || [])}
+            compact
+          />
+          <ProjectMemoryContextPanel
+            processTraceItems={activeBranchMessages.flatMap((m: any) => m.traceItems || m.process_trace_items || m.process_trace_turn?.items || m.process_trace_turn_container?.items || [])}
+            compact
           />
               {(() => {
                 // Proactive Haiku-overflow warning. Each connected MCP adds

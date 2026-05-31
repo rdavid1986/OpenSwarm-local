@@ -44,6 +44,8 @@ import { API_BASE } from '@/shared/config';
 import SourceEvidencePanel from '@/app/components/SourceEvidencePanel';
 import ChangeReviewPanel from '@/app/components/ChangeReviewPanel';
 import LongRunningTaskMonitor, { type TaskMonitorStatus } from '@/app/components/LongRunningTaskMonitor';
+import ChatDebugContextView from '@/app/components/ChatDebugContextView';
+import ProjectMemoryContextPanel from '@/app/components/ProjectMemoryContextPanel';
 import ProcessTraceDropdown, { ProcessTraceItem, ProcessTraceTurnDropdown, normalizeProcessTraceTurnContainer } from './ProcessTraceDropdown';
 import { buildCardVisualTokens } from './cardVisualTokens';
 
@@ -3010,6 +3012,33 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 { label: 'Messages', value: chatMessages.length },
                 { label: 'Events', value: events.length },
               ]}
+            />
+
+            <ChatDebugContextView
+              title="Swarm debug context"
+              runtime={{
+                surfaceLabel: 'SwarmCard',
+                sessionId: activeSwarmId || swarmCardId,
+                status: swarmTaskMonitorStatus,
+                mode: getSwarmModeOption(activeSwarmMode).label,
+                model: activeSwarmModel,
+                queueCount: 0,
+                pendingApprovalsCount: approvals.length || swarmState.pendingCount || 0,
+                traceCount: swarmProcessTraceItems.length,
+                evidenceCount: finalEvidence.length,
+                artifactCount: artifacts.length,
+                latestActivity: latestSwarmActivity,
+                metrics: [
+                  { label: 'Messages', value: chatMessages.length },
+                  { label: 'Events', value: events.length },
+                ],
+              }}
+              processTraceItems={swarmProcessTraceItems}
+              compact
+            />
+            <ProjectMemoryContextPanel
+              processTraceItems={swarmProcessTraceItems}
+              compact
             />
             <SwarmPromptInput
               value={prompt}

@@ -15,6 +15,8 @@ import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import CommandPicker, { CommandPickerItem, getToolGroupIcon } from '@/app/components/CommandPicker';
 import ComposerContextPreview from '@/app/components/ComposerContextPreview';
+import ChatDebugContextView from '@/app/components/ChatDebugContextView';
+import ProjectMemoryContextPanel from '@/app/components/ProjectMemoryContextPanel';
 import ComposerResearchSourceControl from '@/app/components/ComposerResearchSourceControl';
 import { useElementSelection } from '@/app/components/ElementSelectionContext';
 import ModelPicker from '@/app/components/ModelPicker';
@@ -429,6 +431,8 @@ const SwarmPromptInput: React.FC<Props> = ({
       </Box>
 
       <ComposerContextPreview state={unifiedComposerState} compact />
+      <ChatDebugContextView title="Swarm composer debug" state={unifiedComposerState} compact />
+      <ProjectMemoryContextPanel state={unifiedComposerState} compact />
       <ComposerResearchSourceControl
         sources={researchSources}
         visible={showResearchSources}
