@@ -96,6 +96,15 @@ const COMMAND_ICON_MAP: Record<string, React.ComponentType<{ sx?: object }>> = {
   tool: BuildOutlinedIcon,
   research: LanguageIcon,
   output: ViewQuiltOutlinedIcon,
+  help: QuestionAnswerOutlinedIcon,
+  init: InsertDriveFileOutlinedIcon,
+  undo: TuneOutlinedIcon,
+  redo: TuneOutlinedIcon,
+  share: LanguageIcon,
+  model: SmartToyOutlinedIcon,
+  agent: SmartToyOutlinedIcon,
+  terminal: BuildOutlinedIcon,
+  qa: ViewQuiltOutlinedIcon,
 };
 
 function highlightMatch(text: string, query: string, color: string): React.ReactNode {

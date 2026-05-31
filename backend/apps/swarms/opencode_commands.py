@@ -171,17 +171,139 @@ class OpenCodeCommandTraceSource:
     trace_source_kind: str = "opencode_command"
     command_name: str = ""
     origin: str = ""
+    command_family: str = "unknown"
     compatibility_status: str = "unknown"
     risk_level: str = "unknown"
+    safe_equivalent: dict[str, Any] = field(default_factory=dict)
+    terminal_boundary: dict[str, Any] = field(default_factory=dict)
+    preview_report: dict[str, Any] = field(default_factory=dict)
     routing: dict[str, Any] = field(default_factory=dict)
     required_actions: list[str] = field(default_factory=list)
     audit: dict[str, Any] = field(default_factory=dict)
+    dry_run_only: bool = True
     can_execute: bool = False
     shell_interpolation_executed: bool = False
     files_read: bool = False
     tools_called: bool = False
     mcp_activated: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class CommandFamilyParityDefinition:
+    family_kind: str = "opencode_command_family_parity"
+    family_id: str = "unknown"
+    display_name: str = "Unknown"
+    opencode_pattern: str = ""
+    openswarm_equivalent: str = ""
+    support_status: str = "planned"
+    risk_level: str = "unknown"
+    requires_preview: bool = True
+    requires_approval: bool = True
+    can_execute_now: bool = False
+    unsupported_reason: str = ""
+    required_actions: list[str] = field(default_factory=list)
+    evidence_refs: list[str] = field(default_factory=list)
+    policy_notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class CommandFamilyParityRegistry:
+    registry_kind: str = "opencode_command_family_parity_registry"
+    families: list[dict[str, Any]] = field(default_factory=list)
+    can_execute_now: bool = False
+
+
+@dataclass
+class SafeCommandEquivalent:
+    equivalent_kind: str = "opencode_safe_command_equivalent"
+    command_name: str = ""
+    command_family: str = "unknown"
+    safe_equivalent_id: str = ""
+    action_kind: str = "preview_only"
+    preview_required: bool = True
+    approval_required: bool = True
+    execution_supported: bool = False
+    blocked_reason: str = ""
+    required_actions: list[str] = field(default_factory=list)
+    policy_notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TerminalBoundaryDecision:
+    boundary_kind: str = "terminal_boundary_decision"
+    terminal_kind: str = "unknown"
+    request_id: str = ""
+    command_preview: str = ""
+    user_executes_manually: bool = False
+    agent_controlled: bool = False
+    requires_safeshell: bool = False
+    requires_policy_matrix: bool = False
+    requires_approval: bool = True
+    requires_sandbox: bool = True
+    requires_timeout: bool = True
+    requires_redaction: bool = True
+    requires_evidence: bool = True
+    can_execute: bool = False
+    required_actions: list[str] = field(default_factory=list)
+    policy_notes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class UserTerminalRequest:
+    request_kind: str = "user_terminal_request"
+    request_id: str = ""
+    command_preview: str = ""
+    context_help: str = ""
+    user_executes_manually: bool = True
+    can_execute: bool = False
+    required_actions: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AgentTerminalRequest:
+    request_kind: str = "agent_terminal_request"
+    request_id: str = ""
+    command_preview: str = ""
+    requires_safeshell: bool = True
+    requires_policy_matrix: bool = True
+    requires_approval: bool = True
+    requires_sandbox: bool = True
+    requires_timeout: bool = True
+    requires_redaction: bool = True
+    requires_evidence: bool = True
+    can_execute: bool = False
+    required_actions: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TerminalRiskDecision:
+    decision_kind: str = "terminal_risk_decision"
+    terminal_kind: str = "unknown"
+    risk_level: str = "high"
+    decision: str = "requires_approval"
+    required_actions: list[str] = field(default_factory=list)
+    can_execute: bool = False
+
+
+@dataclass
+class CommandPreviewReport:
+    report_kind: str = "opencode_command_preview_report"
+    command_name: str = ""
+    command_family: str = "unknown"
+    parsed_args: dict[str, Any] = field(default_factory=dict)
+    file_refs: dict[str, Any] = field(default_factory=dict)
+    shell_interpolation_decision: dict[str, Any] = field(default_factory=dict)
+    safe_equivalent: dict[str, Any] = field(default_factory=dict)
+    terminal_boundary: dict[str, Any] = field(default_factory=dict)
+    risk_level: str = "unknown"
+    required_actions: list[str] = field(default_factory=list)
+    can_execute: bool = False
+    dry_run_only: bool = True
+    tools_called: bool = False
+    files_read: bool = False
+    shell_executed: bool = False
+    mcp_activated: bool = False
 
 
 def _text(value: Any, fallback: str = "", limit: int = MAX_TEXT) -> str:
@@ -632,26 +754,218 @@ def route_command(command_name: str = "", *, requested_agent: str | None = None,
     )
 
 
+
+_FAMILY_DEFINITIONS: list[dict[str, Any]] = [
+    {"family_id": "session", "display_name": "Session", "opencode_pattern": "/undo /redo /session", "openswarm_equivalent": "local session state candidate", "support_status": "partial", "risk_level": "medium", "requires_preview": True, "requires_approval": True, "unsupported_reason": "execution runtime not connected", "required_actions": ["preview_reversible_state"]},
+    {"family_id": "project", "display_name": "Project", "opencode_pattern": "/init /project", "openswarm_equivalent": "project instructions/bootstrap candidate", "support_status": "partial", "risk_level": "low", "requires_preview": True, "requires_approval": False, "unsupported_reason": "automatic writes disabled", "required_actions": ["preview_project_bootstrap"]},
+    {"family_id": "config", "display_name": "Config", "opencode_pattern": "/config", "openswarm_equivalent": "configuration review request", "support_status": "planned", "risk_level": "medium", "requires_preview": True, "requires_approval": True, "unsupported_reason": "config mutation runtime not connected", "required_actions": ["review_configuration_policy"]},
+    {"family_id": "model", "display_name": "Model", "opencode_pattern": "/model", "openswarm_equivalent": "model selection request, policy gated", "support_status": "partial", "risk_level": "medium", "requires_preview": True, "requires_approval": True, "unsupported_reason": "model switch requires policy gate", "required_actions": ["review_model_policy"]},
+    {"family_id": "agent", "display_name": "Agent", "opencode_pattern": "/agent @agent", "openswarm_equivalent": "agent routing request", "support_status": "partial", "risk_level": "medium", "requires_preview": True, "requires_approval": True, "unsupported_reason": "agent routing execution not connected", "required_actions": ["review_agent_routing"]},
+    {"family_id": "tool", "display_name": "Tool", "opencode_pattern": "/tools", "openswarm_equivalent": "tool selection/request preview", "support_status": "planned", "risk_level": "high", "requires_preview": True, "requires_approval": True, "unsupported_reason": "tool execution runtime not connected", "required_actions": ["review_tool_policy"]},
+    {"family_id": "mcp", "display_name": "MCP", "opencode_pattern": "/mcp", "openswarm_equivalent": "MCP activation request preview", "support_status": "blocked", "risk_level": "high", "requires_preview": True, "requires_approval": True, "unsupported_reason": "MCP activation disabled in this block", "required_actions": ["keep_mcp_disabled"]},
+    {"family_id": "skill", "display_name": "Skill", "opencode_pattern": "/skill", "openswarm_equivalent": "skill discovery/import candidate", "support_status": "partial", "risk_level": "medium", "requires_preview": True, "requires_approval": True, "unsupported_reason": "automatic install disabled", "required_actions": ["preview_skill_candidate"]},
+    {"family_id": "terminal", "display_name": "Terminal", "opencode_pattern": "/terminal $(...) `...`", "openswarm_equivalent": "terminal request boundary", "support_status": "blocked", "risk_level": "high", "requires_preview": True, "requires_approval": True, "unsupported_reason": "terminal execution runtime not connected", "required_actions": ["request_user_approval", "require_safeshell_policy_matrix"]},
+    {"family_id": "preview", "display_name": "Preview", "opencode_pattern": "/preview", "openswarm_equivalent": "local preview/dry-run report", "support_status": "partial", "risk_level": "low", "requires_preview": True, "requires_approval": False, "unsupported_reason": "preview runtime is report-only", "required_actions": ["show_preview_report"]},
+    {"family_id": "debug", "display_name": "Debug", "opencode_pattern": "/debug", "openswarm_equivalent": "local debug context request", "support_status": "planned", "risk_level": "medium", "requires_preview": True, "requires_approval": True, "unsupported_reason": "debug actions not connected", "required_actions": ["review_debug_scope"]},
+    {"family_id": "qa", "display_name": "QA", "opencode_pattern": "/qa", "openswarm_equivalent": "local QA plan request", "support_status": "partial", "risk_level": "low", "requires_preview": True, "requires_approval": False, "unsupported_reason": "QA execution not connected", "required_actions": ["build_qa_plan_only"]},
+    {"family_id": "help", "display_name": "Help", "opencode_pattern": "/help", "openswarm_equivalent": "local command help/palette", "support_status": "supported", "risk_level": "low", "requires_preview": False, "requires_approval": False, "unsupported_reason": "", "required_actions": []},
+    {"family_id": "share", "display_name": "Share / Export", "opencode_pattern": "/share", "openswarm_equivalent": "local export/share snapshot", "support_status": "partial", "risk_level": "high", "requires_preview": True, "requires_approval": True, "unsupported_reason": "external publishing disabled", "required_actions": ["keep_external_sharing_disabled", "preview_local_export"]},
+]
+
+_COMMAND_TO_FAMILY: dict[str, str] = {
+    "/help": "help", "/init": "project", "/undo": "session", "/redo": "session", "/share": "share",
+    "/export": "share", "/model": "model", "/agent": "agent", "/skill": "skill", "/terminal": "terminal", "/qa": "qa",
+    "/tools": "tool", "/tool": "tool", "/mcp": "mcp", "/preview": "preview", "/debug": "debug", "/config": "config", "/project": "project", "/session": "session",
+}
+
+_SAFE_EQUIVALENTS: dict[str, dict[str, Any]] = {
+    "/help": {"safe_equivalent_id": "local_command_help_palette", "action_kind": "show_local_help", "preview_required": False, "approval_required": False, "execution_supported": True, "blocked_reason": "", "required_actions": []},
+    "/init": {"safe_equivalent_id": "project_bootstrap_candidate", "action_kind": "preview_project_instructions_bootstrap", "preview_required": True, "approval_required": False, "execution_supported": False, "blocked_reason": "automatic_project_writes_disabled", "required_actions": ["show_preview", "do_not_write_files"]},
+    "/undo": {"safe_equivalent_id": "local_undo_candidate", "action_kind": "preview_reversible_undo", "preview_required": True, "approval_required": True, "execution_supported": False, "blocked_reason": "reversible_state_not_verified", "required_actions": ["verify_reversible_state", "request_user_approval"]},
+    "/redo": {"safe_equivalent_id": "local_redo_candidate", "action_kind": "preview_reversible_redo", "preview_required": True, "approval_required": True, "execution_supported": False, "blocked_reason": "reversible_state_not_verified", "required_actions": ["verify_reversible_state", "request_user_approval"]},
+    "/share": {"safe_equivalent_id": "local_export_snapshot", "action_kind": "preview_local_export", "preview_required": True, "approval_required": True, "execution_supported": False, "blocked_reason": "external_publication_disabled", "required_actions": ["keep_external_sharing_disabled", "request_user_approval"]},
+    "/model": {"safe_equivalent_id": "model_selection_request", "action_kind": "request_model_selection", "preview_required": True, "approval_required": True, "execution_supported": False, "blocked_reason": "policy_gate_required", "required_actions": ["review_model_policy", "request_user_approval"]},
+    "/agent": {"safe_equivalent_id": "agent_routing_request", "action_kind": "request_agent_route", "preview_required": True, "approval_required": True, "execution_supported": False, "blocked_reason": "agent_execution_not_connected", "required_actions": ["review_agent_routing"]},
+    "/skill": {"safe_equivalent_id": "skill_discovery_import_candidate", "action_kind": "preview_skill_candidate", "preview_required": True, "approval_required": True, "execution_supported": False, "blocked_reason": "automatic_skill_install_disabled", "required_actions": ["review_skill_candidate"]},
+    "/terminal": {"safe_equivalent_id": "terminal_boundary_request", "action_kind": "preview_terminal_request", "preview_required": True, "approval_required": True, "execution_supported": False, "blocked_reason": "terminal_runtime_not_connected", "required_actions": ["require_safeshell_policy_matrix", "request_user_approval"]},
+    "/qa": {"safe_equivalent_id": "local_qa_plan_request", "action_kind": "build_qa_plan_only", "preview_required": True, "approval_required": False, "execution_supported": False, "blocked_reason": "qa_execution_not_connected", "required_actions": ["dry_run_only"]},
+}
+
+
+def command_family_for_command(command_name: str) -> str:
+    return _COMMAND_TO_FAMILY.get(_normalize_command_name(command_name), "unknown")
+
+
+def build_command_family_parity_registry() -> CommandFamilyParityRegistry:
+    families = []
+    for raw in _FAMILY_DEFINITIONS:
+        item = CommandFamilyParityDefinition(
+            **raw,
+            can_execute_now=False,
+            evidence_refs=_dedupe(_as_list(raw.get("evidence_refs"))),
+            policy_notes=_dedupe(_as_list(raw.get("policy_notes") or ["Parity registry is descriptive only; execution stays disabled."])),
+        )
+        families.append(dump_opencode_command(item))
+    return CommandFamilyParityRegistry(families=families, can_execute_now=False)
+
+
+def build_safe_command_equivalent(command_name: str) -> SafeCommandEquivalent:
+    name = _normalize_command_name(command_name)
+    family = command_family_for_command(name)
+    defaults = {
+        "safe_equivalent_id": f"{family}_preview_request" if family != "unknown" else "unknown_preview_request",
+        "action_kind": "preview_only",
+        "preview_required": True,
+        "approval_required": True,
+        "execution_supported": False,
+        "blocked_reason": "no_safe_equivalent_connected",
+        "required_actions": ["show_preview", "request_user_approval"],
+    }
+    data = {**defaults, **_SAFE_EQUIVALENTS.get(name, {})}
+    return SafeCommandEquivalent(
+        command_name=name,
+        command_family=family,
+        safe_equivalent_id=data["safe_equivalent_id"],
+        action_kind=data["action_kind"],
+        preview_required=bool(data["preview_required"]),
+        approval_required=bool(data["approval_required"]),
+        execution_supported=bool(data["execution_supported"]),
+        blocked_reason=_text(data.get("blocked_reason")),
+        required_actions=_dedupe(_as_list(data.get("required_actions"))),
+        policy_notes=["Safe equivalent does not bypass SafeShell or PolicyMatrix."],
+    )
+
+
+def build_terminal_boundary_decision(*, terminal_kind: str = "unknown", command_preview: str = "", request_id: str = "") -> TerminalBoundaryDecision:
+    kind = _text(terminal_kind, "unknown").lower()
+    if kind in {"user", "manual", "user_terminal"}:
+        kind = "user_terminal"
+    elif kind in {"agent", "agent_terminal", "controlled"}:
+        kind = "agent_terminal"
+    else:
+        kind = "unknown"
+    is_user = kind == "user_terminal"
+    is_agent = kind == "agent_terminal"
+    actions = ["show_terminal_preview", "do_not_execute_terminal"]
+    notes = []
+    if is_user:
+        actions.append("user_must_execute_manually_outside_openswarm")
+        notes.append("OpenSwarm may show help/context only; user owns manual execution.")
+    elif is_agent:
+        actions.extend(["require_safeshell", "require_policy_matrix", "request_user_approval", "capture_evidence"])
+        notes.append("Agent Terminal is future-only and must be gated by SafeShell, PolicyMatrix, approval, sandbox, timeout, redaction and evidence.")
+    else:
+        actions.append("choose_user_or_agent_terminal_boundary")
+    return TerminalBoundaryDecision(
+        terminal_kind=kind,
+        request_id=_text(request_id),
+        command_preview=_text(command_preview, limit=MAX_BODY),
+        user_executes_manually=is_user,
+        agent_controlled=is_agent,
+        requires_safeshell=is_agent,
+        requires_policy_matrix=is_agent,
+        requires_approval=True,
+        requires_sandbox=is_agent,
+        requires_timeout=is_agent,
+        requires_redaction=True,
+        requires_evidence=is_agent,
+        can_execute=False,
+        required_actions=_dedupe(actions),
+        policy_notes=notes,
+    )
+
+
+def build_user_terminal_request(*, command_preview: str = "", request_id: str = "", context_help: str = "") -> UserTerminalRequest:
+    return UserTerminalRequest(request_id=_text(request_id), command_preview=_text(command_preview, limit=MAX_BODY), context_help=_text(context_help), required_actions=["show_context_help", "user_executes_manually"])
+
+
+def build_agent_terminal_request(*, command_preview: str = "", request_id: str = "") -> AgentTerminalRequest:
+    return AgentTerminalRequest(request_id=_text(request_id), command_preview=_text(command_preview, limit=MAX_BODY), required_actions=["require_safeshell", "require_policy_matrix", "request_user_approval", "require_sandbox", "require_timeout", "redact_output", "capture_evidence"])
+
+
+def build_terminal_risk_decision(*, terminal_kind: str = "unknown", command_preview: str = "") -> TerminalRiskDecision:
+    boundary = build_terminal_boundary_decision(terminal_kind=terminal_kind, command_preview=command_preview)
+    risk = "high" if boundary.agent_controlled else "medium" if boundary.user_executes_manually else "unknown"
+    return TerminalRiskDecision(terminal_kind=boundary.terminal_kind, risk_level=risk, decision="requires_approval", required_actions=boundary.required_actions, can_execute=False)
+
+
+def build_command_preview_report(command_text: str, *, workspace_root: str | Path | None = None, arguments: list[Any] | None = None, named_args: dict[str, Any] | None = None, terminal_kind: str = "unknown") -> CommandPreviewReport:
+    text = _text(command_text, limit=MAX_BODY)
+    parts = text.split()
+    command_name = _normalize_command_name(parts[0] if parts else "/unknown")
+    arg_text = text[len(parts[0]):].strip() if parts else ""
+    arg_expansion = expand_command_arguments(arg_text, arguments=arguments, named_args=named_args)
+    file_refs = expand_file_references(text, workspace_root=workspace_root)
+    guard = guard_shell_interpolation(text)
+    safe = build_safe_command_equivalent(command_name)
+    family = safe.command_family
+    terminal_boundary = build_terminal_boundary_decision(terminal_kind=(terminal_kind if command_name == "/terminal" or guard.detected_patterns else "unknown"), command_preview=text)
+    risks = [safe.command_family and safe.approval_required and "medium", guard.risk_level]
+    if command_name == "/terminal" or terminal_boundary.agent_controlled:
+        risks.append("high")
+    if file_refs.out_of_workspace_refs:
+        risks.append("high")
+    if guard.decision == "blocked":
+        risk = "critical"
+    elif "high" in risks:
+        risk = "high"
+    elif "medium" in risks:
+        risk = "medium"
+    else:
+        risk = "low"
+    required = _dedupe(safe.required_actions + guard.required_actions + file_refs.required_actions + terminal_boundary.required_actions + arg_expansion.missing_args)
+    return CommandPreviewReport(
+        command_name=command_name,
+        command_family=family,
+        parsed_args=dump_opencode_command(arg_expansion),
+        file_refs=dump_opencode_command(file_refs),
+        shell_interpolation_decision=dump_opencode_command(guard),
+        safe_equivalent=dump_opencode_command(safe),
+        terminal_boundary=dump_opencode_command(terminal_boundary),
+        risk_level=risk,
+        required_actions=required,
+        can_execute=False,
+        dry_run_only=True,
+        tools_called=False,
+        files_read=False,
+        shell_executed=False,
+        mcp_activated=False,
+    )
+
 def build_opencode_command_trace_source(
     *,
     command_name: str,
     origin: str = "",
     audit: OpenCodeCommandAudit | dict[str, Any] | None = None,
     routing: CommandRoutingDecision | dict[str, Any] | None = None,
+    safe_equivalent: SafeCommandEquivalent | dict[str, Any] | None = None,
+    terminal_boundary: TerminalBoundaryDecision | dict[str, Any] | None = None,
+    preview_report: CommandPreviewReport | dict[str, Any] | None = None,
     required_actions: list[Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    audit_data = dump_opencode_command(audit or _audit(command_name=command_name, command_origin=origin, risk_level="unknown"))
-    routing_data = dump_opencode_command(routing or route_command(command_name))
-    required = _dedupe(_as_list(required_actions) + _as_list(audit_data.get("required_actions")) + _as_list(routing_data.get("required_actions")))
+    name = _normalize_command_name(command_name)
+    preview_data = dump_opencode_command(preview_report or {})
+    safe_data = dump_opencode_command(safe_equivalent or preview_data.get("safe_equivalent") or build_safe_command_equivalent(name))
+    terminal_data = dump_opencode_command(terminal_boundary or preview_data.get("terminal_boundary") or {})
+    family = command_family_for_command(name) or safe_data.get("command_family") or preview_data.get("command_family") or "unknown"
+    audit_data = dump_opencode_command(audit or _audit(command_name=name, command_origin=origin, command_family=family, risk_level=preview_data.get("risk_level") or safe_data.get("risk_level") or "unknown", safe_equivalent=safe_data.get("safe_equivalent_id")))
+    routing_data = dump_opencode_command(routing or route_command(name))
+    required = _dedupe(_as_list(required_actions) + _as_list(audit_data.get("required_actions")) + _as_list(routing_data.get("required_actions")) + _as_list(safe_data.get("required_actions")) + _as_list(preview_data.get("required_actions")))
+    risk = _normalize_risk(preview_data.get("risk_level") or audit_data.get("risk_level") or "unknown")
     source = OpenCodeCommandTraceSource(
-        command_name=_normalize_command_name(command_name),
+        command_name=name,
         origin=_text(origin),
+        command_family=_text(family, "unknown"),
         compatibility_status=_text(audit_data.get("compatibility_status"), "unknown"),
-        risk_level=_normalize_risk(audit_data.get("risk_level")),
+        risk_level=risk,
+        safe_equivalent=safe_data,
+        terminal_boundary=terminal_data,
+        preview_report=preview_data,
         routing=routing_data,
         required_actions=required,
         audit=audit_data,
+        dry_run_only=True,
         metadata=_safe(metadata or {}),
     )
     return dump_opencode_command(source)

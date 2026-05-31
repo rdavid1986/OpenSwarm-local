@@ -35,6 +35,7 @@ import ProjectMemoryContextPanel from '@/app/components/ProjectMemoryContextPane
 import PromptSkillAuthoringPanel from '@/app/components/PromptSkillAuthoringPanel';
 import ComposerResearchSourceControl from '@/app/components/ComposerResearchSourceControl';
 import ModelPicker from '@/app/components/ModelPicker';
+import { SlashCommandPreview, buildSlashCommandPreview, type SlashCommandPreviewModel } from '@/app/pages/Dashboard/SlashCommandPalette';
 import { useElementSelection, SelectedElement } from '@/app/components/ElementSelectionContext';
 import { getClipboardCards, clearClipboard } from '@/shared/dashboardClipboard';
 import { getWebview } from '@/shared/browserRegistry';
@@ -294,6 +295,7 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
   attachedSkillsRef.current = attachedSkills;
 
   const [picker, setPicker] = useState<TriggerState>(EMPTY_TRIGGER);
+  const [slashPreview, setSlashPreview] = useState<SlashCommandPreviewModel | null>(null);
   const skills = useAppSelector((state) => state.skills.items);
   const modesMap = useAppSelector((state) => state.modes.items);
   const modesArr = useMemo(() => Object.values(modesMap), [modesMap]);
@@ -597,6 +599,8 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
     // Persist draft so it survives unmount/remount (card collapse, navigation)
     const editor = editorRef.current;
     if (editor) {
+      const plainText = (editor.textContent || '').trim();
+      if (!plainText.startsWith('/')) setSlashPreview(null);
       const html = editor.innerHTML;
       if (html && html !== '<br>') {
         _draftStore.set(ownerId, html);
@@ -643,6 +647,9 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
         return;
       } else if (item.actionKind === 'toggle_research_sources') {
         setShowResearchSources(true);
+      } else if (item.actionKind === 'prepared') {
+        document.execCommand('insertText', false, `/${item.command} `);
+        setSlashPreview(buildSlashCommandPreview(item));
       }
     } else if (item.type === 'skill') {
       const skill = skills[item.id];
@@ -1196,6 +1203,7 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
         </Box>
       )}
 
+      <SlashCommandPreview preview={slashPreview} />
       <ComposerContextPreview state={unifiedComposerState} compact />
       <ChatDebugContextView title="Composer debug" state={unifiedComposerState} compact />
       <ProjectMemoryContextPanel state={unifiedComposerState} compact />

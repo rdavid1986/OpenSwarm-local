@@ -1,7 +1,14 @@
 from pathlib import Path
 
 from backend.apps.swarms.opencode_commands import (
+    build_agent_terminal_request,
     build_builtin_slash_command_registry,
+    build_command_family_parity_registry,
+    build_command_preview_report,
+    build_safe_command_equivalent,
+    build_terminal_boundary_decision,
+    build_user_terminal_request,
+    build_terminal_risk_decision,
     build_opencode_command_trace_source,
     detect_file_references,
     expand_command_arguments,
@@ -133,3 +140,81 @@ def test_trace_source_is_safe_and_non_executable():
     assert source["shell_interpolation_executed"] is False
     assert "leak" not in rendered
     assert "raw_prompt" not in rendered
+
+
+
+def test_command_family_registry_contains_required_families():
+    registry = build_command_family_parity_registry()
+    family_ids = {item["family_id"] for item in registry.families}
+
+    assert {"session", "project", "config", "model", "agent", "tool", "mcp", "skill", "terminal", "preview", "debug", "qa", "help", "share"}.issubset(family_ids)
+    assert all(item["can_execute_now"] is False for item in registry.families)
+
+
+def test_help_safe_equivalent_is_local_help_without_required_execution():
+    equivalent = build_safe_command_equivalent("/help")
+
+    assert equivalent.safe_equivalent_id == "local_command_help_palette"
+    assert equivalent.action_kind == "show_local_help"
+    assert equivalent.execution_supported is True
+    assert equivalent.approval_required is False
+
+
+def test_init_safe_equivalent_requires_preview_and_no_write():
+    equivalent = build_safe_command_equivalent("/init")
+
+    assert equivalent.safe_equivalent_id == "project_bootstrap_candidate"
+    assert equivalent.preview_required is True
+    assert equivalent.execution_supported is False
+    assert "do_not_write_files" in equivalent.required_actions
+
+
+def test_terminal_safe_equivalent_requires_approval_and_no_execution():
+    equivalent = build_safe_command_equivalent("/terminal")
+
+    assert equivalent.approval_required is True
+    assert equivalent.execution_supported is False
+    assert equivalent.blocked_reason == "terminal_runtime_not_connected"
+
+
+def test_terminal_boundary_differentiates_user_and_agent_terminal():
+    user_boundary = build_terminal_boundary_decision(terminal_kind="user_terminal", command_preview="npm test")
+    agent_boundary = build_terminal_boundary_decision(terminal_kind="agent_terminal", command_preview="npm test")
+
+    assert user_boundary.user_executes_manually is True
+    assert user_boundary.agent_controlled is False
+    assert user_boundary.can_execute is False
+    assert agent_boundary.agent_controlled is True
+    assert agent_boundary.requires_safeshell is True
+    assert agent_boundary.requires_policy_matrix is True
+    assert agent_boundary.requires_approval is True
+    assert agent_boundary.can_execute is False
+
+
+def test_terminal_request_contracts_are_non_executable():
+    user_request = build_user_terminal_request(command_preview="npm test")
+    agent_request = build_agent_terminal_request(command_preview="npm test")
+    risk = build_terminal_risk_decision(terminal_kind="agent_terminal", command_preview="npm test")
+
+    assert user_request.user_executes_manually is True
+    assert user_request.can_execute is False
+    assert agent_request.requires_safeshell is True
+    assert agent_request.requires_policy_matrix is True
+    assert agent_request.requires_approval is True
+    assert agent_request.can_execute is False
+    assert risk.can_execute is False
+
+
+def test_preview_report_is_dry_run_only_and_safe(tmp_path: Path):
+    report = build_command_preview_report("/terminal $(cat @src/app.ts)", workspace_root=tmp_path, terminal_kind="agent_terminal")
+
+    assert report.command_name == "/terminal"
+    assert report.dry_run_only is True
+    assert report.can_execute is False
+    assert report.shell_executed is False
+    assert report.files_read is False
+    assert report.tools_called is False
+    assert report.mcp_activated is False
+    assert report.safe_equivalent["safe_equivalent_id"] == "terminal_boundary_request"
+    assert report.terminal_boundary["agent_controlled"] is True
+    assert report.shell_interpolation_decision["detected_patterns"]

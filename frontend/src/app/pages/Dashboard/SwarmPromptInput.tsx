@@ -18,6 +18,7 @@ import ComposerResearchSourceControl from '@/app/components/ComposerResearchSour
 import { useElementSelection } from '@/app/components/ElementSelectionContext';
 import ModelPicker from '@/app/components/ModelPicker';
 import SwarmModePicker, { getSwarmModeOption } from './SwarmModePicker';
+import { SlashCommandPreview, buildSlashCommandPreview, type SlashCommandPreviewModel } from './SlashCommandPalette';
 import { API_BASE } from '@/shared/config';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
@@ -123,6 +124,7 @@ const SwarmPromptInput: React.FC<Props> = ({
   const [researchOverrides, setResearchOverrides] = useState<Record<string, UnifiedComposerResearchSourceRef['state']>>({});
   const [forcedTools, setForcedTools] = useState<Array<{ label: string; tools: string[]; icon?: React.ReactNode; iconKey?: string }>>([]);
   const [picker, setPicker] = useState<{ open: boolean; trigger: '@' | '/' | '#'; filter: string }>({ open: false, trigger: '@', filter: '' });
+  const [slashPreview, setSlashPreview] = useState<SlashCommandPreviewModel | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const modeOption = getSwarmModeOption(mode);
   const selectedModel = model || modelLabel || '';
@@ -222,6 +224,10 @@ const SwarmPromptInput: React.FC<Props> = ({
     } else if (item.type === 'slash' && item.actionKind === 'toggle_research_sources') {
       onChange(value.replace(/^\/\S*\s*/, ''));
       setShowResearchSources(true);
+    } else if (item.type === 'slash' && item.actionKind === 'prepared') {
+      const next = `${value.replace(/^\/\S*\s*/, '').trimStart()}`;
+      onChange(`/${item.command} ${next}`.trimEnd() + ' ');
+      setSlashPreview(buildSlashCommandPreview(item));
     } else if ((item.type === 'slash' || item.type === 'context') && item.actionKind === 'open_file_picker') {
       if (item.type === 'slash') onChange(value.replace(/^\/\S*\s*/, ''));
       fileInputRef.current?.click();
@@ -314,6 +320,7 @@ const SwarmPromptInput: React.FC<Props> = ({
             onChange(next);
             const match = next.match(/(?:^|\s)([\/#])([^\s]*)$/);
             if (match) setPicker({ open: true, trigger: match[1] as '/' | '#', filter: match[2] || '' });
+            if (!next.trim().startsWith('/')) setSlashPreview(null);
           }}
           onKeyDownCapture={(e) => {
             e.stopPropagation();
@@ -328,6 +335,8 @@ const SwarmPromptInput: React.FC<Props> = ({
           sx={{ fontSize: '0.95rem', color: c.text.primary, lineHeight: 1.55 }}
         />
       </Box>
+
+      <SlashCommandPreview preview={slashPreview} />
 
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25, px: 1, pb: 0.75, pt: 0, flexWrap: 'nowrap', overflow: 'hidden', minWidth: 0 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0, flex: '1 1 auto', flexWrap: 'nowrap', overflow: 'hidden' }}>

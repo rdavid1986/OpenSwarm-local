@@ -1234,10 +1234,14 @@ def build_opencode_command_process_trace_item(source: dict[str, Any]) -> dict[st
     data = source or {}
     audit = data.get("audit") if isinstance(data.get("audit"), dict) else data if data.get("audit_kind") == "opencode_command_audit" else {}
     routing = data.get("routing") if isinstance(data.get("routing"), dict) else {}
+    safe_equivalent = data.get("safe_equivalent") if isinstance(data.get("safe_equivalent"), dict) else {}
+    terminal_boundary = data.get("terminal_boundary") if isinstance(data.get("terminal_boundary"), dict) else {}
+    preview_report = data.get("preview_report") if isinstance(data.get("preview_report"), dict) else {}
     required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else audit.get("required_actions") if isinstance(audit.get("required_actions"), list) else []
-    risk = _first_text(data, "risk_level", default=_first_text(audit, "risk_level", default="unknown"))
+    risk = _first_text(data, "risk_level", default=_first_text(preview_report, "risk_level", default=_first_text(audit, "risk_level", default="unknown")))
     compatibility = _first_text(data, "compatibility_status", default=_first_text(audit, "compatibility_status", default="unknown"))
     command_name = _first_text(data, "command_name", default=_first_text(audit, "command_name", default="/unknown"))
+    command_family = _first_text(data, "command_family", default=_first_text(preview_report, "command_family", default=_first_text(audit, "command_family", default="unknown")))
     origin = _first_text(data, "origin", "command_origin", default=_first_text(audit, "command_origin", default="unknown"))
     blocked = compatibility == "blocked" or risk == "critical"
     status = "blocked" if blocked else "warning" if required_actions or compatibility in {"needs_review", "unsupported"} or risk in {"medium", "high"} else "completed"
@@ -1254,8 +1258,13 @@ def build_opencode_command_process_trace_item(source: dict[str, Any]) -> dict[st
             "command_core": True,
             "command_name": command_name,
             "origin": origin,
+            "command_family": command_family,
             "compatibility_status": compatibility,
             "risk_level": risk,
+            "safe_equivalent": safe_equivalent or None,
+            "terminal_boundary": terminal_boundary or None,
+            "preview_report": preview_report or None,
+            "dry_run_only": data.get("dry_run_only", True),
             "routing_target": routing.get("target_kind") or data.get("target_kind") or "unknown",
             "routing": routing or None,
             "required_actions": required_actions,

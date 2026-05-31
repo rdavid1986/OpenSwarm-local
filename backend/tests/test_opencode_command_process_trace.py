@@ -1,4 +1,4 @@
-from backend.apps.swarms.opencode_commands import build_opencode_command_trace_source, build_opencode_command_audit, route_command
+from backend.apps.swarms.opencode_commands import build_command_preview_report, build_opencode_command_trace_source, build_opencode_command_audit, route_command
 from backend.apps.swarms.process_trace_builder import build_process_trace_item_from_source, normalize_process_trace_source_kind
 
 
@@ -51,3 +51,31 @@ def test_process_trace_includes_required_safety_flags():
     assert item["details"]["tools_called"] is False
     assert item["details"]["mcp_activated"] is False
     assert "request_user_approval" in item["details"]["required_actions"]
+
+
+
+def test_process_trace_includes_preview_family_equivalent_and_terminal_boundary(tmp_path):
+    preview = build_command_preview_report("/terminal npm test", workspace_root=tmp_path, terminal_kind="agent_terminal")
+    source = build_opencode_command_trace_source(command_name="/terminal", preview_report=preview)
+
+    item = build_process_trace_item_from_source(source)
+    details = item["details"]
+
+    assert details["command_family"] == "terminal"
+    assert details["safe_equivalent"]["safe_equivalent_id"] == "terminal_boundary_request"
+    assert details["terminal_boundary"]["agent_controlled"] is True
+    assert details["preview_report"]["dry_run_only"] is True
+    assert details["dry_run_only"] is True
+    assert details["can_execute"] is False
+
+
+def test_process_trace_redacts_sensitive_preview_metadata():
+    preview = build_command_preview_report("/help")
+    source = build_opencode_command_trace_source(command_name="/help", preview_report=preview, metadata={"raw_response": "leak", "secret": "no"})
+
+    item = build_process_trace_item_from_source(source)
+    rendered = str(item).lower()
+
+    assert "leak" not in rendered
+    assert "raw_response" not in rendered
+    assert "secret" not in rendered
