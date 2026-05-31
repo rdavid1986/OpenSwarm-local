@@ -47,7 +47,15 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "skill_assignment_trace"
     if data.get("handoff_kind") == "miniagent_handoff":
         return "miniagent_handoff"
-    if data.get("adaptive_kind") in {"miniagent_skill_gap", "miniagent_adaptive_state", "swarm_skill_resolution_decision"}:
+    if data.get("adaptive_kind") in {
+        "miniagent_skill_gap",
+        "miniagent_adaptive_state",
+        "swarm_skill_resolution_decision",
+        "adaptive_research_request",
+        "adaptive_skill_candidate_contract",
+        "miniagent_resume_contract",
+        "adaptive_skill_metrics",
+    }:
         return "miniagent_skill_adaptive"
     if data.get("audit_kind") == "swarm_final_audit":
         return "swarm_final_audit"
@@ -552,6 +560,14 @@ def _adaptive_skill_item(data: dict[str, Any]) -> dict[str, Any]:
         kwargs["adaptive_state"] = data
     elif adaptive_kind == "swarm_skill_resolution_decision":
         kwargs["decision"] = data
+    elif adaptive_kind == "adaptive_research_request":
+        kwargs["research_request"] = data
+    elif adaptive_kind == "adaptive_skill_candidate_contract":
+        kwargs["candidate_contract"] = data
+    elif adaptive_kind == "miniagent_resume_contract":
+        kwargs["resume_contract"] = data
+    elif adaptive_kind == "adaptive_skill_metrics":
+        kwargs["metrics"] = data
     items = build_adaptive_skill_trace_items(**kwargs)
     return items[0] if items else build_process_trace_item(
         kind="skill",

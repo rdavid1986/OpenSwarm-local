@@ -1253,24 +1253,45 @@ function getMiniAgentAdaptiveSkillState(task: any): {
   approvalRequired: boolean;
   resumeBlocked: boolean;
   waitingSkill: boolean;
+  skillAcquired: boolean;
+  candidateReady: boolean;
+  researchApproved: boolean;
+  resumeReady: boolean;
+  acquiredSkillId: string;
+  candidateId: string;
 } {
   const skillGap = task?.skill_gap || task?.skillGap || task?.adaptive_skill_gap || task?.adaptiveSkillGap || {};
   const adaptive = task?.adaptive_state || task?.adaptiveState || task?.adaptive_skill_state || task?.adaptiveSkillState || {};
+  const decision = task?.skill_resolution_decision || task?.skillResolutionDecision || task?.adaptive_decision || task?.adaptiveDecision || {};
+  const research = task?.adaptive_research_request || task?.adaptiveResearchRequest || task?.research_request || task?.researchRequest || {};
+  const candidate = task?.adaptive_skill_candidate || task?.adaptiveSkillCandidate || task?.skill_candidate_contract || task?.skillCandidateContract || {};
+  const resume = task?.miniagent_resume_contract || task?.miniAgentResumeContract || task?.resume_contract || task?.resumeContract || {};
   const gapType = normalizeStatusValue(
     skillGap?.gap_type || skillGap?.gapType || adaptive?.gap_type || adaptive?.gapType || task?.skill_gap_type,
   );
   const adaptiveState = normalizeStatusValue(
-    adaptive?.adaptive_state || adaptive?.state || task?.adaptive_state || task?.skill_request_state,
+    adaptive?.adaptive_state || adaptive?.state || resume?.resume_state || resume?.resumeState || task?.adaptive_state || task?.skill_request_state,
   );
+  const researchStatus = normalizeStatusValue(research?.research_status || research?.status || task?.research_status);
+  const candidateAction = normalizeStatusValue(candidate?.candidate_action || candidate?.action || task?.candidate_action);
+  const resumeState = normalizeStatusValue(resume?.resume_state || resume?.state || task?.resume_state);
+  const acquiredSkillId = String(
+    resume?.acquired_skill_id || resume?.acquiredSkillId || adaptive?.acquired_skill_id || adaptive?.acquiredSkillId || decision?.selected_skill_id || decision?.selectedSkillId || task?.acquired_skill_id || '',
+  ).trim();
+  const candidateId = String(candidate?.candidate_id || candidate?.candidateId || resume?.candidate_id || resume?.candidateId || task?.candidate_id || '').trim();
   const hasSkillGap = Boolean(
     skillGap?.has_gap === true
       || task?.has_skill_gap === true
       || gapType
       || ['skill_gap_detected', 'waiting_swarm_decision', 'waiting_skill_acquisition'].includes(adaptiveState),
   );
-  const approvalRequired = Boolean(skillGap?.required_approval || adaptive?.approval_required || task?.skill_approval_required);
-  const resumeAllowed = adaptive?.resume_allowed ?? task?.resume_allowed;
+  const approvalRequired = Boolean(skillGap?.required_approval || adaptive?.approval_required || research?.requires_approval || candidate?.requires_approval || task?.skill_approval_required);
+  const resumeAllowed = resume?.resume_allowed ?? adaptive?.resume_allowed ?? task?.resume_allowed;
   const waitingSkill = ['waiting_swarm_decision', 'waiting_skill_acquisition', 'skill_gap_detected'].includes(adaptiveState);
+  const skillAcquired = Boolean(acquiredSkillId || adaptiveState === 'skill_acquired' || adaptiveState === 'resumed' || task?.skill_acquired === true);
+  const candidateReady = Boolean(candidateId || ['create', 'update'].includes(candidateAction));
+  const researchApproved = Boolean(['research_prepared', 'research_approved'].includes(researchStatus) || research?.approval_state === 'approved' || task?.research_approved === true);
+  const resumeReady = Boolean(resumeAllowed === true || resumeState === 'resume_prepared');
   return {
     hasSkillGap,
     gapType,
@@ -1278,6 +1299,12 @@ function getMiniAgentAdaptiveSkillState(task: any): {
     approvalRequired,
     waitingSkill,
     resumeBlocked: waitingSkill || resumeAllowed === false,
+    skillAcquired,
+    candidateReady,
+    researchApproved,
+    resumeReady,
+    acquiredSkillId,
+    candidateId,
   };
 }
 
@@ -3639,6 +3666,10 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                   {vm.adaptiveSkillState.waitingSkill && <Chip size="small" label={vm.adaptiveSkillState.adaptiveState ? `waiting skill:${vm.adaptiveSkillState.adaptiveState}` : 'waiting skill'} sx={{ height: 20, maxWidth: 190, fontSize: '0.62rem', color: c.status.warning, bgcolor: `${c.status.warning}12`, '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' } }} />}
                   {vm.adaptiveSkillState.approvalRequired && <Chip size="small" label="approval required" sx={{ height: 20, fontSize: '0.62rem', color: c.status.warning, bgcolor: `${c.status.warning}12` }} />}
                   {vm.adaptiveSkillState.resumeBlocked && <Chip size="small" label="resume blocked" sx={{ height: 20, fontSize: '0.62rem', color: c.status.error, bgcolor: `${c.status.error}10` }} />}
+                  {vm.adaptiveSkillState.researchApproved && <Chip size="small" label="research approved" sx={{ height: 20, fontSize: '0.62rem', color: c.status.info, bgcolor: `${c.status.info}12` }} />}
+                  {vm.adaptiveSkillState.candidateReady && <Chip size="small" label={vm.adaptiveSkillState.candidateId ? `candidate:${vm.adaptiveSkillState.candidateId}` : 'candidate ready'} sx={{ height: 20, maxWidth: 170, fontSize: '0.62rem', color: c.accent.primary, bgcolor: `${c.accent.primary}12`, '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' } }} />}
+                  {vm.adaptiveSkillState.skillAcquired && <Chip size="small" label={vm.adaptiveSkillState.acquiredSkillId ? `skill acquired:${vm.adaptiveSkillState.acquiredSkillId}` : 'skill acquired'} sx={{ height: 20, maxWidth: 190, fontSize: '0.62rem', color: c.status.success, bgcolor: `${c.status.success}12`, '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' } }} />}
+                  {vm.adaptiveSkillState.resumeReady && <Chip size="small" label="resume ready" sx={{ height: 20, fontSize: '0.62rem', color: c.status.success, bgcolor: `${c.status.success}12` }} />}
                   {vm.mode && <Chip size="small" label={`mode:${vm.mode}`} sx={{ height: 20, maxWidth: 150, fontSize: '0.62rem' }} />}
                   {vm.model && <Chip size="small" label={`model:${vm.model}`} sx={{ height: 20, maxWidth: 170, fontSize: '0.62rem', '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' } }} />}
                   {durationLabel && <Chip size="small" label={`time:${durationLabel}`} sx={{ height: 20, fontSize: '0.62rem', color: c.text.tertiary }} />}

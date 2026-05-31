@@ -49,8 +49,17 @@ DECISIONS = {
     "reject_request",
     "defer",
 }
+RESEARCH_STATES = {
+    "research_approval_required",
+    "research_prepared",
+    "research_approved",
+    "research_blocked",
+}
+CANDIDATE_ACTIONS = {"create", "update", "none", "blocked"}
+RESUME_STATES = {"resume_prepared", "resume_blocked", "resumed"}
 APPROVAL_REQUIRED_RESOLUTIONS = {"update_skill", "create_skill_candidate", "request_research"}
 APPROVAL_REQUIRED_DECISIONS = {"update_skill", "create_skill_candidate", "request_research", "switch_skill"}
+APPROVED_STATES = {"approved", "allowed", "granted", "true", "complete", "completed", "accepted"}
 
 
 def _text(value: Any, default: str = "") -> str:
@@ -95,6 +104,10 @@ def _status_text(value: Any) -> str:
     if isinstance(value, dict):
         return _text(value.get("status") or value.get("state") or value.get("result"))
     return _text(value)
+
+
+def _is_approved(value: Any) -> bool:
+    return _text(value).lower() in APPROVED_STATES
 
 
 def _evidence_refs(*sources: Any) -> list[Any]:
@@ -404,11 +417,256 @@ def resolve_swarm_skill_gap_decision(
     })
 
 
+def build_adaptive_research_request(
+    *,
+    skill_gap: dict[str, Any] | None = None,
+    decision: dict[str, Any] | None = None,
+    research_scope: Any = None,
+    browser_context: dict[str, Any] | None = None,
+    approval_state: Any = None,
+    evidence_refs: list[Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Prepare a browser research request contract without launching research."""
+
+    gap = _as_dict(skill_gap)
+    decision_data = _as_dict(decision)
+    browser = _as_dict(browser_context)
+    approved = _is_approved(approval_state or decision_data.get("approval_state"))
+    wants_research = (
+        decision_data.get("decision") == "request_research"
+        or gap.get("recommended_resolution") == "request_research"
+        or bool(research_scope)
+    )
+    blocked_reason = ""
+    if not wants_research:
+        blocked_reason = "No browser research request was reported by MiniAgent/Swarm."
+        status = "research_blocked"
+    elif approved:
+        status = "research_prepared"
+    else:
+        status = "research_approval_required"
+        blocked_reason = "User approval required before browser research."
+
+    return _safe({
+        "adaptive_kind": "adaptive_research_request",
+        "research_status": _normalize(status, RESEARCH_STATES, "research_blocked"),
+        "miniagent_id": _text(gap.get("miniagent_id") or decision_data.get("miniagent_id")),
+        "task_id": _text(gap.get("task_id") or decision_data.get("task_id")),
+        "gap_type": _normalize(gap.get("gap_type") or decision_data.get("gap_type"), GAP_TYPES, "unknown"),
+        "requested_research_scope": _text(research_scope or browser.get("research_scope") or gap.get("summary"), "Skill-gap research scope not provided."),
+        "requires_approval": bool(wants_research and not approved),
+        "approval_state": _text(approval_state or decision_data.get("approval_state"), "missing"),
+        "blocked_reason": blocked_reason,
+        "browser_metadata": {
+            "browser_id": _text(browser.get("browser_id") or browser.get("id")),
+            "selected_browser_ids": _list(browser.get("selected_browser_ids") or browser.get("browser_ids")),
+            "url": _text(browser.get("url")),
+            "approved_or_prepared_only": True,
+            "research_launched": False,
+        },
+        "evidence_refs": _list(evidence_refs),
+        "metadata": _safe(dict(metadata or {})),
+        "safety_gate": {
+            "browser_research_requires_approval": True,
+            "actions_executed": [],
+            "tools_or_mcp_activated": [],
+        },
+    })
+
+
+def build_skill_candidate_from_adaptive_research(
+    *,
+    skill_gap: dict[str, Any] | None = None,
+    decision: dict[str, Any] | None = None,
+    research_request: dict[str, Any] | None = None,
+    research_evidence_refs: list[Any] | None = None,
+    source_refs: list[Any] | None = None,
+    provenance_refs: list[Any] | None = None,
+    existing_skill_id: Any = None,
+    existing_skill_name: Any = None,
+    candidate_id: Any = None,
+    approval_state: Any = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Prepare skill candidate create/update contract from real refs only."""
+
+    gap = _as_dict(skill_gap)
+    decision_data = _as_dict(decision)
+    request = _as_dict(research_request)
+    decision_name = _normalize(decision_data.get("decision") or gap.get("recommended_resolution"), DECISIONS, "defer")
+    evidence = _list(research_evidence_refs or request.get("evidence_refs") or gap.get("evidence_refs"))
+    sources = _list(source_refs)
+    provenance = _list(provenance_refs)
+    action = "none"
+    blocked_reason = ""
+
+    if decision_name == "create_skill_candidate":
+        action = "create"
+    elif decision_name == "update_skill":
+        action = "update"
+    elif decision_name == "request_research":
+        action = "none"
+        blocked_reason = "Research evidence must be reviewed before preparing a skill candidate."
+
+    if action in {"create", "update"}:
+        if not evidence:
+            action = "blocked"
+            blocked_reason = "Real research evidence refs are required before creating/updating a skill candidate."
+        elif not (sources and provenance):
+            action = "blocked"
+            blocked_reason = "Source refs and provenance refs are required before creating/updating a skill candidate."
+        elif action == "update" and not _text(existing_skill_id or decision_data.get("selected_skill_id")):
+            action = "blocked"
+            blocked_reason = "Existing skill id is required before preparing a skill update candidate."
+
+    return _safe({
+        "adaptive_kind": "adaptive_skill_candidate_contract",
+        "candidate_action": _normalize(action, CANDIDATE_ACTIONS, "blocked"),
+        "candidate_id": _text(candidate_id),
+        "miniagent_id": _text(gap.get("miniagent_id") or decision_data.get("miniagent_id")),
+        "task_id": _text(gap.get("task_id") or decision_data.get("task_id")),
+        "gap_type": _normalize(gap.get("gap_type") or decision_data.get("gap_type"), GAP_TYPES, "unknown"),
+        "existing_skill_id": _text(existing_skill_id or decision_data.get("selected_skill_id")),
+        "existing_skill_name": _text(existing_skill_name or decision_data.get("selected_skill_name")),
+        "research_evidence_refs": evidence,
+        "source_refs": sources,
+        "provenance_refs": provenance,
+        "requires_approval": True,
+        "approval_state": _text(approval_state or decision_data.get("approval_state"), "missing"),
+        "policy_gate_required": True,
+        "blocked_reason": blocked_reason,
+        "summary": blocked_reason or f"Skill candidate {action} contract prepared; no skill was created, updated, or installed.",
+        "metadata": _safe(dict(metadata or {})),
+        "safety_gate": {
+            "skill_builder_requires_approval": True,
+            "registry_validation_required": True,
+            "install_skill_requires_approval": True,
+            "actions_executed": [],
+        },
+    })
+
+
+def build_miniagent_resume_contract(
+    *,
+    adaptive_state: dict[str, Any] | None = None,
+    decision: dict[str, Any] | None = None,
+    candidate_contract: dict[str, Any] | None = None,
+    approval_state: Any = None,
+    context_packet_refs: list[Any] | None = None,
+    worklog_refs: list[Any] | None = None,
+    acquired_skill_id: Any = None,
+    candidate_id: Any = None,
+    tool_permission_changes: list[Any] | None = None,
+    mcp_permission_changes: list[Any] | None = None,
+    blocked_reason: Any = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Prepare a safe MiniAgent resume contract without resuming execution."""
+
+    state = _as_dict(adaptive_state)
+    decision_data = _as_dict(decision)
+    candidate = _as_dict(candidate_contract)
+    approved = _is_approved(approval_state or candidate.get("approval_state") or decision_data.get("approval_state"))
+    context_refs = _list(context_packet_refs or state.get("trace_refs"))
+    logs = _list(worklog_refs)
+    permission_changes = _list(tool_permission_changes) + _list(mcp_permission_changes)
+    skill_ref = _text(acquired_skill_id or candidate.get("existing_skill_id") or decision_data.get("selected_skill_id"))
+    candidate_ref = _text(candidate_id or candidate.get("candidate_id"))
+    reason = _text(blocked_reason)
+
+    if permission_changes and not approved:
+        reason = reason or "User approval required before resuming with new tool/MCP permissions."
+    if (candidate.get("requires_approval") or decision_data.get("requires_user_approval")) and not approved:
+        reason = reason or "User approval required before MiniAgent resume."
+    if not (skill_ref or candidate_ref or decision_data.get("safe_to_resume")):
+        reason = reason or "Acquired skill, approved candidate, or safe existing skill decision is required before resume."
+    if not context_refs:
+        reason = reason or "Context packet refs must be preserved before resume."
+    if not logs:
+        reason = reason or "MiniAgent worklog refs must be preserved before resume."
+
+    resume_allowed = not bool(reason)
+    return _safe({
+        "adaptive_kind": "miniagent_resume_contract",
+        "resume_state": "resume_prepared" if resume_allowed else "resume_blocked",
+        "resume_allowed": bool(resume_allowed),
+        "miniagent_id": _text(state.get("miniagent_id") or decision_data.get("miniagent_id") or candidate.get("miniagent_id")),
+        "task_id": _text(state.get("task_id") or decision_data.get("task_id") or candidate.get("task_id")),
+        "acquired_skill_id": skill_ref,
+        "candidate_id": candidate_ref,
+        "approval_state": _text(approval_state or candidate.get("approval_state") or decision_data.get("approval_state"), "missing"),
+        "context_packet_refs": context_refs,
+        "worklog_refs": logs,
+        "tool_permission_changes": _list(tool_permission_changes),
+        "mcp_permission_changes": _list(mcp_permission_changes),
+        "blocked_reason": reason,
+        "metadata": _safe(dict(metadata or {})),
+        "safety_gate": {
+            "resume_with_new_permissions_requires_approval": True,
+            "dag_rewire_executed": False,
+            "actions_executed": [],
+        },
+    })
+
+
+def build_adaptive_skill_metrics(*, items: list[Any] | None = None, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Summarize adaptive-skill contracts from provided trace/source items only."""
+
+    counts = {
+        "skill_gap_count": 0,
+        "adaptive_requests_count": 0,
+        "research_requests_count": 0,
+        "candidate_create_requests_count": 0,
+        "candidate_update_requests_count": 0,
+        "resume_prepared_count": 0,
+        "resume_blocked_count": 0,
+        "approval_required_count": 0,
+        "approval_missing_count": 0,
+    }
+    for raw in items or []:
+        data = _as_dict(raw)
+        metadata_data = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        kind = data.get("adaptive_kind") or metadata_data.get("adaptive_kind")
+        if kind:
+            counts["adaptive_requests_count"] += 1
+        if kind == "miniagent_skill_gap" and data.get("has_gap"):
+            counts["skill_gap_count"] += 1
+        if kind == "adaptive_research_request":
+            counts["research_requests_count"] += 1
+        if kind == "adaptive_skill_candidate_contract":
+            if data.get("candidate_action") == "create":
+                counts["candidate_create_requests_count"] += 1
+            if data.get("candidate_action") == "update":
+                counts["candidate_update_requests_count"] += 1
+        if kind == "miniagent_resume_contract":
+            if data.get("resume_state") == "resume_prepared":
+                counts["resume_prepared_count"] += 1
+            if data.get("resume_state") == "resume_blocked":
+                counts["resume_blocked_count"] += 1
+        if data.get("requires_approval") or data.get("required_approval") or data.get("approval_required") or data.get("requires_user_approval"):
+            counts["approval_required_count"] += 1
+            if _text(data.get("approval_state"), "missing").lower() == "missing":
+                counts["approval_missing_count"] += 1
+
+    return _safe({
+        "adaptive_kind": "adaptive_skill_metrics",
+        "metric_kind": "adaptive_skill_metrics",
+        "summary": "Adaptive MiniAgent skill metrics derived from reported contracts.",
+        "counts": counts,
+        "metadata": _safe(dict(metadata or {})),
+    })
+
+
 def build_adaptive_skill_trace_items(
     *,
     skill_gap: dict[str, Any] | None = None,
     adaptive_state: dict[str, Any] | None = None,
     decision: dict[str, Any] | None = None,
+    research_request: dict[str, Any] | None = None,
+    candidate_contract: dict[str, Any] | None = None,
+    resume_contract: dict[str, Any] | None = None,
+    metrics: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Build safe trace items for adaptive skill contracts without executing actions."""
 
@@ -416,6 +674,10 @@ def build_adaptive_skill_trace_items(
     gap = _as_dict(skill_gap)
     state = _as_dict(adaptive_state)
     decision_data = _as_dict(decision)
+    research = _as_dict(research_request)
+    candidate = _as_dict(candidate_contract)
+    resume = _as_dict(resume_contract)
+    metric_data = _as_dict(metrics)
     if gap:
         status = "blocked" if gap.get("severity") == "blocked" else "warning" if gap.get("has_gap") else "completed"
         items.append(build_process_trace_item(
@@ -486,5 +748,92 @@ def build_adaptive_skill_trace_items(
                 "safety_gate": decision_data.get("safety_gate"),
             },
             metadata={"source_kind": "miniagent_skill_adaptive", "adaptive_kind": "swarm_skill_resolution_decision"},
+        ))
+    if research:
+        status = "completed" if research.get("research_status") in {"research_prepared", "research_approved"} else "blocked"
+        items.append(build_process_trace_item(
+            trace_id=f"adaptive-research-{research.get('task_id') or research.get('miniagent_id') or research.get('research_status') or 'unknown'}",
+            kind="review",
+            subsystem="ReviewCore",
+            title="Browser research prepared" if status == "completed" else "Browser research approval required",
+            summary=research.get("blocked_reason") or research.get("requested_research_scope") or "Adaptive browser research request recorded.",
+            status=status,
+            evidence_refs=research.get("evidence_refs"),
+            related_task_id=research.get("task_id"),
+            related_miniagent_id=research.get("miniagent_id"),
+            details={
+                "research_status": research.get("research_status"),
+                "requested_research_scope": research.get("requested_research_scope"),
+                "requires_approval": research.get("requires_approval"),
+                "approval_state": research.get("approval_state"),
+                "browser_metadata": research.get("browser_metadata"),
+                "safety_gate": research.get("safety_gate"),
+            },
+            metadata={"source_kind": "miniagent_skill_adaptive", "adaptive_kind": "adaptive_research_request"},
+        ))
+    if candidate:
+        action = _text(candidate.get("candidate_action"), "blocked")
+        status = "blocked" if action == "blocked" else "warning" if action == "none" else "planned"
+        items.append(build_process_trace_item(
+            trace_id=f"adaptive-skill-candidate-{candidate.get('task_id') or candidate.get('candidate_id') or action}",
+            kind="skill",
+            subsystem="SkillCore",
+            title="Skill candidate blocked" if action == "blocked" else "Skill candidate contract prepared",
+            summary=candidate.get("blocked_reason") or candidate.get("summary") or "Adaptive skill candidate contract recorded.",
+            status=status,
+            evidence_refs=candidate.get("research_evidence_refs"),
+            related_task_id=candidate.get("task_id"),
+            related_miniagent_id=candidate.get("miniagent_id"),
+            related_skill_id=candidate.get("existing_skill_id"),
+            details={
+                "candidate_action": action,
+                "candidate_id": candidate.get("candidate_id"),
+                "source_refs": candidate.get("source_refs") or [],
+                "provenance_refs": candidate.get("provenance_refs") or [],
+                "requires_approval": candidate.get("requires_approval"),
+                "policy_gate_required": candidate.get("policy_gate_required"),
+                "approval_state": candidate.get("approval_state"),
+                "safety_gate": candidate.get("safety_gate"),
+            },
+            metadata={"source_kind": "miniagent_skill_adaptive", "adaptive_kind": "adaptive_skill_candidate_contract"},
+        ))
+    if resume:
+        status = "planned" if resume.get("resume_allowed") else "blocked"
+        items.append(build_process_trace_item(
+            trace_id=f"miniagent-resume-{resume.get('task_id') or resume.get('miniagent_id') or resume.get('resume_state') or 'unknown'}",
+            kind="miniagent",
+            subsystem="MiniAgentCore",
+            title="MiniAgent resume prepared" if resume.get("resume_allowed") else "MiniAgent resume blocked",
+            summary=resume.get("blocked_reason") or "MiniAgent resume contract prepared without executing resume.",
+            status=status,
+            related_task_id=resume.get("task_id"),
+            related_miniagent_id=resume.get("miniagent_id"),
+            related_skill_id=resume.get("acquired_skill_id"),
+            details={
+                "resume_state": resume.get("resume_state"),
+                "resume_allowed": resume.get("resume_allowed"),
+                "candidate_id": resume.get("candidate_id"),
+                "approval_state": resume.get("approval_state"),
+                "context_packet_refs": resume.get("context_packet_refs") or [],
+                "worklog_refs": resume.get("worklog_refs") or [],
+                "tool_permission_changes": resume.get("tool_permission_changes") or [],
+                "mcp_permission_changes": resume.get("mcp_permission_changes") or [],
+                "safety_gate": resume.get("safety_gate"),
+            },
+            metadata={"source_kind": "miniagent_skill_adaptive", "adaptive_kind": "miniagent_resume_contract"},
+        ))
+    if metric_data:
+        items.append(build_process_trace_item(
+            trace_id="adaptive-skill-metrics",
+            kind="metric",
+            subsystem="MetricCore",
+            title="Adaptive skill metrics",
+            summary=metric_data.get("summary") or "Adaptive MiniAgent skill metrics recorded.",
+            status="completed",
+            details={
+                "metric_kind": metric_data.get("metric_kind"),
+                "counts": metric_data.get("counts") or {},
+            },
+            metadata={"source_kind": "miniagent_skill_adaptive", "adaptive_kind": "adaptive_skill_metrics"},
         ))
     return items

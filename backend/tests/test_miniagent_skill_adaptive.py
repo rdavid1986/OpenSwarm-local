@@ -1,6 +1,10 @@
 ﻿from backend.apps.swarms.miniagent_skill_adaptive import (
+    build_adaptive_research_request,
+    build_adaptive_skill_metrics,
     build_adaptive_skill_trace_items,
     build_miniagent_adaptive_skill_state,
+    build_miniagent_resume_contract,
+    build_skill_candidate_from_adaptive_research,
     detect_miniagent_skill_gap,
     resolve_swarm_skill_gap_decision,
 )
@@ -118,3 +122,126 @@ def test_trace_items_and_builder_render_adaptive_contracts():
     assert normalize_process_trace_source_kind(gap) == "miniagent_skill_adaptive"
     assert builder_item["subsystem"] == "SkillCore"
     assert builder_item["metadata"]["source_kind"] == "miniagent_skill_adaptive"
+
+
+
+def test_adaptive_research_request_requires_approval_without_launching_browser():
+    gap = detect_miniagent_skill_gap(
+        assigned_skill_id="skill1",
+        task={"task_id": "t1", "miniagent_id": "mini1"},
+        blockers=["missing_current_docs"],
+    )
+    decision = resolve_swarm_skill_gap_decision(skill_gap=gap, user_approval_state="missing")
+
+    request = build_adaptive_research_request(
+        skill_gap=gap,
+        decision=decision,
+        research_scope="Find current API docs",
+        browser_context={"browser_id": "browser-1", "url": "https://example.test"},
+    )
+
+    assert request["adaptive_kind"] == "adaptive_research_request"
+    assert request["research_status"] == "research_approval_required"
+    assert request["requires_approval"] is True
+    assert request["browser_metadata"]["research_launched"] is False
+    assert request["safety_gate"]["actions_executed"] == []
+
+
+def test_skill_candidate_contract_blocks_without_real_refs():
+    gap = detect_miniagent_skill_gap(task={"task_id": "t1", "miniagent_id": "mini1"})
+    decision = resolve_swarm_skill_gap_decision(skill_gap=gap, user_approval_state="approved")
+
+    candidate = build_skill_candidate_from_adaptive_research(skill_gap=gap, decision=decision)
+
+    assert candidate["adaptive_kind"] == "adaptive_skill_candidate_contract"
+    assert candidate["candidate_action"] == "blocked"
+    assert "evidence refs" in candidate["blocked_reason"]
+    assert candidate["safety_gate"]["actions_executed"] == []
+
+
+def test_skill_candidate_contract_prepares_create_from_real_provenance_refs():
+    gap = detect_miniagent_skill_gap(task={"task_id": "t1", "miniagent_id": "mini1"})
+    decision = resolve_swarm_skill_gap_decision(skill_gap=gap, user_approval_state="approved")
+
+    candidate = build_skill_candidate_from_adaptive_research(
+        skill_gap=gap,
+        decision=decision,
+        research_evidence_refs=["evidence:docs"],
+        source_refs=["browser:approved-session"],
+        provenance_refs=["provenance:search-result-1"],
+        candidate_id="cand-1",
+        approval_state="approved",
+    )
+
+    assert candidate["candidate_action"] == "create"
+    assert candidate["candidate_id"] == "cand-1"
+    assert candidate["research_evidence_refs"] == ["evidence:docs"]
+    assert candidate["source_refs"] == ["browser:approved-session"]
+    assert candidate["provenance_refs"] == ["provenance:search-result-1"]
+
+
+def test_resume_contract_blocks_until_approval_and_context_worklog_refs():
+    resume = build_miniagent_resume_contract(
+        adaptive_state={"miniagent_id": "mini1", "task_id": "t1"},
+        candidate_contract={"candidate_id": "cand-1", "requires_approval": True, "approval_state": "missing"},
+        context_packet_refs=["ctx1"],
+        worklog_refs=["log1"],
+    )
+
+    assert resume["adaptive_kind"] == "miniagent_resume_contract"
+    assert resume["resume_allowed"] is False
+    assert resume["resume_state"] == "resume_blocked"
+    assert "approval" in resume["blocked_reason"].lower()
+
+
+def test_resume_contract_prepares_safe_resume_after_approval():
+    resume = build_miniagent_resume_contract(
+        adaptive_state={"miniagent_id": "mini1", "task_id": "t1"},
+        candidate_contract={"candidate_id": "cand-1", "requires_approval": True, "approval_state": "approved"},
+        approval_state="approved",
+        context_packet_refs=["ctx1"],
+        worklog_refs=["log1"],
+    )
+
+    assert resume["resume_allowed"] is True
+    assert resume["resume_state"] == "resume_prepared"
+    assert resume["safety_gate"]["dag_rewire_executed"] is False
+
+
+def test_adaptive_metrics_and_builder_cover_research_candidate_resume():
+    research = build_adaptive_research_request(
+        skill_gap={"task_id": "t1", "miniagent_id": "mini1", "recommended_resolution": "request_research"},
+        approval_state="approved",
+        evidence_refs=["ev1"],
+    )
+    candidate = build_skill_candidate_from_adaptive_research(
+        skill_gap={"task_id": "t1", "miniagent_id": "mini1", "recommended_resolution": "create_skill_candidate"},
+        research_evidence_refs=["ev1"],
+        source_refs=["src1"],
+        provenance_refs=["prov1"],
+        candidate_id="cand-2",
+        approval_state="approved",
+    )
+    resume = build_miniagent_resume_contract(
+        adaptive_state={"miniagent_id": "mini1", "task_id": "t1"},
+        candidate_contract=candidate,
+        approval_state="approved",
+        context_packet_refs=["ctx1"],
+        worklog_refs=["log1"],
+    )
+    metrics = build_adaptive_skill_metrics(items=[research, candidate, resume])
+    items = build_adaptive_skill_trace_items(
+        research_request=research,
+        candidate_contract=candidate,
+        resume_contract=resume,
+        metrics=metrics,
+    )
+
+    assert metrics["counts"]["research_requests_count"] == 1
+    assert metrics["counts"]["candidate_create_requests_count"] == 1
+    assert metrics["counts"]["resume_prepared_count"] == 1
+    assert [item["subsystem"] for item in items] == ["ReviewCore", "SkillCore", "MiniAgentCore", "MetricCore"]
+    assert build_process_trace_item_from_source(research)["metadata"]["adaptive_kind"] == "adaptive_research_request"
+    assert build_process_trace_item_from_source(candidate)["subsystem"] == "SkillCore"
+    assert build_process_trace_item_from_source(resume)["subsystem"] == "MiniAgentCore"
+    assert build_process_trace_item_from_source(metrics)["subsystem"] == "MetricCore"
