@@ -88,6 +88,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "skill_loading_runtime"
     if data.get("diagnostic_kind") == "lsp_diagnostic_feedback" or data.get("source_kind") == "lsp_diagnostic_feedback":
         return "lsp_diagnostic_feedback"
+    if data.get("policy_kind") == "policy_matrix_runtime" or data.get("source_kind") == "policy_matrix_runtime":
+        return "policy_matrix_runtime"
     if data.get("metric_kind") == "ollama_runtime_metrics":
         return "runtime_timer"
     explicit_source = str(data.get("source_kind") or data.get("trace_source_kind") or data.get("producer_kind") or "").strip().lower()
@@ -101,6 +103,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "skill_loading_runtime"
     if explicit_source == "lsp_diagnostic_feedback":
         return "lsp_diagnostic_feedback"
+    if explicit_source == "policy_matrix_runtime":
+        return "policy_matrix_runtime"
     if explicit_source in {"tool_trace", "tool_call", "tool_result", "tool_error"}:
         return "tool_trace"
     if explicit_source in {"action_trace", "pending_action", "approval", "action_result"}:
@@ -278,6 +282,38 @@ def build_action_trace_item(data: dict[str, Any]) -> dict[str, Any]:
         },
     )
 
+
+
+
+def build_policy_matrix_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    decision = data.get("decision") if isinstance(data.get("decision"), dict) else {}
+    warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else decision.get("warnings") if isinstance(decision.get("warnings"), list) else []
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else decision.get("required_actions") if isinstance(decision.get("required_actions"), list) else []
+    status_value = data.get("status") or decision.get("status") or "unknown"
+    blocked = status_value in {"denied", "blocked_by_config", "blocked_by_scope", "blocked_by_risk", "blocked_by_budget"}
+    needs_approval = status_value == "requires_approval"
+    status = "blocked" if blocked else "warning" if needs_approval or warnings or required_actions else "completed"
+    return build_process_trace_item(
+        trace_id=decision.get("status") or data.get("status"),
+        kind="config",
+        subsystem="ConfigCore",
+        title="Policy matrix decision",
+        summary=f"Policy matrix decision: {status_value}.",
+        status=status,
+        details={
+            "source_kind": "policy_matrix_runtime",
+            "policy_kind": data.get("policy_kind") or "policy_matrix_runtime",
+            "decision": decision or None,
+            "warnings": warnings,
+            "required_actions": required_actions,
+            "can_execute_tool": bool(data.get("can_execute_tool") and decision.get("allowed")),
+            "can_call_provider": bool(data.get("can_call_provider") and decision.get("allowed")),
+            "can_activate_mcp": bool(data.get("can_activate_mcp") and decision.get("allowed")),
+            "can_modify_files": bool(data.get("can_modify_files") and decision.get("allowed")),
+        },
+        metadata={"source_kind": "policy_matrix_runtime"},
+    )
 
 
 def build_lsp_diagnostic_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
@@ -1055,6 +1091,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = build_skill_loading_process_trace_item(data)
     elif source_kind == "lsp_diagnostic_feedback":
         item = build_lsp_diagnostic_process_trace_item(data)
+    elif source_kind == "policy_matrix_runtime":
+        item = build_policy_matrix_process_trace_item(data)
     elif source_kind == "miniagent_task_runtime_metric":
         item = process_trace_item_from_runtime_metric(data)
     elif source_kind == "tool_trace":
