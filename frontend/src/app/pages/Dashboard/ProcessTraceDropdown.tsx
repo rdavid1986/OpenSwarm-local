@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Box from '@mui/material/Box';
 import Collapse from '@mui/material/Collapse';
 import IconButton from '@mui/material/IconButton';
@@ -38,6 +38,14 @@ import DifferenceOutlinedIcon from '@mui/icons-material/DifferenceOutlined';
 
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import { buildCardVisualTokens } from './cardVisualTokens';
+import {
+  formatTemporalDurationMs,
+  formatTemporalTimestampLocal,
+  getTemporalFreshnessLabel,
+  getTemporalRunningDurationMs,
+  getTemporalStatusLabel,
+  isTemporalDurationSlow,
+} from './temporalDisplay';
 
 export type ProcessTraceStatus =
   | 'planned'
@@ -149,16 +157,8 @@ const SUBSYSTEM_INITIALS: Record<string, string> = {
 };
 
 function formatDurationMs(durationMs?: number | null): string | null {
-  if (durationMs == null || Number.isNaN(durationMs)) return null;
-  const safeMs = Math.max(0, Math.round(durationMs));
-  const seconds = safeMs / 1000;
-  if (seconds < 60) return `${seconds.toFixed(2)}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds - minutes * 60;
-  if (minutes < 60) return `${minutes}m ${remainingSeconds.toFixed(2)}s`;
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+  if (durationMs == null || Number.isNaN(Number(durationMs))) return null;
+  return formatTemporalDurationMs(durationMs);
 }
 
 function normalizeStatus(status?: string): ProcessTraceStatus {
@@ -316,6 +316,54 @@ function compactTraceList(value: unknown, limit = 5): string {
 function pushDetailRow(rows: Array<[string, unknown]>, label: string, value: unknown, options?: { list?: boolean }) {
   if (value === undefined || value === null || value === '') return;
   rows.push([label, options?.list ? compactTraceList(value) : traceText(value)]);
+}
+
+
+function numericDetail(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function nestedRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function buildTemporalSnapshot(item: ProcessTraceItem, nowMs: number) {
+  const details = item.details || {};
+  const freshness = nestedRecord(getDetailValue(details, 'freshness'));
+  const contextQualityGate = nestedRecord(getDetailValue(details, 'context_quality_gate'));
+  const startedAt = getDetailValue(details, 'started_at') || item.started_at || null;
+  const completedAt = getDetailValue(details, 'completed_at', 'finished_at') || item.finished_at || null;
+  const interruptedAt = getDetailValue(details, 'interrupted_at') || null;
+  const rawDuration = numericDetail(getDetailValue(details, 'duration_ms')) ?? item.duration_ms ?? null;
+  const rawRunning = numericDetail(getDetailValue(details, 'running_duration_ms')) ?? getTemporalRunningDurationMs(startedAt, completedAt, interruptedAt, nowMs);
+  const effectiveDurationMs = rawDuration ?? rawRunning;
+  const staleAfter = getDetailValue(details, 'stale_after') || freshness.stale_after || contextQualityGate.stale_after || null;
+  const freshnessValue = freshness.status || getDetailValue(details, 'freshness_status') || contextQualityGate.freshness || null;
+  const timezone = getDetailValue(details, 'timezone') || freshness.timezone || null;
+  const localTimeLabel = getDetailValue(details, 'local_time_label') || null;
+  const temporalStatus = getDetailValue(details, 'status') || item.status || null;
+  const hasTemporal = Boolean(startedAt || completedAt || interruptedAt || effectiveDurationMs != null || staleAfter || freshnessValue || timezone || localTimeLabel);
+  return {
+    startedAt,
+    completedAt,
+    interruptedAt,
+    effectiveDurationMs,
+    durationLabel: effectiveDurationMs != null ? formatTemporalDurationMs(effectiveDurationMs) : null,
+    running: Boolean(rawRunning != null && rawDuration == null),
+    staleAfter,
+    freshnessValue,
+    freshnessLabel: freshnessValue ? getTemporalFreshnessLabel(freshnessValue) : null,
+    timezone,
+    localTimeLabel,
+    statusLabel: getTemporalStatusLabel(temporalStatus),
+    hasTemporal,
+    slow: isTemporalDurationSlow(effectiveDurationMs),
+  };
 }
 
 function buildSubsystemDetailRows(item: ProcessTraceItem, durationLabel: string | null): Array<[string, unknown]> {
@@ -669,6 +717,101 @@ function SubsystemIcon({
   );
 }
 
+
+function TemporalDebugPanel({ item, temporal }: { item: ProcessTraceItem; temporal: ReturnType<typeof buildTemporalSnapshot> }) {
+  const c = useClaudeTokens();
+  const cardTokens = buildCardVisualTokens(c);
+  const [open, setOpen] = useState(false);
+  const details = item.details || {};
+  const rows: Array<[string, string]> = [
+    ['created_at', 'When the trace/session/message record was first created.'],
+    ['updated_at', 'When the record changed for any safe reason.'],
+    ['metadata_updated_at', 'When metadata changed; this does not count as real user/model activity.'],
+    ['last_activity_at', 'Most recent runtime activity such as execution, stream or action progress.'],
+    ['last_message_at', 'Most recent user or assistant message timestamp; used for conversation ordering.'],
+    ['started_at', 'When this run/action/tool/model segment started.'],
+    ['completed_at', 'When this segment completed successfully.'],
+    ['duration_ms', 'Final recorded duration in milliseconds.'],
+    ['stale_after', 'Time after which context or evidence should be verified again.'],
+    ['freshness', 'Fresh/stale/expiring status reported by backend runtime metadata.'],
+  ];
+  const displayRows: Array<[string, unknown]> = [
+    ['Created', getDetailValue(details, 'created_at') || item.created_at || 'not recorded'],
+    ['Updated', getDetailValue(details, 'updated_at') || 'not recorded'],
+    ['Metadata updated', getDetailValue(details, 'metadata_updated_at') || 'not recorded'],
+    ['Last activity', getDetailValue(details, 'last_activity_at') || 'not recorded'],
+    ['Last message', getDetailValue(details, 'last_message_at') || 'not recorded'],
+    ['Started', temporal.startedAt || 'not recorded'],
+    ['Completed', temporal.completedAt || 'not recorded'],
+    ['Interrupted', temporal.interruptedAt || 'not recorded'],
+    ['Duration', temporal.durationLabel || 'not recorded'],
+    ['Freshness', temporal.freshnessLabel || 'not recorded'],
+    ['Stale after', temporal.staleAfter || 'not recorded'],
+    ['Timezone', temporal.localTimeLabel || temporal.timezone || 'not recorded'],
+  ];
+  return (
+    <Box sx={{ mt: 0.9 }}>
+      <Box
+        component="button"
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen((value) => !value);
+        }}
+        sx={{
+          width: '100%',
+          border: `1px solid ${cardTokens.trace.border}`,
+          borderRadius: cardTokens.trace.nestedRadius,
+          bgcolor: cardTokens.trace.background,
+          color: c.text.tertiary,
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 1,
+          px: 0.75,
+          py: 0.55,
+          fontFamily: c.font.sans,
+          fontSize: '0.68rem',
+          fontWeight: 700,
+          textAlign: 'left',
+          '&:hover': { bgcolor: cardTokens.trace.headerHoverBackground },
+        }}
+      >
+        <span>Temporal metadata help</span>
+        <ExpandMoreIcon sx={{ fontSize: 13, transform: open ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.18s ease' }} />
+      </Box>
+      <Collapse in={open} timeout={160}>
+        <Box sx={{ border: `1px solid ${cardTokens.trace.border}`, borderTop: 'none', borderRadius: `0 0 ${cardTokens.trace.nestedRadius} ${cardTokens.trace.nestedRadius}`, p: 0.75, bgcolor: cardTokens.trace.nestedBackground }}>
+          {!temporal.hasTemporal && (
+            <Typography sx={{ color: c.text.ghost, fontSize: '0.68rem', mb: 0.7 }}>
+              Temporal metadata not recorded for this item.
+            </Typography>
+          )}
+          <Typography sx={{ color: c.text.tertiary, fontSize: '0.68rem', lineHeight: 1.45, mb: 0.75 }}>
+            Conversation ordering prefers last_message_at; execution ordering prefers last_activity_at; metadata_updated_at alone should not move a session as real activity.
+          </Typography>
+          <Box sx={{ display: 'grid', gap: 0.4, mb: 0.75 }}>
+            {displayRows.map(([label, value]) => (
+              <Box key={label} sx={{ display: 'grid', gridTemplateColumns: '112px minmax(0, 1fr)', gap: 1 }}>
+                <Typography sx={{ color: c.text.ghost, fontSize: '0.65rem', fontWeight: 800 }}>{label}</Typography>
+                <Typography sx={{ color: c.text.tertiary, fontSize: '0.65rem', fontFamily: c.font.mono, overflow: 'hidden', textOverflow: 'ellipsis' }}>{traceText(value)}</Typography>
+              </Box>
+            ))}
+          </Box>
+          <Box sx={{ display: 'grid', gap: 0.35 }}>
+            {rows.map(([field, meaning]) => (
+              <Typography key={field} sx={{ color: c.text.ghost, fontSize: '0.63rem', lineHeight: 1.35 }}>
+                <Box component="span" sx={{ color: c.text.tertiary, fontFamily: c.font.mono }}>{field}</Box>: {meaning}
+              </Typography>
+            ))}
+          </Box>
+        </Box>
+      </Collapse>
+    </Box>
+  );
+}
+
 export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
   item,
   defaultExpanded = false,
@@ -684,7 +827,14 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
   const shouldHideTraceItem = item.internal_only || item.visible_to_user === false;
 
   const status = normalizeStatus(item.status);
-  const durationLabel = formatDurationMs(item.duration_ms);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const temporal = useMemo(() => buildTemporalSnapshot(item, nowMs), [item, nowMs]);
+  useEffect(() => {
+    if (!temporal.running) return undefined;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [temporal.running]);
+  const durationLabel = temporal.durationLabel || formatDurationMs(item.duration_ms);
   const subsystem = redactTraceText(item.subsystem || 'TraceCore');
   const iconId = redactTraceText(item.icon_id || subsystem);
   const iconLabel = SUBSYSTEM_INITIALS[subsystem] || subsystem.slice(0, 2).toUpperCase() || 'TR';
@@ -716,8 +866,13 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
     if (showInternalRefs && item.related_miniagent_id) rows.push(['MiniAgent', redactTraceText(item.related_miniagent_id)]);
     if (item.related_skill_id && !rows.some(([label]) => label === 'Skill id' || label === 'Skill')) rows.push(['Skill', redactTraceText(item.related_skill_id)]);
     if (item.related_action_id && !rows.some(([label]) => label === 'Action id' || label === 'Action')) rows.push(['Action', redactTraceText(item.related_action_id)]);
-    if (item.started_at) rows.push(['Started', item.started_at]);
-    if (item.finished_at) rows.push(['Finished', item.finished_at]);
+    if (temporal.startedAt) rows.push(['Started', formatTemporalTimestampLocal(temporal.startedAt)]);
+    if (temporal.completedAt) rows.push(['Completed', formatTemporalTimestampLocal(temporal.completedAt)]);
+    if (temporal.interruptedAt) rows.push(['Interrupted', formatTemporalTimestampLocal(temporal.interruptedAt)]);
+    if (temporal.running && durationLabel) rows.push(['Running for', durationLabel]);
+    if (temporal.freshnessLabel) rows.push(['Freshness', temporal.freshnessLabel]);
+    if (temporal.staleAfter) rows.push(['Stale after', formatTemporalTimestampLocal(temporal.staleAfter)]);
+    if (temporal.localTimeLabel || temporal.timezone) rows.push(['Timezone', temporal.localTimeLabel || temporal.timezone]);
     if (durationLabel && !isDebugJsonTrace && !rows.some(([label]) => label === 'Duration')) rows.push(['Duration', durationLabel]);
     if (evidenceCount > 0 && !rows.some(([label]) => label === 'Evidence')) rows.push(['Evidence refs', compactTraceList(item.evidence_refs)]);
     if (artifactCount > 0 && !rows.some(([label]) => label === 'Artifacts')) rows.push(['Artifact refs', compactTraceList(item.artifact_refs)]);
@@ -725,14 +880,14 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
     return rows.length > MAX_DETAIL_ROWS
       ? [...rows.slice(0, MAX_DETAIL_ROWS), ['More fields', `+${rows.length - MAX_DETAIL_ROWS} more`]]
       : rows;
-  }, [item, durationLabel, evidenceCount, artifactCount, isDebugJsonTrace, hasDebugDetails, status]);
+  }, [item, durationLabel, evidenceCount, artifactCount, isDebugJsonTrace, hasDebugDetails, status, temporal]);
 
   const metadataChips = useMemo(() => {
     const details = item.details || {};
     const metadata = item.metadata || {};
     const raw = [
-      ['time', formatTraceTimestamp(item.created_at || item.started_at)],
-      ['status', STATUS_LABELS[status] || status],
+      ['time', formatTraceTimestamp(item.created_at || String(temporal.startedAt || ''))],
+      ['status', temporal.statusLabel || STATUS_LABELS[status] || status],
       ['model', getDetailValue(details, 'model') || metadata.model],
       ['mode', getDetailValue(details, 'mode') || metadata.mode],
       ['provider', getDetailValue(details, 'provider') || metadata.provider],
@@ -748,11 +903,14 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
       if (Array.isArray(value) && value.length > 0) raw.push([label, value.length]);
       else if (typeof value === 'number' && value > 0) raw.push([label, value]);
     });
+    if (durationLabel) raw.push(['duration', temporal.running ? `${durationLabel} running` : durationLabel]);
+    if (temporal.freshnessLabel) raw.push(['freshness', temporal.freshnessLabel]);
+    if (temporal.slow) raw.push(['slow', 'slow']);
     return raw
       .filter(([, value]) => value !== undefined && value !== null && value !== '')
       .map(([label, value]) => `${label}: ${traceText(value)}`)
       .slice(0, 7);
-  }, [item, status]);
+  }, [item, status, temporal, durationLabel]);
 
   const copyDetailsText = useMemo(() => {
     const detailText = detailRows.map(([label, value]) => `${label}: ${traceText(value, '')}`).join('\n');
@@ -855,6 +1013,8 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
           )}
         </Box>
 
+        {temporal.slow && <TraceChip label="slow" />}
+
         {durationLabel && (
           <Typography
             sx={{
@@ -864,7 +1024,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
               flexShrink: 0,
             }}
           >
-            {durationLabel}
+            {temporal.running ? `${durationLabel} live` : durationLabel}
           </Typography>
         )}
 
@@ -978,6 +1138,8 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
               ))}
             </Box>
           )}
+
+          {!isDebugJsonTrace && <TemporalDebugPanel item={item} temporal={temporal} />}
 
           {!isDebugJsonTrace && (detailRows.length > 0 || summary) && (
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 0.85 }}>
