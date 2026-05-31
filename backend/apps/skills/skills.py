@@ -22,6 +22,15 @@ from backend.apps.skills.import_policy import evaluate_skill_import_policy
 from backend.apps.skills.import_preview import build_skill_import_preview_report
 from backend.apps.skills.import_detection import detect_skill_import_source_format
 from backend.apps.skills.import_ingestion_guard import build_prepared_skill_import_ingestion_guard, sanitize_prepared_skill_import_files
+from backend.apps.skills.skill_harness import (
+    build_skill_dry_run_report,
+    build_skill_evidence_quality_report,
+    build_skill_harness_full_report,
+    build_skill_promotion_gate,
+    build_skill_regression_suite,
+    build_skill_runtime_validation_report,
+    build_skill_test_case_contract,
+)
 from backend.apps.tools_lib.models import BUILTIN_TOOLS
 
 logger = logging.getLogger(__name__)
@@ -336,6 +345,70 @@ async def get_skill_candidate_requirements_contract(candidate_id: str):
         modes=modes_snapshot,
         warnings=contract_warnings,
     )
+
+
+def _load_skill_candidate_or_404(candidate_id: str) -> SkillSpecCandidate:
+    try:
+        return skill_candidate_store.load(candidate_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Skill candidate not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@skills.router.get("/candidates/{candidate_id}/harness/test-contract")
+async def get_skill_candidate_harness_test_contract(candidate_id: str):
+    candidate = _load_skill_candidate_or_404(candidate_id)
+    return build_skill_test_case_contract(candidate.model_dump(mode="json"))
+
+
+@skills.router.get("/candidates/{candidate_id}/harness/dry-run")
+async def get_skill_candidate_harness_dry_run(candidate_id: str):
+    candidate = _load_skill_candidate_or_404(candidate_id)
+    payload = candidate.model_dump(mode="json")
+    test_contract = build_skill_test_case_contract(payload)
+    return build_skill_dry_run_report(payload, test_contract)
+
+
+@skills.router.get("/candidates/{candidate_id}/harness/runtime-validation")
+async def get_skill_candidate_harness_runtime_validation(candidate_id: str):
+    candidate = _load_skill_candidate_or_404(candidate_id)
+    payload = candidate.model_dump(mode="json")
+    test_contract = build_skill_test_case_contract(payload)
+    dry_run = build_skill_dry_run_report(payload, test_contract)
+    return build_skill_runtime_validation_report(payload, dry_run)
+
+
+@skills.router.get("/candidates/{candidate_id}/harness/regression-suite")
+async def get_skill_candidate_harness_regression_suite(candidate_id: str):
+    candidate = _load_skill_candidate_or_404(candidate_id)
+    payload = candidate.model_dump(mode="json")
+    validation = build_skill_runtime_validation_report(payload)
+    return build_skill_regression_suite(payload, validation)
+
+
+@skills.router.get("/candidates/{candidate_id}/harness/evidence-quality")
+async def get_skill_candidate_harness_evidence_quality(candidate_id: str):
+    candidate = _load_skill_candidate_or_404(candidate_id)
+    payload = candidate.model_dump(mode="json")
+    validation = build_skill_runtime_validation_report(payload)
+    return build_skill_evidence_quality_report(payload, validation, evidence_refs=payload.get("evidence_refs"))
+
+
+@skills.router.get("/candidates/{candidate_id}/harness/promotion-gate")
+async def get_skill_candidate_harness_promotion_gate(candidate_id: str):
+    candidate = _load_skill_candidate_or_404(candidate_id)
+    payload = candidate.model_dump(mode="json")
+    validation = build_skill_runtime_validation_report(payload)
+    regression = build_skill_regression_suite(payload, validation)
+    evidence = build_skill_evidence_quality_report(payload, validation, evidence_refs=payload.get("evidence_refs"))
+    return build_skill_promotion_gate(payload, validation, evidence, regression)
+
+
+@skills.router.get("/candidates/{candidate_id}/harness/full")
+async def get_skill_candidate_harness_full(candidate_id: str):
+    candidate = _load_skill_candidate_or_404(candidate_id)
+    return build_skill_harness_full_report(candidate.model_dump(mode="json"))
 
 
 @skills.router.get("/candidates/{candidate_id}/quality-review")

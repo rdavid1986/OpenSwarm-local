@@ -200,6 +200,21 @@ export interface SkillCandidateImprovementProposal {
   guardrails?: string[];
 }
 
+export interface SkillHarnessFullReport {
+  harness_kind?: 'skill_harness_full_report' | string;
+  skill_ref?: string;
+  test_contract?: Record<string, any>;
+  dry_run?: Record<string, any>;
+  runtime_validation?: Record<string, any>;
+  regression_suite?: Record<string, any>;
+  evidence_quality?: Record<string, any>;
+  promotion_gate?: Record<string, any>;
+  can_install_skill?: boolean;
+  can_execute_source?: boolean;
+  can_activate_tools?: boolean;
+  can_activate_mcp?: boolean;
+}
+
 export type SkillCandidateCreateBody = Partial<Omit<SkillSpecCandidate, 'skill_spec'>> & {
   skill_spec: Partial<SkillSpec> & Pick<SkillSpec, 'name'>;
 };
@@ -264,6 +279,9 @@ interface SkillsState {
   candidateImprovementProposalsError: Record<string, string | null>;
   candidateImprovementApplyLoading: Record<string, boolean>;
   candidateImprovementApplyError: Record<string, string | null>;
+  candidateHarnessReports: Record<string, SkillHarnessFullReport>;
+  candidateHarnessReportsLoading: Record<string, boolean>;
+  candidateHarnessReportsError: Record<string, string | null>;
   skillImportPreview: SkillImportPreviewResult | null;
   skillImportPreviewLoading: boolean;
   skillImportPreviewError: string | null;
@@ -296,6 +314,9 @@ const initialState: SkillsState = {
   candidateImprovementProposalsError: {},
   candidateImprovementApplyLoading: {},
   candidateImprovementApplyError: {},
+  candidateHarnessReports: {},
+  candidateHarnessReportsLoading: {},
+  candidateHarnessReportsError: {},
   skillImportPreview: null,
   skillImportPreviewLoading: false,
   skillImportPreviewError: null,
@@ -437,6 +458,18 @@ export const fetchSkillCandidateImprovementProposal = createAsyncThunk(
       throw new Error(data.detail || 'Failed to fetch skill candidate improvement proposal');
     }
     return await res.json() as SkillCandidateImprovementProposal;
+  },
+);
+
+export const fetchSkillCandidateHarnessFull = createAsyncThunk(
+  'skills/fetchCandidateHarnessFull',
+  async (candidateId: string) => {
+    const res = await fetch(`${SKILLS_API}/candidates/${candidateId}/harness/full`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Failed to fetch skill harness report');
+    }
+    return await res.json() as SkillHarnessFullReport;
   },
 );
 
@@ -690,6 +723,20 @@ const skillsSlice = createSlice({
       .addCase(fetchSkillCandidateImprovementProposal.rejected, (state, action) => {
         state.candidateImprovementProposalsLoading[action.meta.arg] = false;
         state.candidateImprovementProposalsError[action.meta.arg] = action.error.message || 'Failed to fetch improvement proposal';
+      })
+      .addCase(fetchSkillCandidateHarnessFull.pending, (state, action) => {
+        state.candidateHarnessReportsLoading[action.meta.arg] = true;
+        state.candidateHarnessReportsError[action.meta.arg] = null;
+      })
+      .addCase(fetchSkillCandidateHarnessFull.fulfilled, (state, action) => {
+        const candidateId = String(action.payload.skill_ref || action.meta.arg);
+        state.candidateHarnessReportsLoading[action.meta.arg] = false;
+        state.candidateHarnessReports[candidateId] = action.payload;
+        if (candidateId !== action.meta.arg) state.candidateHarnessReports[action.meta.arg] = action.payload;
+      })
+      .addCase(fetchSkillCandidateHarnessFull.rejected, (state, action) => {
+        state.candidateHarnessReportsLoading[action.meta.arg] = false;
+        state.candidateHarnessReportsError[action.meta.arg] = action.error.message || 'Failed to fetch skill harness report';
       })
       .addCase(applySkillCandidateImprovementProposal.pending, (state, action) => {
         state.candidateImprovementApplyLoading[action.meta.arg.candidateId] = true;

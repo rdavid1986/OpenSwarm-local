@@ -42,6 +42,7 @@ import {
   fetchSkillCandidateRequirementsContract,
   fetchSkillCandidateQualityReview,
   fetchSkillCandidateResearchContract,
+  fetchSkillCandidateHarnessFull,
   approveSkillCandidateResearch,
   fetchSkillCandidateImprovementProposal,
   applySkillCandidateImprovementProposal,
@@ -60,6 +61,7 @@ import {
   SkillCandidateQualityReview,
   SkillCandidateResearchContract,
   SkillCandidateImprovementProposal,
+  SkillHarnessFullReport,
   SkillSpecCandidate,
 } from '@/shared/state/skillsSlice';
 import {
@@ -114,6 +116,9 @@ const Skills: React.FC = () => {
     candidateImprovementProposalsError,
     candidateImprovementApplyLoading,
     candidateImprovementApplyError,
+    candidateHarnessReports,
+    candidateHarnessReportsLoading,
+    candidateHarnessReportsError,
     skillImportPreview,
     skillImportPreviewLoading,
     skillImportPreviewError,
@@ -154,6 +159,7 @@ const Skills: React.FC = () => {
     requirements: false,
     contract: false,
     research: true,
+    harness: true,
     source: false,
     content: false,
     improvement: true,
@@ -270,6 +276,12 @@ const Skills: React.FC = () => {
     selectedCandidate ? !!candidateImprovementApplyLoading[selectedCandidate.candidate_id] : false;
   const selectedImprovementApplyError =
     selectedCandidate ? candidateImprovementApplyError[selectedCandidate.candidate_id] ?? null : null;
+  const selectedHarnessReport: SkillHarnessFullReport | null =
+    selectedCandidate ? candidateHarnessReports[selectedCandidate.candidate_id] ?? null : null;
+  const selectedHarnessLoading =
+    selectedCandidate ? !!candidateHarnessReportsLoading[selectedCandidate.candidate_id] : false;
+  const selectedHarnessError =
+    selectedCandidate ? candidateHarnessReportsError[selectedCandidate.candidate_id] ?? null : null;
   const selectedReg: RegistrySkillDetail | null =
     selection?.type === 'registry' && regDetail?.name === selection.name ? regDetail : null;
 
@@ -300,6 +312,13 @@ const Skills: React.FC = () => {
     if (candidateImprovementProposalsLoading[selectedCandidate.candidate_id]) return;
     dispatch(fetchSkillCandidateImprovementProposal(selectedCandidate.candidate_id));
   }, [candidateImprovementProposals, candidateImprovementProposalsLoading, dispatch, selectedCandidate]);
+
+  useEffect(() => {
+    if (!selectedCandidate) return;
+    if (candidateHarnessReports[selectedCandidate.candidate_id]) return;
+    if (candidateHarnessReportsLoading[selectedCandidate.candidate_id]) return;
+    dispatch(fetchSkillCandidateHarnessFull(selectedCandidate.candidate_id));
+  }, [candidateHarnessReports, candidateHarnessReportsLoading, dispatch, selectedCandidate]);
 
   // CRUD
   const openCreate = () => {
@@ -1134,6 +1153,95 @@ const Skills: React.FC = () => {
             tone={tone === 'default' ? 'default' : tone}
           />
         ))}
+      </Box>
+    );
+  };
+
+  const SkillHarnessPanel: React.FC<{ report: SkillHarnessFullReport | null; loading: boolean; error: string | null }> = ({ report, loading, error }) => {
+    const testContract = report?.test_contract || {};
+    const dryRun = report?.dry_run || {};
+    const validation = report?.runtime_validation || {};
+    const evidence = report?.evidence_quality || {};
+    const regression = report?.regression_suite || {};
+    const promotion = report?.promotion_gate || {};
+    const testCases = asArray(testContract.test_cases);
+    const evaluated = asArray(dryRun.evaluated_test_cases);
+    const checks = asArray(validation.checks);
+    const regressions = asArray(regression.regression_tests);
+    const reasons = asArray(promotion.reasons);
+    const actions = asArray(promotion.required_actions);
+
+    if (error) return <ReviewSection title="Skill harness unavailable" tone="error"><EmptyReviewState text={error} /></ReviewSection>;
+    if (loading) return <ReviewSection title="Loading skill harness"><EmptyReviewState text="Loading read-only harness contracts..." /></ReviewSection>;
+    if (!report) return <ReviewSection title="Skill harness"><EmptyReviewState text="No harness report loaded." /></ReviewSection>;
+
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+          <MetaChip label="read-only" tone="success" />
+          <MetaChip label="no execution" tone="success" />
+          <MetaChip label="no install" tone="warning" />
+          <MetaChip label="tools/MCP disabled" tone="warning" />
+          <MetaChip label={`validation ${toDisplayText(validation.status, 'unmeasured')}`} tone={validation.status === 'passed' ? 'success' : validation.status === 'blocked' || validation.status === 'failed' ? 'error' : 'warning'} />
+          <MetaChip label={`promotion ${toDisplayText(promotion.decision, 'unmeasured')}`} tone={promotion.decision === 'promote_ready' ? 'success' : promotion.decision === 'blocked' ? 'error' : 'warning'} />
+        </Box>
+
+        <ReviewSection title="Test cases" tone={testContract.status === 'blocked' ? 'error' : testContract.status === 'ready' ? 'success' : 'warning'}>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 0.75 }}>
+            <MetaChip label={`status ${toDisplayText(testContract.status, 'unmeasured')}`} />
+            <MetaChip label={`cases ${toDisplayText(testContract.test_case_count, 0)}`} />
+          </Box>
+          {testCases.length > 0 ? testCases.slice(0, 4).map((raw, index) => {
+            const item = isPlainObject(raw) ? raw : {};
+            return (
+              <Box key={`harness-case-${index}`} sx={{ mb: 0.65, pl: 0.75, borderLeft: `2px solid ${c.border.subtle}` }}>
+                <Typography sx={{ fontSize: '0.7rem', color: c.text.secondary, fontWeight: 700 }}>{toDisplayText(item.title, 'test case')}</Typography>
+                <Typography sx={{ fontSize: '0.66rem', color: c.text.ghost, lineHeight: 1.35 }}>{toDisplayText(item.expected_behavior, 'Expected behavior not provided')}</Typography>
+              </Box>
+            );
+          }) : <EmptyReviewState text="No proposed test cases." />}
+        </ReviewSection>
+
+        <ReviewSection title="Dry run simulation" tone={dryRun.status === 'blocked' ? 'error' : dryRun.status === 'ready' ? 'success' : 'warning'}>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 0.75 }}>
+            <MetaChip label={toDisplayText(dryRun.dry_run_mode, 'read_only_simulation')} />
+            <MetaChip label={dryRun.executed ? 'executed' : 'not executed'} tone={dryRun.executed ? 'error' : 'success'} />
+            <MetaChip label={dryRun.tool_calls_executed ? 'tools executed' : 'no tool calls'} tone={dryRun.tool_calls_executed ? 'error' : 'success'} />
+            <MetaChip label={dryRun.mcp_activated ? 'MCP activated' : 'MCP disabled'} tone={dryRun.mcp_activated ? 'error' : 'success'} />
+          </Box>
+          <ChipList values={evaluated.map((item) => isPlainObject(item) ? `${toDisplayText(item.test_case_id)}:${toDisplayText(item.status)}` : toDisplayText(item))} empty="No simulated cases" />
+        </ReviewSection>
+
+        <ReviewSection title="Runtime validation" tone={validation.status === 'passed' ? 'success' : validation.status === 'blocked' || validation.status === 'failed' ? 'error' : 'warning'}>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 0.75 }}>
+            <MetaChip label={`passed ${toDisplayText(validation.passed_count, 0)}`} tone="success" />
+            <MetaChip label={`failed ${toDisplayText(validation.failed_count, 0)}`} tone={validation.failed_count ? 'error' : 'success'} />
+            <MetaChip label={`warnings ${toDisplayText(validation.warning_count, 0)}`} tone={validation.warning_count ? 'warning' : 'success'} />
+          </Box>
+          <ChipList values={checks.slice(0, 8).map((item) => isPlainObject(item) ? `${toDisplayText(item.code)}:${toDisplayText(item.status)}` : toDisplayText(item))} empty="No validation checks" />
+        </ReviewSection>
+
+        <ReviewSection title="Evidence quality" tone={evidence.status === 'strong' || evidence.status === 'sufficient' ? 'success' : evidence.status === 'blocked' ? 'error' : 'warning'}>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 0.75 }}>
+            <MetaChip label={`status ${toDisplayText(evidence.status, 'unmeasured')}`} />
+            <MetaChip label={`evidence ${toDisplayText(evidence.evidence_count, 0)}`} />
+          </Box>
+          <ChipList values={asArray(evidence.evidence_refs)} empty="No evidence refs present" />
+          <Typography sx={{ mt: 0.6, fontSize: '0.67rem', color: c.text.ghost }}>
+            Missing: {asArray(evidence.missing_evidence).map((item) => toDisplayText(item)).join(', ') || 'none'}
+          </Typography>
+        </ReviewSection>
+
+        <ReviewSection title="Regression suite / Promotion gate" tone={promotion.decision === 'promote_ready' ? 'success' : promotion.decision === 'blocked' ? 'error' : 'warning'}>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 0.75 }}>
+            <MetaChip label={`regression ${toDisplayText(regression.status, 'unmeasured')}`} />
+            <MetaChip label={`tests ${regressions.length}`} />
+            <MetaChip label={`decision ${toDisplayText(promotion.decision, 'unmeasured')}`} />
+            <MetaChip label={promotion.can_request_install_approval ? 'can request approval' : 'approval request blocked'} tone={promotion.can_request_install_approval ? 'success' : 'warning'} />
+          </Box>
+          {reasons.length > 0 && <Typography sx={{ fontSize: '0.67rem', color: c.status.warning, lineHeight: 1.4 }}>Reasons: {reasons.map((item) => toDisplayText(isPlainObject(item) ? item.code : item)).join(', ')}</Typography>}
+          {actions.length > 0 && <Typography sx={{ fontSize: '0.67rem', color: c.text.ghost, lineHeight: 1.4, mt: 0.35 }}>Required actions: {actions.map((item) => toDisplayText(isPlainObject(item) ? item.code : item)).join(', ')}</Typography>}
+        </ReviewSection>
       </Box>
     );
   };
@@ -2639,6 +2747,19 @@ const Skills: React.FC = () => {
                 executionError={selectedResearchExecutionError}
                 onSetResearchPermission={handleApproveCandidateResearch}
                 onExecuteResearch={handleExecuteCandidateResearch}
+              />
+            </CollapsibleCandidatePanel>
+
+            <CollapsibleCandidatePanel
+              id="harness"
+              title="Skill Harness"
+              summary="Read-only test cases, dry run simulation, validation, evidence quality, regression and promotion gate."
+              defaultTone={selectedHarnessError ? 'error' : selectedHarnessReport?.promotion_gate?.decision === 'promote_ready' ? 'success' : 'warning'}
+            >
+              <SkillHarnessPanel
+                report={selectedHarnessReport}
+                loading={selectedHarnessLoading}
+                error={selectedHarnessError}
               />
             </CollapsibleCandidatePanel>
 

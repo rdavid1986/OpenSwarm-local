@@ -61,6 +61,15 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "swarm_final_audit"
     if data.get("report_kind") == "skill_import_preview_report" or data.get("source_kind") in {"skill_import_preview", "skill_import_candidate"}:
         return "skill_import_preview"
+    if (
+        data.get("harness_kind") == "skill_harness_full_report"
+        or data.get("source_kind") == "skill_harness"
+        or data.get("contract_kind") == "skill_test_case_contract"
+        or data.get("report_kind") in {"skill_dry_run_report", "skill_runtime_validation_report", "skill_evidence_quality_report"}
+        or data.get("suite_kind") == "skill_regression_suite"
+        or data.get("gate_kind") == "skill_promotion_gate"
+    ):
+        return "skill_harness"
     if data.get("metric_kind") == "miniagent_task_runtime_metric":
         return "miniagent_task_runtime_metric"
     if data.get("metric_kind") == "ollama_runtime_metrics":
@@ -628,6 +637,47 @@ def build_skill_import_process_trace_item(preview_report: dict[str, Any], policy
     )
 
 
+def build_skill_harness_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    test_contract = data.get("test_contract") if isinstance(data.get("test_contract"), dict) else data if data.get("contract_kind") == "skill_test_case_contract" else {}
+    dry_run = data.get("dry_run") if isinstance(data.get("dry_run"), dict) else data if data.get("report_kind") == "skill_dry_run_report" else {}
+    validation = data.get("runtime_validation") if isinstance(data.get("runtime_validation"), dict) else data if data.get("report_kind") == "skill_runtime_validation_report" else {}
+    regression = data.get("regression_suite") if isinstance(data.get("regression_suite"), dict) else data if data.get("suite_kind") == "skill_regression_suite" else {}
+    evidence = data.get("evidence_quality") if isinstance(data.get("evidence_quality"), dict) else data if data.get("report_kind") == "skill_evidence_quality_report" else {}
+    promotion = data.get("promotion_gate") if isinstance(data.get("promotion_gate"), dict) else data if data.get("gate_kind") == "skill_promotion_gate" else {}
+    validation_status = validation.get("status") or "unmeasured"
+    promotion_decision = promotion.get("decision") or "unmeasured"
+    blocked = validation_status in {"blocked", "failed"} or promotion_decision == "blocked" or regression.get("status") == "blocked" or evidence.get("status") == "blocked"
+    needs_review = promotion_decision in {"needs_review", "unmeasured"} or validation_status in {"needs_review", "unmeasured"} or evidence.get("status") in {"weak", "missing", "unmeasured"}
+    status = "blocked" if blocked else "warning" if needs_review else "completed"
+
+    return build_process_trace_item(
+        trace_id=data.get("skill_ref") or test_contract.get("skill_ref") or validation.get("skill_ref") or promotion.get("skill_ref"),
+        kind="skill",
+        subsystem="SkillCore",
+        title="Skill harness validation",
+        summary="Read-only skill harness validation recorded without execution, install, tools, or MCP activation.",
+        status=status,
+        details={
+            "source_kind": "skill_harness",
+            "test_contract_status": test_contract.get("status"),
+            "test_case_count": test_contract.get("test_case_count"),
+            "validation_status": validation_status,
+            "evidence_status": evidence.get("status"),
+            "promotion_decision": promotion_decision,
+            "regression_status": regression.get("status"),
+            "dry_run_mode": dry_run.get("dry_run_mode"),
+            "dry_run_executed": dry_run.get("executed", False),
+            "can_request_install_approval": promotion.get("can_request_install_approval", False),
+            "can_install_skill": False,
+            "can_execute_source": False,
+            "can_activate_tools": False,
+            "can_activate_mcp": False,
+        },
+        metadata={"source_kind": "skill_harness"},
+    )
+
+
 def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
     source_kind = normalize_process_trace_source_kind(source)
     data = redact_process_trace_source(source)
@@ -662,6 +712,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = _audit_item(data)
     elif source_kind == "skill_import_preview":
         item = build_skill_import_process_trace_item(data, policy=data.get("policy") if isinstance(data.get("policy"), dict) else None)
+    elif source_kind == "skill_harness":
+        item = build_skill_harness_process_trace_item(data)
     elif source_kind == "miniagent_task_runtime_metric":
         item = process_trace_item_from_runtime_metric(data)
     elif source_kind == "tool_trace":

@@ -18,6 +18,7 @@ from backend.apps.swarms.swarm_final_audit import build_swarm_final_audit
 from backend.apps.swarms.swarm_timeline import build_swarm_timeline_event
 from backend.apps.skills.import_policy import evaluate_skill_import_policy
 from backend.apps.skills.import_preview import build_skill_import_preview_report
+from backend.apps.skills.skill_harness import build_skill_harness_full_report
 
 
 START = "2026-05-30T10:00:00Z"
@@ -471,6 +472,34 @@ def test_builder_from_blocked_skill_import_preview_trace_source_redacts_raw_cont
     assert item["details"]["compatibility_status"] == "blocked"
     assert "raw_content" not in item["details"]
     assert "API_KEY" not in str(item["details"])
+
+
+def test_builder_from_skill_harness_trace_source():
+    harness = build_skill_harness_full_report({
+        "candidate_id": "cand1",
+        "skill_spec": {
+            "name": "Harness Skill",
+            "command": "harness-skill",
+            "content": "# Harness Skill\nReview safely.",
+            "validation_plan": {"checks": [{"title": "Check behavior", "required_evidence": ["ev1"]}]},
+            "evidence_contract": {"required_evidence": ["ev1"]},
+        },
+        "evidence_refs": ["ev1"],
+        "source": "skill_builder",
+    })
+
+    item = build_process_trace_item_from_source(harness)
+
+    assert normalize_process_trace_source_kind(harness) == "skill_harness"
+    assert item["subsystem"] == "SkillCore"
+    assert item["title"] == "Skill harness validation"
+    assert item["details"]["source_kind"] == "skill_harness"
+    assert item["details"]["dry_run_executed"] is False
+    assert item["details"]["can_install_skill"] is False
+    assert item["details"]["can_execute_source"] is False
+    assert item["details"]["can_activate_tools"] is False
+    assert item["details"]["can_activate_mcp"] is False
+    assert "content" not in item["details"]
 
 
 def test_builder_from_miniagent_and_handoff_trace_sources():
