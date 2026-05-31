@@ -84,6 +84,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "context_compaction"
     if data.get("bootstrap_kind") == "project_instructions_bootstrap" or data.get("source_kind") == "project_instructions_bootstrap":
         return "project_instructions_bootstrap"
+    if data.get("loading_kind") == "skill_loading_runtime" or data.get("source_kind") == "skill_loading_runtime":
+        return "skill_loading_runtime"
     if data.get("metric_kind") == "ollama_runtime_metrics":
         return "runtime_timer"
     explicit_source = str(data.get("source_kind") or data.get("trace_source_kind") or data.get("producer_kind") or "").strip().lower()
@@ -93,6 +95,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "context_compaction"
     if explicit_source == "project_instructions_bootstrap":
         return "project_instructions_bootstrap"
+    if explicit_source == "skill_loading_runtime":
+        return "skill_loading_runtime"
     if explicit_source in {"tool_trace", "tool_call", "tool_result", "tool_error"}:
         return "tool_trace"
     if explicit_source in {"action_trace", "pending_action", "approval", "action_result"}:
@@ -789,6 +793,49 @@ def build_skill_import_process_trace_item(preview_report: dict[str, Any], policy
     )
 
 
+
+def build_skill_loading_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    index = data.get("availability_index") if isinstance(data.get("availability_index"), dict) else {}
+    budget = data.get("budget_cost") if isinstance(data.get("budget_cost"), dict) else {}
+    selection = data.get("selection") if isinstance(data.get("selection"), dict) else {}
+    payload = data.get("context_payload") if isinstance(data.get("context_payload"), dict) else {}
+    warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    if isinstance(selection.get("warnings"), list):
+        warnings = list(dict.fromkeys(warnings + selection.get("warnings")))
+    if isinstance(selection.get("required_actions"), list):
+        required_actions = list(dict.fromkeys(required_actions + selection.get("required_actions")))
+    blocked = data.get("status") in {"blocked", "over_budget"} or budget.get("status") == "over_budget" or selection.get("status") == "over_budget"
+    status = "blocked" if blocked else "warning" if warnings or required_actions else "completed"
+    evidence_refs = payload.get("evidence_refs") if isinstance(payload.get("evidence_refs"), list) else []
+    return build_process_trace_item(
+        trace_id=selection.get("selected_skill_ref") or payload.get("skill_ref") or data.get("status"),
+        kind="skill",
+        subsystem="SkillCore",
+        title="Skill runtime loading",
+        summary=f"Skill runtime loading {data.get('status') or selection.get('status') or payload.get('status') or 'recorded'}; entries={index.get('total_count') or 0}.",
+        status=status,
+        details={
+            "source_kind": "skill_loading_runtime",
+            "loading_kind": data.get("loading_kind") or "skill_loading_runtime",
+            "availability_index": index or None,
+            "budget_cost": budget or None,
+            "selection": selection or None,
+            "context_payload": payload or None,
+            "warnings": warnings,
+            "required_actions": required_actions,
+            "can_install_skill": False,
+            "can_execute_source": False,
+            "can_activate_tools": False,
+            "can_activate_mcp": False,
+        },
+        evidence_refs=evidence_refs,
+        related_task_id=selection.get("task_id"),
+        metadata={"source_kind": "skill_loading_runtime"},
+    )
+
+
 def build_skill_harness_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
     data = source or {}
     test_contract = data.get("test_contract") if isinstance(data.get("test_contract"), dict) else data if data.get("contract_kind") == "skill_test_case_contract" else {}
@@ -960,6 +1007,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = build_context_compaction_process_trace_item(data)
     elif source_kind == "project_instructions_bootstrap":
         item = build_project_instructions_process_trace_item(data)
+    elif source_kind == "skill_loading_runtime":
+        item = build_skill_loading_process_trace_item(data)
     elif source_kind == "miniagent_task_runtime_metric":
         item = process_trace_item_from_runtime_metric(data)
     elif source_kind == "tool_trace":
