@@ -97,6 +97,9 @@ def build_skill_import_preview_report(input: dict[str, Any]) -> dict[str, Any]:
     existing_content = str(existing.get("content") or "")
     preview_content = str(spec.get("content") or "")
     risk_report = _risk_report(normalized)
+    prepared_ingestion_guard = normalized.get("prepared_ingestion_guard")
+    if not isinstance(prepared_ingestion_guard, dict):
+        prepared_ingestion_guard = contract.get("prepared_ingestion_guard") if isinstance(contract.get("prepared_ingestion_guard"), dict) else None
 
     report = {
         "report_kind": "skill_import_preview_report",
@@ -106,6 +109,7 @@ def build_skill_import_preview_report(input: dict[str, Any]) -> dict[str, Any]:
         "skill_spec_preview": spec,
         "preview_diff": _content_diff(existing_content, preview_content),
         "risk_report": risk_report,
+        "prepared_ingestion_guard": prepared_ingestion_guard,
         "unsupported_features": _as_list(normalized.get("unsupported_features")),
         "conversion_warnings": _as_list(normalized.get("conversion_warnings")),
         "required_tools": _as_list(contract.get("required_tools") or spec.get("required_tools")),

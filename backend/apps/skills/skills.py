@@ -21,6 +21,7 @@ from backend.apps.skills.import_candidate import build_skill_candidate_from_impo
 from backend.apps.skills.import_policy import evaluate_skill_import_policy
 from backend.apps.skills.import_preview import build_skill_import_preview_report
 from backend.apps.skills.import_detection import detect_skill_import_source_format
+from backend.apps.skills.import_ingestion_guard import build_prepared_skill_import_ingestion_guard, sanitize_prepared_skill_import_files
 from backend.apps.tools_lib.models import BUILTIN_TOOLS
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,10 @@ async def read_skill_workspace(workspace_id: str):
 
 def _build_skill_import_preview_payload(body: SkillImportPreviewRequest) -> dict:
     payload = body.model_dump(mode="json", exclude_none=True)
+    prepared_ingestion_guard = build_prepared_skill_import_ingestion_guard(payload)
+    payload["prepared_ingestion_guard"] = prepared_ingestion_guard
+    if isinstance(payload.get("files"), list):
+        payload["files"] = sanitize_prepared_skill_import_files(payload)
     detection = detect_skill_import_source_format(payload)
     if not payload.get("source_format") or payload.get("source_format") == "unknown":
         payload["source_format"] = detection.get("detected_format", "unknown")
@@ -162,6 +167,7 @@ def _build_skill_import_preview_payload(body: SkillImportPreviewRequest) -> dict
         "detection": detection,
         "preview": preview,
         "policy": policy,
+        "prepared_ingestion_guard": prepared_ingestion_guard,
         "can_create_candidate": bool(policy.get("can_create_candidate")),
         "can_install_skill": False,
         "can_execute_source": False,

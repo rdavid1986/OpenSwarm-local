@@ -38,6 +38,20 @@ def evaluate_skill_import_policy(preview_report: dict[str, Any]) -> dict[str, An
     source_author = contract.get("source_author") or provenance.get("source_author")
     required_tools = _as_list(report.get("required_tools") or contract.get("required_tools") or spec.get("required_tools"))
     required_mcp_servers = _as_list(report.get("required_mcp_servers") or contract.get("required_mcp_servers") or spec.get("required_mcp_servers"))
+    prepared_ingestion_guard = report.get("prepared_ingestion_guard") if isinstance(report.get("prepared_ingestion_guard"), dict) else contract.get("prepared_ingestion_guard") if isinstance(contract.get("prepared_ingestion_guard"), dict) else {}
+    ingestion_status = str(prepared_ingestion_guard.get("status") or "not_applicable")
+    if ingestion_status == "blocked" or "unsafe_prepared_files" in risks:
+        blocked = True
+        reasons.append({"code": "prepared_ingestion_blocked", "severity": "critical", "message": "Prepared repo/zip/folder files failed ingestion guard."})
+        for item in _as_list(prepared_ingestion_guard.get("rejected_files")):
+            if isinstance(item, dict):
+                reasons.append({
+                    "code": str(item.get("code") or "prepared_file_rejected"),
+                    "severity": str(item.get("severity") or "high"),
+                    "message": str(item.get("message") or "Prepared file rejected."),
+                })
+    elif ingestion_status == "needs_review":
+        reasons.append({"code": "prepared_ingestion_needs_review", "severity": "medium", "message": "Prepared repo/zip/folder files require manual review."})
 
     if not content:
         reasons.append({"code": "content_missing", "severity": "high", "message": "Preview content is required."})

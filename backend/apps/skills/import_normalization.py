@@ -141,7 +141,7 @@ def normalize_external_skill_to_skillspec_preview(input: dict[str, Any]) -> dict
     data = _normalize_input_for_supported_adapter(input or {})
     source_format = str(data.get("source_format") or "unknown")
     source_platform = str(data.get("source_platform") or "unknown")
-    content = str(data.get("content") or "")
+    content = str(data.get("content") or _prepared_content_from_files(data) or "")
     frontmatter = data.get("frontmatter") if isinstance(data.get("frontmatter"), dict) else {}
     provenance_input = data.get("provenance") if isinstance(data.get("provenance"), dict) else {}
 
@@ -153,6 +153,15 @@ def normalize_external_skill_to_skillspec_preview(input: dict[str, Any]) -> dict
 
     risks, conversion_warnings = _detect_risks(content)
     unsupported_features = _as_list(data.get("unsupported_features"))
+    prepared_ingestion_guard = data.get("prepared_ingestion_guard") if isinstance(data.get("prepared_ingestion_guard"), dict) else {}
+    ingestion_status = str(prepared_ingestion_guard.get("status") or "not_applicable")
+    if ingestion_status == "blocked":
+        risks.append("unsafe_prepared_files")
+        conversion_warnings.append("Prepared file ingestion guard blocked unsafe material; preview was sanitized.")
+    elif ingestion_status == "needs_review":
+        conversion_warnings.append("Prepared file ingestion guard requires manual review.")
+    if prepared_ingestion_guard.get("rejected_files"):
+        unsupported_features.append("rejected_prepared_files")
     if source_format == "unknown":
         conversion_warnings.append("Unknown source format; preview uses conservative metadata.")
 
@@ -165,6 +174,9 @@ def normalize_external_skill_to_skillspec_preview(input: dict[str, Any]) -> dict
         "source_hash": str(data.get("source_hash") or hash_source_text(content) if content else data.get("source_hash") or "unknown"),
         "import_adapter": adapter,
         "preview_only": True,
+        "prepared_ingestion_status": ingestion_status,
+        "prepared_file_count": prepared_ingestion_guard.get("prepared_file_count", 0),
+        "accepted_prepared_file_count": prepared_ingestion_guard.get("accepted_file_count", 0),
     }
     provenance.update({k: v for k, v in provenance_input.items() if k not in provenance})
 
@@ -198,9 +210,11 @@ def normalize_external_skill_to_skillspec_preview(input: dict[str, Any]) -> dict
         required_tools=required_tools,
         required_mcp_servers=required_mcp_servers,
         risks=risks,
-        original_files=_as_list(data.get("original_files")),
+        original_files=prepared_ingestion_guard.get("accepted_files") if isinstance(prepared_ingestion_guard.get("accepted_files"), list) else _as_list(data.get("original_files")),
         normalized_files=[{"path": "SkillSpec.preview.json", "role": "preview"}],
     )
+    if prepared_ingestion_guard:
+        contract["prepared_ingestion_guard"] = prepared_ingestion_guard
 
     return {
         "ok": bool(content),
@@ -209,6 +223,7 @@ def normalize_external_skill_to_skillspec_preview(input: dict[str, Any]) -> dict
         "conversion_warnings": conversion_warnings,
         "unsupported_features": unsupported_features,
         "risks": risks,
+        "prepared_ingestion_guard": prepared_ingestion_guard,
         "can_create_candidate": False,
         "can_install_skill": False,
         "can_execute_source": False,
