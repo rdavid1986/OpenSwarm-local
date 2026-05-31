@@ -78,9 +78,13 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "skill_effectiveness_metrics"
     if data.get("metric_kind") == "miniagent_task_runtime_metric":
         return "miniagent_task_runtime_metric"
+    if data.get("runtime_kind") == "model_runtime_resolution" or data.get("source_kind") == "model_runtime":
+        return "model_runtime"
     if data.get("metric_kind") == "ollama_runtime_metrics":
         return "runtime_timer"
     explicit_source = str(data.get("source_kind") or data.get("trace_source_kind") or data.get("producer_kind") or "").strip().lower()
+    if explicit_source == "model_runtime":
+        return "model_runtime"
     if explicit_source in {"tool_trace", "tool_call", "tool_result", "tool_error"}:
         return "tool_trace"
     if explicit_source in {"action_trace", "pending_action", "approval", "action_result"}:
@@ -596,6 +600,48 @@ def _adaptive_skill_item(data: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+
+def build_model_runtime_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    fallback = data.get("fallback_policy") if isinstance(data.get("fallback_policy"), dict) else {}
+    status = "warning" if warnings or required_actions or fallback.get("requires_user_approval") else "completed"
+    return build_process_trace_item(
+        trace_id=data.get("model_id") or data.get("local_model_name") or data.get("provider_id"),
+        kind="model",
+        subsystem="ModelCore",
+        title="Model runtime resolution",
+        summary="Provider/model runtime resolution metadata recorded without model execution.",
+        status=status,
+        details={
+            "source_kind": "model_runtime",
+            "runtime_kind": data.get("runtime_kind") or "model_runtime_resolution",
+            "provider_id": data.get("provider_id"),
+            "model_id": data.get("model_id"),
+            "local_model_name": data.get("local_model_name"),
+            "role_profile": data.get("role_profile"),
+            "variant": data.get("variant"),
+            "thinking_level": data.get("thinking_level"),
+            "active_thinking": data.get("active_thinking"),
+            "capability_source": data.get("capability_source"),
+            "context_limit": data.get("context_limit"),
+            "context_limit_source": data.get("context_limit_source"),
+            "model_source": data.get("model_source"),
+            "source_chain": data.get("source_chain") or [],
+            "warning_count": len(warnings),
+            "required_actions": required_actions,
+            "fallback_requires_user_approval": fallback.get("requires_user_approval", False),
+            "auto_switch_performed": fallback.get("auto_switch_performed", False),
+            "can_execute_model": False,
+            "can_start_ollama": False,
+            "can_install_model": False,
+            "can_activate_tools": False,
+            "can_activate_mcp": False,
+        },
+        metadata={"source_kind": "model_runtime"},
+    )
+
 def build_skill_import_process_trace_item(preview_report: dict[str, Any], policy: dict[str, Any] | None = None) -> dict[str, Any]:
     report = preview_report or {}
     policy_data = policy if isinstance(policy, dict) else {}
@@ -808,6 +854,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = build_skill_rollback_process_trace_item(data)
     elif source_kind == "skill_effectiveness_metrics":
         item = build_skill_effectiveness_process_trace_item(data)
+    elif source_kind == "model_runtime":
+        item = build_model_runtime_process_trace_item(data)
     elif source_kind == "miniagent_task_runtime_metric":
         item = process_trace_item_from_runtime_metric(data)
     elif source_kind == "tool_trace":
