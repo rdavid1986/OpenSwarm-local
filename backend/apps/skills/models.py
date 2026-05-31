@@ -94,6 +94,29 @@ class SkillSpecCandidate(BaseModel):
     research_evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class SkillImportPreviewRequest(BaseModel):
+    source_format: str = "unknown"
+    source_platform: str = "unknown"
+    source_version: str = "unknown"
+    source_url: str = ""
+    source_author: str = "unknown"
+    source_license: str = "unknown"
+    source_hint: str = ""
+    name: str = ""
+    description: str = ""
+    content: str = ""
+    raw_text: str = ""
+    files: list[dict[str, Any]] = Field(default_factory=list)
+    required_tools: list[str] = Field(default_factory=list)
+    required_mcp_servers: list[str] = Field(default_factory=list)
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    existing_skill_spec: Optional[dict[str, Any]] = None
+
+
+class SkillImportCandidateCreateRequest(SkillImportPreviewRequest):
+    create_candidate: bool = True
+
+
 class SkillCandidateApprovalRequest(BaseModel):
     approved: bool
 

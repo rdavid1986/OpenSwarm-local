@@ -45,6 +45,8 @@ import {
   approveSkillCandidateResearch,
   fetchSkillCandidateImprovementProposal,
   applySkillCandidateImprovementProposal,
+  previewSkillImport,
+  createSkillCandidateFromImport,
   createSkillCandidate,
   createSkill,
   updateSkill,
@@ -112,6 +114,11 @@ const Skills: React.FC = () => {
     candidateImprovementProposalsError,
     candidateImprovementApplyLoading,
     candidateImprovementApplyError,
+    skillImportPreview,
+    skillImportPreviewLoading,
+    skillImportPreviewError,
+    skillImportCandidateCreateLoading,
+    skillImportCandidateCreateError,
   } = useAppSelector((s) => s.skills);
   const {
     skills: regSkills,
@@ -135,6 +142,12 @@ const Skills: React.FC = () => {
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string }>({ open: false, message: '' });
   const [builderPreview, setBuilderPreview] = useState<SkillPreviewData | null>(null);
   const [builderOpen, setBuilderOpen] = useState(false);
+  const [importSourceFormat, setImportSourceFormat] = useState('markdown_prompt_pack');
+  const [importName, setImportName] = useState('');
+  const [importAuthor, setImportAuthor] = useState('unknown');
+  const [importLicense, setImportLicense] = useState('unknown');
+  const [importSourceUrl, setImportSourceUrl] = useState('');
+  const [importContent, setImportContent] = useState('');
   const [candidateDetailExpanded, setCandidateDetailExpanded] = useState<Record<string, boolean>>({
     validation: false,
     requirements: false,
@@ -469,6 +482,37 @@ const Skills: React.FC = () => {
     } catch (err) {
       console.error('Failed to apply skill candidate improvement proposal:', err);
       setSnackbar({ open: true, message: err instanceof Error ? err.message : 'Failed to apply improvement proposal' });
+    }
+  };
+
+  const buildImportPayload = () => ({
+    source_format: importSourceFormat || 'unknown',
+    source_author: importAuthor || 'unknown',
+    source_license: importLicense || 'unknown',
+    source_url: importSourceUrl || '',
+    name: importName || 'Imported Skill',
+    content: importContent,
+  });
+
+  const handlePreviewImport = async () => {
+    try {
+      await dispatch(previewSkillImport(buildImportPayload())).unwrap();
+      setSnackbar({ open: true, message: 'Skill import preview generated. Nothing was installed.' });
+    } catch (err) {
+      console.error('Failed to preview skill import:', err);
+      setSnackbar({ open: true, message: err instanceof Error ? err.message : 'Failed to preview skill import' });
+    }
+  };
+
+  const handleCreateImportCandidate = async () => {
+    try {
+      const result = await dispatch(createSkillCandidateFromImport(buildImportPayload())).unwrap();
+      setSelection({ type: 'candidate', id: result.candidate.candidate_id });
+      dispatch(fetchSkillCandidates());
+      setSnackbar({ open: true, message: `Skill candidate "${result.candidate.skill_spec.name}" created from import preview` });
+    } catch (err) {
+      console.error('Failed to create import candidate:', err);
+      setSnackbar({ open: true, message: err instanceof Error ? err.message : 'Failed to create import candidate' });
     }
   };
 
@@ -1794,6 +1838,174 @@ const Skills: React.FC = () => {
     );
   };
 
+  const ImportSkillPanel: React.FC = () => {
+    const policy = skillImportPreview?.policy || {};
+    const preview = skillImportPreview?.preview || {};
+    const detection = skillImportPreview?.detection || {};
+    const riskReport = (preview.risk_report && typeof preview.risk_report === 'object') ? preview.risk_report as Record<string, any> : {};
+    const warnings = Array.isArray(riskReport.warnings) ? riskReport.warnings : [];
+    const risks = Array.isArray(riskReport.risks) ? riskReport.risks : [];
+    const canCreate = skillImportPreview?.can_create_candidate === true;
+    const formatOptions = [
+      'markdown_prompt_pack',
+      'claude_skill',
+      'anthropic_skill',
+      'openswarm_skillspec',
+      'openswarm_legacy_skill',
+      'cursor_rule',
+      'windsurf_rule',
+      'copilot_instruction',
+      'codex_instruction',
+      'gemini_cli_config',
+      'qwen_code_config',
+      'kiro_spec',
+      'mcp_tool_instruction',
+      'skill_pack',
+      'repo',
+      'zip',
+      'folder',
+      'unknown',
+    ];
+
+    return (
+      <Box
+        sx={{
+          mb: 1.5,
+          p: 1.25,
+          borderRadius: `${c.radius.md}px`,
+          border: `1px solid ${c.border.subtle}`,
+          bgcolor: c.bg.secondary,
+          boxShadow: c.shadow.sm,
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 1 }}>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography sx={{ fontSize: '0.8rem', color: c.text.primary, fontWeight: 700 }}>
+              Import Skill
+            </Typography>
+            <Typography sx={{ fontSize: '0.68rem', color: c.text.ghost, mt: 0.2, lineHeight: 1.35 }}>
+              Preview only. No install, execution, tools or MCP activation.
+            </Typography>
+          </Box>
+          {(skillImportPreviewLoading || skillImportCandidateCreateLoading) && <CircularProgress size={16} sx={{ color: c.accent.primary }} />}
+        </Box>
+
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+          <TextField
+            select
+            SelectProps={{ native: true }}
+            size="small"
+            label="Format"
+            value={importSourceFormat}
+            onChange={(event) => setImportSourceFormat(event.target.value)}
+            sx={{ '& .MuiInputBase-input': { fontSize: '0.78rem' } }}
+          >
+            {formatOptions.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </TextField>
+          <TextField
+            size="small"
+            label="Name"
+            value={importName}
+            onChange={(event) => setImportName(event.target.value)}
+            placeholder="Imported Skill"
+            sx={{ '& .MuiInputBase-input': { fontSize: '0.78rem' } }}
+          />
+          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.75 }}>
+            <TextField
+              size="small"
+              label="Author"
+              value={importAuthor}
+              onChange={(event) => setImportAuthor(event.target.value)}
+              sx={{ '& .MuiInputBase-input': { fontSize: '0.78rem' } }}
+            />
+            <TextField
+              size="small"
+              label="License"
+              value={importLicense}
+              onChange={(event) => setImportLicense(event.target.value)}
+              sx={{ '& .MuiInputBase-input': { fontSize: '0.78rem' } }}
+            />
+          </Box>
+          <TextField
+            size="small"
+            label="Source ref"
+            value={importSourceUrl}
+            onChange={(event) => setImportSourceUrl(event.target.value)}
+            placeholder="file://prepared/SKILL.md"
+            sx={{ '& .MuiInputBase-input': { fontSize: '0.78rem' } }}
+          />
+          <TextField
+            multiline
+            minRows={5}
+            maxRows={10}
+            label="Skill material"
+            value={importContent}
+            onChange={(event) => setImportContent(event.target.value)}
+            placeholder={'# Skill name\nInstructions to preview...'}
+            sx={{ '& .MuiInputBase-input': { fontSize: '0.76rem', fontFamily: c.font.mono } }}
+          />
+
+          <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={!importContent.trim() || skillImportPreviewLoading}
+              onClick={handlePreviewImport}
+              sx={{ textTransform: 'none', borderRadius: `${c.radius.sm}px`, fontSize: '0.76rem' }}
+            >
+              Preview import
+            </Button>
+            <Tooltip title={canCreate ? 'Create a reviewable candidate. This does not install.' : 'Preview must pass policy before candidate creation.'}>
+              <span>
+                <Button
+                  size="small"
+                  variant="contained"
+                  disabled={!canCreate || skillImportCandidateCreateLoading}
+                  onClick={handleCreateImportCandidate}
+                  sx={{ textTransform: 'none', borderRadius: `${c.radius.sm}px`, fontSize: '0.76rem', boxShadow: 'none' }}
+                >
+                  Create candidate
+                </Button>
+              </span>
+            </Tooltip>
+          </Box>
+
+          {(skillImportPreviewError || skillImportCandidateCreateError) && (
+            <Alert severity="error" sx={{ borderRadius: `${c.radius.sm}px` }}>
+              {skillImportPreviewError || skillImportCandidateCreateError}
+            </Alert>
+          )}
+
+          {skillImportPreview && (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.65, pt: 0.5 }}>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                <MetaChip label={`detected ${toDisplayText(detection.detected_format, 'unknown')}`} />
+                <MetaChip label={`policy ${toDisplayText(policy.decision, 'unknown')}`} tone={canCreate ? 'success' : policy.decision === 'blocked' ? 'error' : 'warning'} />
+                <MetaChip label="preview only" tone="success" />
+                <MetaChip label="install disabled" tone="warning" />
+              </Box>
+              <Typography sx={{ fontSize: '0.7rem', color: c.text.secondary, lineHeight: 1.4 }}>
+                Preview id: {toDisplayText(preview.preview_id, 'not available')}
+              </Typography>
+              {risks.length > 0 && (
+                <Typography sx={{ fontSize: '0.7rem', color: c.status.error, lineHeight: 1.4 }}>
+                  Risks: {risks.map((item) => toDisplayText(item)).join(', ')}
+                </Typography>
+              )}
+              {warnings.length > 0 && (
+                <Typography sx={{ fontSize: '0.7rem', color: c.text.ghost, lineHeight: 1.4 }}>
+                  Warnings: {warnings.slice(0, 4).map((item) => toDisplayText(item)).join(', ')}
+                </Typography>
+              )}
+            </Box>
+          )}
+        </Box>
+      </Box>
+    );
+  };
+
   const CandidateSidebarRow: React.FC<{ candidate: SkillSpecCandidate }> = ({ candidate }) => {
     const selected = isSelected('candidate', candidate.candidate_id);
 
@@ -1933,6 +2145,8 @@ const Skills: React.FC = () => {
             '&::-webkit-scrollbar-thumb': { background: c.border.medium, borderRadius: 2 },
           }}
         >
+          <ImportSkillPanel />
+
           {/* My Skills (local) */}
           {filteredLocal.length > 0 && (
             <Box sx={{ mb: 1 }}>

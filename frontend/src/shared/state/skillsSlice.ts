@@ -204,6 +204,38 @@ export type SkillCandidateCreateBody = Partial<Omit<SkillSpecCandidate, 'skill_s
   skill_spec: Partial<SkillSpec> & Pick<SkillSpec, 'name'>;
 };
 
+
+export interface SkillImportPreviewRequest {
+  source_format?: string;
+  source_platform?: string;
+  source_version?: string;
+  source_url?: string;
+  source_author?: string;
+  source_license?: string;
+  source_hint?: string;
+  name?: string;
+  description?: string;
+  content?: string;
+  raw_text?: string;
+  files?: Array<Record<string, any>>;
+  required_tools?: string[];
+  required_mcp_servers?: string[];
+  provenance?: Record<string, any>;
+  existing_skill_spec?: Record<string, any> | null;
+}
+
+export interface SkillImportPreviewResult {
+  ok: boolean;
+  detection: Record<string, any>;
+  preview: Record<string, any>;
+  policy: Record<string, any>;
+  can_create_candidate: boolean;
+  can_install_skill: boolean;
+  can_execute_source: boolean;
+  can_activate_tools: boolean;
+  can_activate_mcp: boolean;
+}
+
 interface SkillsState {
   items: Record<string, Skill>;
   loading: boolean;
@@ -229,6 +261,11 @@ interface SkillsState {
   candidateImprovementProposalsError: Record<string, string | null>;
   candidateImprovementApplyLoading: Record<string, boolean>;
   candidateImprovementApplyError: Record<string, string | null>;
+  skillImportPreview: SkillImportPreviewResult | null;
+  skillImportPreviewLoading: boolean;
+  skillImportPreviewError: string | null;
+  skillImportCandidateCreateLoading: boolean;
+  skillImportCandidateCreateError: string | null;
 }
 
 const initialState: SkillsState = {
@@ -256,6 +293,11 @@ const initialState: SkillsState = {
   candidateImprovementProposalsError: {},
   candidateImprovementApplyLoading: {},
   candidateImprovementApplyError: {},
+  skillImportPreview: null,
+  skillImportPreviewLoading: false,
+  skillImportPreviewError: null,
+  skillImportCandidateCreateLoading: false,
+  skillImportCandidateCreateError: null,
 };
 
 export const fetchSkills = createAsyncThunk(
@@ -414,6 +456,42 @@ export const applySkillCandidateImprovementProposal = createAsyncThunk(
       audit: data.audit as Record<string, any>,
     };
   },
+);
+
+export const previewSkillImport = createAsyncThunk(
+  'skills/previewImport',
+  async (body: SkillImportPreviewRequest) => {
+    const res = await fetch(`${SKILLS_API}/import/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || 'Failed to preview skill import');
+    }
+    return data as SkillImportPreviewResult;
+  }
+);
+
+export const createSkillCandidateFromImport = createAsyncThunk(
+  'skills/createCandidateFromImport',
+  async (body: SkillImportPreviewRequest) => {
+    const res = await fetch(`${SKILLS_API}/import/candidates/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, create_candidate: true }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || 'Failed to create skill candidate from import');
+    }
+    return {
+      candidate: data.candidate as SkillSpecCandidate,
+      preview: data.preview as Record<string, any>,
+      policy: data.policy as Record<string, any>,
+    };
+  }
 );
 
 export const createSkillCandidate = createAsyncThunk(
@@ -622,6 +700,30 @@ const skillsSlice = createSlice({
       .addCase(applySkillCandidateImprovementProposal.rejected, (state, action) => {
         state.candidateImprovementApplyLoading[action.meta.arg.candidateId] = false;
         state.candidateImprovementApplyError[action.meta.arg.candidateId] = action.error.message || 'Failed to apply improvement proposal';
+      })
+      .addCase(previewSkillImport.pending, (state) => {
+        state.skillImportPreviewLoading = true;
+        state.skillImportPreviewError = null;
+      })
+      .addCase(previewSkillImport.fulfilled, (state, action) => {
+        state.skillImportPreviewLoading = false;
+        state.skillImportPreview = action.payload;
+      })
+      .addCase(previewSkillImport.rejected, (state, action) => {
+        state.skillImportPreviewLoading = false;
+        state.skillImportPreviewError = action.error.message || 'Failed to preview skill import';
+      })
+      .addCase(createSkillCandidateFromImport.pending, (state) => {
+        state.skillImportCandidateCreateLoading = true;
+        state.skillImportCandidateCreateError = null;
+      })
+      .addCase(createSkillCandidateFromImport.fulfilled, (state, action) => {
+        state.skillImportCandidateCreateLoading = false;
+        state.candidates[action.payload.candidate.candidate_id] = action.payload.candidate;
+      })
+      .addCase(createSkillCandidateFromImport.rejected, (state, action) => {
+        state.skillImportCandidateCreateLoading = false;
+        state.skillImportCandidateCreateError = action.error.message || 'Failed to create skill candidate from import';
       })
       .addCase(createSkillCandidate.fulfilled, (state, action) => {
         state.candidates[action.payload.candidate_id] = action.payload;

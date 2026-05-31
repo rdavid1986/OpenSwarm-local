@@ -11,12 +11,16 @@ from backend.apps.skills.candidate_approval import apply_skill_candidate_install
 from backend.apps.skills.candidate_gate import apply_skill_candidate_gate
 from backend.apps.skills.candidate_install import install_approved_skill_candidate
 from backend.apps.skills.candidate_validation import apply_skill_candidate_validation
-from backend.apps.skills.models import Skill, SkillCandidateApprovalRequest, SkillCandidateImprovementApplyRequest, SkillCandidateResearchApprovalRequest, SkillCreate, SkillSpecCandidate, SkillUpdate, SkillWorkspaceSeedRequest
+from backend.apps.skills.models import Skill, SkillCandidateApprovalRequest, SkillCandidateImprovementApplyRequest, SkillCandidateResearchApprovalRequest, SkillCreate, SkillImportCandidateCreateRequest, SkillImportPreviewRequest, SkillSpecCandidate, SkillUpdate, SkillWorkspaceSeedRequest
 from backend.apps.skills.requirements_contract import build_skill_candidate_requirements_contract
 from backend.apps.skills.research_contract import build_skill_candidate_research_contract
 from backend.apps.skills.research_execution import execute_skill_candidate_research
 from backend.apps.skills.skill_reviewer import review_skill_candidate
 from backend.apps.skills.skill_improvement_proposal import build_skill_candidate_improvement_proposal, apply_skill_candidate_improvement_proposal
+from backend.apps.skills.import_candidate import build_skill_candidate_from_import_preview
+from backend.apps.skills.import_policy import evaluate_skill_import_policy
+from backend.apps.skills.import_preview import build_skill_import_preview_report
+from backend.apps.skills.import_detection import detect_skill_import_source_format
 from backend.apps.tools_lib.models import BUILTIN_TOOLS
 
 logger = logging.getLogger(__name__)
@@ -142,6 +146,60 @@ async def read_skill_workspace(workspace_id: str):
         "frontmatter": frontmatter,
     }
 
+
+
+
+def _build_skill_import_preview_payload(body: SkillImportPreviewRequest) -> dict:
+    payload = body.model_dump(mode="json", exclude_none=True)
+    detection = detect_skill_import_source_format(payload)
+    if not payload.get("source_format") or payload.get("source_format") == "unknown":
+        payload["source_format"] = detection.get("detected_format", "unknown")
+    payload["detection"] = detection
+    preview = build_skill_import_preview_report(payload)
+    policy = evaluate_skill_import_policy(preview)
+    return {
+        "ok": True,
+        "detection": detection,
+        "preview": preview,
+        "policy": policy,
+        "can_create_candidate": bool(policy.get("can_create_candidate")),
+        "can_install_skill": False,
+        "can_execute_source": False,
+        "can_activate_tools": False,
+        "can_activate_mcp": False,
+    }
+
+
+@skills.router.post("/import/preview")
+async def preview_skill_import(body: SkillImportPreviewRequest):
+    return _build_skill_import_preview_payload(body)
+
+
+@skills.router.post("/import/candidates/create")
+async def create_skill_candidate_from_import(body: SkillImportCandidateCreateRequest):
+    preview_payload = _build_skill_import_preview_payload(body)
+    preview = preview_payload["preview"]
+    policy = preview_payload["policy"]
+    try:
+        candidate = build_skill_candidate_from_import_preview(preview, policy)
+    except ValueError as exc:
+        if str(exc) == "skill_import_policy_blocks_candidate_creation":
+            raise HTTPException(status_code=409, detail="Skill import policy blocks candidate creation")
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    validated_candidate = apply_skill_candidate_validation(candidate)
+    gated_candidate = apply_skill_candidate_gate(validated_candidate)
+    saved = skill_candidate_store.save(gated_candidate)
+    return {
+        "ok": True,
+        "candidate": saved.model_dump(mode="json"),
+        "preview": preview,
+        "policy": policy,
+        "can_install_skill": False,
+        "can_execute_source": False,
+        "can_activate_tools": False,
+        "can_activate_mcp": False,
+    }
 
 
 
