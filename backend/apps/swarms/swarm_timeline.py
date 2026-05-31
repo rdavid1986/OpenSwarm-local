@@ -37,7 +37,7 @@ def _text(value: Any, default: str = "") -> str:
 
 TIMELINE_EVENT_TYPES = {
     "context_retrieval", "task_planned", "skill_assigned", "miniagent_started", "action_executed",
-    "evidence_added", "handoff_created", "validation_completed", "blocker_found", "reviewer_summary",
+    "evidence_added", "handoff_created", "handoff_received", "handoff_used", "validation_completed", "blocker_found", "reviewer_summary",
     "integrator_summary", "swarm_completed",
 }
 SEVERITIES = {"info", "warning", "error"}
