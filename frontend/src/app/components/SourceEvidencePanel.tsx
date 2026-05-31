@@ -4,12 +4,15 @@ import Chip from '@mui/material/Chip';
 import Collapse from '@mui/material/Collapse';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
+import IconButton from '@mui/material/IconButton';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import InsertDriveFileOutlinedIcon from '@mui/icons-material/InsertDriveFileOutlined';
 import PublicOutlinedIcon from '@mui/icons-material/PublicOutlined';
 import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
 import TerminalOutlinedIcon from '@mui/icons-material/TerminalOutlined';
+import ContentCopyOutlinedIcon from '@mui/icons-material/ContentCopyOutlined';
+import CheckIcon from '@mui/icons-material/Check';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 
 export interface SourceEvidenceRef {
@@ -111,8 +114,18 @@ function iconForType(type: SourceEvidenceRef['type']) {
 const SourceEvidencePanel: React.FC<{ message: any; compact?: boolean }> = ({ message, compact = false }) => {
   const c = useClaudeTokens();
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const refs = useMemo(() => extractSourceEvidenceRefs(message), [message]);
   if (refs.length === 0) return null;
+
+  const handleCopyRefs = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    const payload = refs.map((ref) => `${ref.type}:${ref.label} [${ref.id}]`).join('\n');
+    navigator.clipboard?.writeText(payload).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    }).catch(() => undefined);
+  };
 
   return (
     <Box sx={{ mt: compact ? 0.6 : 0.8, pt: 0.6, borderTop: `1px solid ${c.border.subtle}` }}>
@@ -121,6 +134,11 @@ const SourceEvidencePanel: React.FC<{ message: any; compact?: boolean }> = ({ me
         <Typography sx={{ fontSize: '0.68rem', color: c.text.muted, fontWeight: 650 }}>
           Sources / Evidence · {refs.length}
         </Typography>
+        <Tooltip title={copied ? 'Copied refs' : 'Copy refs'} arrow>
+          <IconButton size="small" aria-label="Copy source and evidence refs" onClick={handleCopyRefs} sx={{ width: 20, height: 20, p: 0.25, color: copied ? c.status.success : c.text.tertiary }}>
+            {copied ? <CheckIcon sx={{ fontSize: 13 }} /> : <ContentCopyOutlinedIcon sx={{ fontSize: 13 }} />}
+          </IconButton>
+        </Tooltip>
         <ExpandMoreIcon sx={{ fontSize: 14, color: c.text.tertiary, transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 120ms ease' }} />
       </Box>
       <Collapse in={open}>

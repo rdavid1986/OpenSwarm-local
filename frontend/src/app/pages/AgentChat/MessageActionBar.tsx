@@ -72,7 +72,7 @@ const MessageActionBar: React.FC<Props> = ({
     >
       {isUser ? (
         <>
-          <Tooltip title="Coming soon" arrow>
+          <Tooltip title="Pin is prepared; no persistence handler is connected yet." arrow>
             <span>
               <IconButton size="small" disabled sx={btnSx(c)}>
                 <BookmarkBorderIcon sx={{ fontSize: 16 }} />

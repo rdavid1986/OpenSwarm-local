@@ -45,6 +45,7 @@ import ChatDebugContextView from '@/app/components/ChatDebugContextView';
 import ProjectMemoryContextPanel from '@/app/components/ProjectMemoryContextPanel';
 import AgentHandoffPanel from '@/app/components/AgentHandoffPanel';
 import RemoteTaskStateContractPanel from '@/app/components/RemoteTaskStateContractPanel';
+import ChatSurfaceAuditPanel from '@/app/components/ChatSurfaceAuditPanel';
 import { ContextPath } from '@/app/components/DirectoryBrowser';
 import DiffViewer from './DiffViewer';
 import { setGlowingBrowserCards, fadeGlowingBrowserCards, clearGlowingBrowserCards } from '@/shared/state/dashboardLayoutSlice';
@@ -1553,6 +1554,22 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
               approvalsCount: session.pending_approvals.length,
               connectionState: session.connection_state || 'local_visible',
               progressLabel: agentBusy ? 'running' : queueLength > 0 ? 'queued' : 'idle',
+            }}
+            compact
+          />
+          <ChatSurfaceAuditPanel
+            snapshot={{
+              surfaceLabel: 'AgentChat',
+              actions: ['copy', 'edit user message', 'regenerate assistant response', 'branch chat', 'stop when running', 'queue edit/remove/reorder'],
+              disabledActions: ['pin without persistence handler', 'pause/convert without scheduler'],
+              contextCount: 0,
+              traceCount: activeBranchMessages.filter((m: any) => m.process_trace_turn || m.process_trace_turn_container || m.trace_turn || m.turnTrace || m.traceItems || m.process_trace_items).length,
+              evidenceCount: activeBranchMessages.filter((m: any) => m.evidence_refs || m.evidenceRefs || m.sources || m.citations).length,
+              queueCount,
+              monitorVisible: agentBusy || queueLength > 0,
+              accessibilityNotes: ['collapsed panels use labelled toggles', 'disabled actions explain missing handlers'],
+              densityNotes: ['compact chips', 'collapsed by default'],
+              performanceNotes: ['no full prompt dumps', 'bounded refs and trace counts'],
             }}
             compact
           />

@@ -48,6 +48,7 @@ import ChatDebugContextView from '@/app/components/ChatDebugContextView';
 import ProjectMemoryContextPanel from '@/app/components/ProjectMemoryContextPanel';
 import AgentHandoffPanel from '@/app/components/AgentHandoffPanel';
 import RemoteTaskStateContractPanel from '@/app/components/RemoteTaskStateContractPanel';
+import ChatSurfaceAuditPanel from '@/app/components/ChatSurfaceAuditPanel';
 import ProcessTraceDropdown, { ProcessTraceItem, ProcessTraceTurnDropdown, normalizeProcessTraceTurnContainer } from './ProcessTraceDropdown';
 import { buildCardVisualTokens } from './cardVisualTokens';
 
@@ -3059,6 +3060,22 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 evidenceRefs: finalEvidence.map((item: any) => String(item?.id || item?.ref || item?.path || item?.summary || '')).filter(Boolean),
                 connectionState: 'local_visible',
                 progressLabel: latestSwarmActivity,
+              }}
+              compact
+            />
+            <ChatSurfaceAuditPanel
+              snapshot={{
+                surfaceLabel: 'SwarmCard',
+                actions: ['send with composer payload', 'open preview', 'compare', 'accept/discard candidate', 'resume approvals', 'view process trace'],
+                disabledActions: ['mobile remote execution not implemented', 'remote scheduler not implemented'],
+                contextCount: finalEvidence.length,
+                traceCount: swarmProcessTraceItems.length,
+                evidenceCount: finalEvidence.length,
+                queueCount: 0,
+                monitorVisible: showSwarmTaskMonitor,
+                accessibilityNotes: ['compact panels are labelled and collapsible', 'disabled actions explain missing handlers'],
+                densityNotes: ['shared panel style with AgentChat', 'bounded chip lists'],
+                performanceNotes: ['no fake progress', 'no raw chain-of-thought'],
               }}
               compact
             />
