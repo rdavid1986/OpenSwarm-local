@@ -3503,6 +3503,45 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 </Typography>
               </Box>
             )}
+            <SwarmPromptInput
+              value={prompt}
+              onChange={setPrompt}
+              onSend={handleStart}
+              mode={activeSwarmMode}
+              onModeChange={handleSwarmModeChange}
+              loading={swarmState.actionLoading}
+              canContinue={Boolean(activeSwarmId)}
+              customIntakeMode={customIntakeMode}
+              model={activeSwarmModel}
+              onModelChange={handleSwarmModelChange}
+              modelLabel={activeSwarmModel}
+              contextEstimate={contextEstimate}
+              inputRef={promptInputRef}
+              ownerId={swarmCardId}
+              cardId={swarmCardId}
+              placeholderOverride={pendingPreviewRefinementDraft ? 'Describí el cambio para esta Preview…' : undefined}
+            />
+          </Box>
+        </Box>
+
+        <Box
+          onPointerDown={handleSideResizeDown}
+          sx={{
+            width: 8,
+            ml: '-4px',
+            cursor: 'ew-resize',
+            zIndex: 20,
+            bgcolor: 'transparent',
+            '&:hover': { bgcolor: `${c.accent.primary}22` },
+          }}
+        />
+
+        <Box sx={{ borderLeft: `1px solid ${cardTokens.surface.border}`, bgcolor: cardTokens.surface.background, overflow: 'auto', p: cardTokens.density.sidebarPadding }}>
+          <Typography sx={{ color: c.text.muted, fontSize: '0.72rem', mb: 1 }}>
+            Swarm {activeSwarmId ? `· ${activeSwarmId}` : '· not started'}
+          </Typography>
+
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mb: 1.25 }}>
             <LongRunningTaskMonitor
               visible={showSwarmTaskMonitor}
               title="Swarm task monitor"
@@ -3585,43 +3624,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               }}
               compact
             />
-            <SwarmPromptInput
-              value={prompt}
-              onChange={setPrompt}
-              onSend={handleStart}
-              mode={activeSwarmMode}
-              onModeChange={handleSwarmModeChange}
-              loading={swarmState.actionLoading}
-              canContinue={Boolean(activeSwarmId)}
-              customIntakeMode={customIntakeMode}
-              model={activeSwarmModel}
-              onModelChange={handleSwarmModelChange}
-              modelLabel={activeSwarmModel}
-              contextEstimate={contextEstimate}
-              inputRef={promptInputRef}
-              ownerId={swarmCardId}
-              cardId={swarmCardId}
-              placeholderOverride={pendingPreviewRefinementDraft ? 'Describí el cambio para esta Preview…' : undefined}
-            />
           </Box>
-        </Box>
-
-        <Box
-          onPointerDown={handleSideResizeDown}
-          sx={{
-            width: 8,
-            ml: '-4px',
-            cursor: 'ew-resize',
-            zIndex: 20,
-            bgcolor: 'transparent',
-            '&:hover': { bgcolor: `${c.accent.primary}22` },
-          }}
-        />
-
-        <Box sx={{ borderLeft: `1px solid ${cardTokens.surface.border}`, bgcolor: cardTokens.surface.background, overflow: 'auto', p: cardTokens.density.sidebarPadding }}>
-          <Typography sx={{ color: c.text.muted, fontSize: '0.72rem', mb: 1 }}>
-            Swarm {activeSwarmId ? `· ${activeSwarmId}` : '· not started'}
-          </Typography>
 
           {renderPanelHeader('tasks', 'MiniAgents', tasks.length)}
           {openPanelSections.tasks && (tasks.length === 0 ? (

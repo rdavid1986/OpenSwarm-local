@@ -101,7 +101,6 @@ const SwarmOrchestrationPreview: React.FC<Props> = ({ state, zoom = 1, onNodeMov
     moved: boolean;
   } | null>(null);
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [legendOpen, setLegendOpen] = useState(false);
 
   const nodes = useMemo(() => (Array.isArray(state?.nodes) ? state?.nodes || [] : []), [state]);
   const edges = useMemo(() => (Array.isArray(state?.edges) ? state?.edges || [] : []), [state]);
@@ -317,11 +316,6 @@ const SwarmOrchestrationPreview: React.FC<Props> = ({ state, zoom = 1, onNodeMov
     return { color: c.text.tertiary, opacity: 0.42, dash: '8 8', active: false, attention: false };
   }, [c, nodeById]);
 
-  const statusLegendItems = useMemo(() => (
-    ['pending', 'next_to_run', 'running', 'completed', 'needs_context', 'needs_review', 'blocked', 'failed', 'skipped']
-      .map((status) => ({ status, meta: getStatusMeta(status) }))
-  ), [getStatusMeta]);
-
   return (
     <Box
       sx={{
@@ -340,58 +334,6 @@ const SwarmOrchestrationPreview: React.FC<Props> = ({ state, zoom = 1, onNodeMov
         },
       }}
     >
-      <Box
-        role="button"
-        aria-expanded={legendOpen}
-        aria-label="Swarm canvas status legend"
-        onClick={(event) => {
-          event.stopPropagation();
-          setLegendOpen((value) => !value);
-        }}
-        sx={{
-          position: 'absolute',
-          left: 14,
-          top: 14,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 0.45,
-          flexWrap: 'wrap',
-          maxWidth: legendOpen ? 520 : 260,
-          px: 0.85,
-          py: 0.55,
-          borderRadius: 1.5,
-          border: `1px solid ${c.border.subtle}`,
-          bgcolor: `${c.bg.surface}F0`,
-          boxShadow: c.shadow.sm,
-          pointerEvents: 'auto',
-          cursor: 'pointer',
-        }}
-      >
-        <Typography sx={{ color: c.text.secondary, fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-          Canvas status
-        </Typography>
-        {(legendOpen ? statusLegendItems : statusLegendItems.slice(0, 4)).map(({ status, meta }) => (
-          <Chip
-            key={status}
-            size="small"
-            label={meta.label}
-            sx={{
-              height: 18,
-              fontSize: 9.5,
-              color: meta.color,
-              bgcolor: meta.bg,
-              border: `1px solid ${meta.border}`,
-              '& .MuiChip-label': { px: 0.65 },
-            }}
-          />
-        ))}
-        {!legendOpen && (
-          <Typography sx={{ color: c.text.ghost, fontSize: 10 }}>
-            +{Math.max(0, statusLegendItems.length - 4)}
-          </Typography>
-        )}
-      </Box>
-
       <svg
         style={{ position: 'absolute', left: 0, top: 0, width: 1, height: 1, overflow: 'visible' }}
       >

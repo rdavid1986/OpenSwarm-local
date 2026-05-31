@@ -14,10 +14,6 @@ import MicNoneIcon from '@mui/icons-material/MicNone';
 import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import CommandPicker, { CommandPickerItem, getToolGroupIcon } from '@/app/components/CommandPicker';
-import ComposerContextPreview from '@/app/components/ComposerContextPreview';
-import ChatDebugContextView from '@/app/components/ChatDebugContextView';
-import ProjectMemoryContextPanel from '@/app/components/ProjectMemoryContextPanel';
-import PromptSkillAuthoringPanel from '@/app/components/PromptSkillAuthoringPanel';
 import ComposerResearchSourceControl from '@/app/components/ComposerResearchSourceControl';
 import { useElementSelection } from '@/app/components/ElementSelectionContext';
 import ModelPicker from '@/app/components/ModelPicker';
@@ -333,11 +329,11 @@ const SwarmPromptInput: React.FC<Props> = ({
         />
       </Box>
 
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25, px: 1, pb: 0.75, pt: 0 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0, flexWrap: 'wrap' }}>
-          <SwarmModePicker mode={mode} onChange={onModeChange} disabled={disabled || loading} />
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25, px: 1, pb: 0.75, pt: 0, flexWrap: 'nowrap', overflow: 'hidden', minWidth: 0 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0, flex: '1 1 auto', flexWrap: 'nowrap', overflow: 'hidden' }}>
+          <Box sx={{ flexShrink: 0 }}><SwarmModePicker mode={mode} onChange={onModeChange} disabled={disabled || loading} /></Box>
           {selectedModel && (
-            <ModelPicker model={selectedModel} onModelChange={(nextModel) => onModelChange?.(nextModel)} disabled={disabled || loading || !onModelChange} compact />
+            <Box sx={{ minWidth: 0, flex: '1 1 auto', overflow: 'hidden' }}><ModelPicker model={selectedModel} onModelChange={(nextModel) => onModelChange?.(nextModel)} disabled={disabled || loading || !onModelChange} compact /></Box>
           )}
           <Tooltip title={isSelectingForThisSwarm ? 'Exit select mode' : 'Select UI element for this Swarm'}>
             <span>
@@ -394,9 +390,9 @@ const SwarmPromptInput: React.FC<Props> = ({
           </Tooltip>
         </Box>
 
-        <Box sx={{ flex: 1 }} />
+        <Box sx={{ flex: '0 0 8px' }} />
 
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0, flexWrap: 'nowrap' }}>
           {contextEstimate && <ContextRing used={contextEstimate.used} limit={contextEstimate.limit} accentColor={c.accent.primary} trackColor={c.border.subtle} />}
           <Typography sx={{ color: c.text.tertiary, fontSize: '0.72rem', display: { xs: 'none', sm: 'block' } }}>
             Shift+Enter
@@ -431,10 +427,6 @@ const SwarmPromptInput: React.FC<Props> = ({
         </Box>
       </Box>
 
-      <ComposerContextPreview state={unifiedComposerState} compact />
-      <ChatDebugContextView title="Swarm composer debug" state={unifiedComposerState} compact />
-      <ProjectMemoryContextPanel state={unifiedComposerState} compact />
-      <PromptSkillAuthoringPanel title="Swarm authoring" state={unifiedComposerState} compact />
       <ComposerResearchSourceControl
         sources={researchSources}
         visible={showResearchSources}
