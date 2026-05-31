@@ -59,6 +59,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "miniagent_skill_adaptive"
     if data.get("audit_kind") == "swarm_final_audit":
         return "swarm_final_audit"
+    if data.get("report_kind") == "skill_import_preview_report" or data.get("source_kind") in {"skill_import_preview", "skill_import_candidate"}:
+        return "skill_import_preview"
     if data.get("metric_kind") == "miniagent_task_runtime_metric":
         return "miniagent_task_runtime_metric"
     if data.get("metric_kind") == "ollama_runtime_metrics":
@@ -579,6 +581,53 @@ def _adaptive_skill_item(data: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def build_skill_import_process_trace_item(preview_report: dict[str, Any], policy: dict[str, Any] | None = None) -> dict[str, Any]:
+    report = preview_report or {}
+    policy_data = policy if isinstance(policy, dict) else {}
+    contract = report.get("import_contract") if isinstance(report.get("import_contract"), dict) else {}
+    spec = report.get("skill_spec_preview") if isinstance(report.get("skill_spec_preview"), dict) else {}
+    provenance = spec.get("provenance") if isinstance(spec.get("provenance"), dict) else {}
+    risk_report = report.get("risk_report") if isinstance(report.get("risk_report"), dict) else {}
+    compatibility = report.get("compatibility_score") if isinstance(report.get("compatibility_score"), dict) else {}
+    migration = report.get("migration_assistant") if isinstance(report.get("migration_assistant"), dict) else {}
+    risks = _refs(risk_report.get("risks"))
+    decision = _first_text(policy_data, "decision", default=_first_text(contract, "policy_decision", default="preview_only"))
+    compatibility_status = compatibility.get("status") or "unmeasured"
+    blocked = decision == "blocked" or compatibility_status == "blocked" or bool(risk_report.get("possible_secret_material") or risk_report.get("dangerous_execution_instruction"))
+    needs_review = decision == "needs_review" or compatibility_status in {"needs_review", "unmeasured"} or bool(migration.get("requires_manual_review"))
+    status = "blocked" if blocked else "warning" if needs_review else "completed"
+    source_kind = _first_text(report, "source_kind", default="skill_import_preview")
+
+    return build_process_trace_item(
+        trace_id=report.get("preview_id") or report.get("candidate_id"),
+        kind="skill",
+        subsystem="SkillCore",
+        title="Skill import preview",
+        summary="Skill import preview recorded without installing, executing source, activating tools, or activating MCP.",
+        status=status,
+        details={
+            "source_kind": source_kind,
+            "source_status": "blocked" if blocked else "needs_review" if needs_review else "preview_ready",
+            "preview_id": report.get("preview_id"),
+            "candidate_id": report.get("candidate_id"),
+            "source_format": report.get("source_format") or contract.get("source_format") or spec.get("source_format"),
+            "detected_format": (report.get("detection") or {}).get("detected_format") if isinstance(report.get("detection"), dict) else None,
+            "import_adapter": report.get("import_adapter") or contract.get("import_adapter") or provenance.get("import_adapter"),
+            "policy_decision": decision,
+            "compatibility_score": compatibility.get("score", "unmeasured"),
+            "compatibility_status": compatibility_status,
+            "migration_suggestion_count": migration.get("suggestion_count", 0),
+            "risk_count": len(risks),
+            "can_create_candidate": bool(report.get("can_create_candidate") or policy_data.get("can_create_candidate")),
+            "can_install_skill": False,
+            "can_execute_source": False,
+            "can_activate_tools": False,
+            "can_activate_mcp": False,
+        },
+        metadata={"source_kind": source_kind},
+    )
+
+
 def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
     source_kind = normalize_process_trace_source_kind(source)
     data = redact_process_trace_source(source)
@@ -611,6 +660,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = _adaptive_skill_item(data)
     elif source_kind == "swarm_final_audit":
         item = _audit_item(data)
+    elif source_kind == "skill_import_preview":
+        item = build_skill_import_process_trace_item(data, policy=data.get("policy") if isinstance(data.get("policy"), dict) else None)
     elif source_kind == "miniagent_task_runtime_metric":
         item = process_trace_item_from_runtime_metric(data)
     elif source_kind == "tool_trace":

@@ -227,7 +227,10 @@ export interface SkillImportPreviewRequest {
 export interface SkillImportPreviewResult {
   ok: boolean;
   detection: Record<string, any>;
-  preview: Record<string, any>;
+  preview: Record<string, any> & {
+    compatibility_score?: Record<string, any>;
+    migration_assistant?: Record<string, any>;
+  };
   policy: Record<string, any>;
   can_create_candidate: boolean;
   can_install_skill: boolean;

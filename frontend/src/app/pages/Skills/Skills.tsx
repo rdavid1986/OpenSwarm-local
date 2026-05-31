@@ -148,6 +148,7 @@ const Skills: React.FC = () => {
   const [importLicense, setImportLicense] = useState('unknown');
   const [importSourceUrl, setImportSourceUrl] = useState('');
   const [importContent, setImportContent] = useState('');
+  const [importDiffOpen, setImportDiffOpen] = useState(false);
   const [candidateDetailExpanded, setCandidateDetailExpanded] = useState<Record<string, boolean>>({
     validation: false,
     requirements: false,
@@ -1843,8 +1844,19 @@ const Skills: React.FC = () => {
     const preview = skillImportPreview?.preview || {};
     const detection = skillImportPreview?.detection || {};
     const riskReport = (preview.risk_report && typeof preview.risk_report === 'object') ? preview.risk_report as Record<string, any> : {};
+    const compatibility = (preview.compatibility_score && typeof preview.compatibility_score === 'object') ? preview.compatibility_score as Record<string, any> : {};
+    const compatibilityComponents = (compatibility.components && typeof compatibility.components === 'object') ? compatibility.components as Record<string, any> : {};
+    const migration = (preview.migration_assistant && typeof preview.migration_assistant === 'object') ? preview.migration_assistant as Record<string, any> : {};
+    const migrationSuggestions = Array.isArray(migration.suggestions) ? migration.suggestions : [];
+    const specPreview = (preview.skill_spec_preview && typeof preview.skill_spec_preview === 'object') ? preview.skill_spec_preview as Record<string, any> : {};
+    const importContract = (preview.import_contract && typeof preview.import_contract === 'object') ? preview.import_contract as Record<string, any> : {};
+    const provenance = (specPreview.provenance && typeof specPreview.provenance === 'object') ? specPreview.provenance as Record<string, any> : {};
     const warnings = Array.isArray(riskReport.warnings) ? riskReport.warnings : [];
     const risks = Array.isArray(riskReport.risks) ? riskReport.risks : [];
+    const policyReasons = Array.isArray(policy.reasons) ? policy.reasons : [];
+    const requiredTools = Array.isArray(preview.required_tools) ? preview.required_tools : [];
+    const requiredMcpServers = Array.isArray(preview.required_mcp_servers) ? preview.required_mcp_servers : [];
+    const previewDiff = typeof preview.preview_diff === 'string' ? preview.preview_diff : '';
     const canCreate = skillImportPreview?.can_create_candidate === true;
     const formatOptions = [
       'markdown_prompt_pack',
@@ -1983,22 +1995,137 @@ const Skills: React.FC = () => {
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                 <MetaChip label={`detected ${toDisplayText(detection.detected_format, 'unknown')}`} />
                 <MetaChip label={`policy ${toDisplayText(policy.decision, 'unknown')}`} tone={canCreate ? 'success' : policy.decision === 'blocked' ? 'error' : 'warning'} />
+                <MetaChip label={`compat ${toDisplayText(compatibility.status, 'unmeasured')}`} tone={compatibility.status === 'blocked' ? 'error' : compatibility.status === 'compatible_preview' ? 'success' : 'warning'} />
+                <MetaChip label={`migration ${toDisplayText(migration.status, 'not available')}`} tone={migration.status === 'blocked' ? 'error' : migration.status === 'ready_for_candidate_review' ? 'success' : 'warning'} />
                 <MetaChip label="preview only" tone="success" />
                 <MetaChip label="install disabled" tone="warning" />
+                <MetaChip label="execution disabled" tone="warning" />
+                <MetaChip label="tools/MCP disabled" tone="warning" />
               </Box>
               <Typography sx={{ fontSize: '0.7rem', color: c.text.secondary, lineHeight: 1.4 }}>
                 Preview id: {toDisplayText(preview.preview_id, 'not available')}
               </Typography>
-              {risks.length > 0 && (
-                <Typography sx={{ fontSize: '0.7rem', color: c.status.error, lineHeight: 1.4 }}>
-                  Risks: {risks.map((item) => toDisplayText(item)).join(', ')}
-                </Typography>
+
+              <ReviewSection title="Compatibility" tone={compatibility.status === 'blocked' ? 'error' : compatibility.status === 'compatible_preview' ? 'success' : 'warning'}>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 0.85 }}>
+                  <MetaChip label={`score ${toDisplayText(compatibility.score, 'unmeasured')}`} />
+                  <MetaChip label={`status ${toDisplayText(compatibility.status, 'unmeasured')}`} />
+                  <MetaChip label={`confidence ${toDisplayText(compatibility.confidence, 'unmeasured')}`} />
+                  <MetaChip label="install disabled" tone="warning" />
+                  <MetaChip label="execution disabled" tone="warning" />
+                  <MetaChip label="tools/MCP disabled" tone="warning" />
+                </Box>
+                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 0.65 }}>
+                  {Object.entries(compatibilityComponents).map(([key, raw]) => {
+                    const component = isPlainObject(raw) ? raw : {};
+                    const status = toDisplayText(component.status, 'unmeasured');
+                    const reasons = asArray(component.reasons).slice(0, 2);
+                    return (
+                      <Box key={`compat-${key}`} sx={{ p: 0.75, borderRadius: `${c.radius.sm}px`, border: `1px solid ${c.border.subtle}`, bgcolor: c.bg.secondary }}>
+                        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', alignItems: 'center', mb: 0.35 }}>
+                          <Typography sx={{ fontSize: '0.69rem', color: c.text.secondary, fontWeight: 700 }}>{toDisplayText(key)}</Typography>
+                          <MetaChip label={toDisplayText(component.score, 'unmeasured')} tone={status === 'blocked' ? 'error' : status === 'compatible_preview' ? 'success' : 'warning'} />
+                        </Box>
+                        {reasons.map((reason, index) => (
+                          <Typography key={`compat-${key}-reason-${index}`} sx={{ fontSize: '0.66rem', color: c.text.ghost, lineHeight: 1.35 }}>
+                            {toDisplayText(reason)}
+                          </Typography>
+                        ))}
+                      </Box>
+                    );
+                  })}
+                </Box>
+                {asArray(compatibility.notes).length > 0 && (
+                  <Typography sx={{ fontSize: '0.68rem', color: c.text.ghost, lineHeight: 1.4, mt: 0.75 }}>
+                    Notes: {asArray(compatibility.notes).slice(0, 4).map((item) => toDisplayText(item)).join(' · ')}
+                  </Typography>
+                )}
+              </ReviewSection>
+
+              <ReviewSection title="Migration Assistant" tone={migration.status === 'blocked' ? 'error' : migration.status === 'ready_for_candidate_review' ? 'success' : 'warning'}>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 0.75 }}>
+                  <MetaChip label={`status ${toDisplayText(migration.status, 'not available')}`} />
+                  <MetaChip label={`suggestions ${toDisplayText(migration.suggestion_count, 0)}`} />
+                  <MetaChip label="auto apply disabled" tone="warning" />
+                </Box>
+                {migrationSuggestions.length > 0 ? (
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.55 }}>
+                    {migrationSuggestions.slice(0, 8).map((suggestion, index) => {
+                      const item = isPlainObject(suggestion) ? suggestion : {};
+                      return (
+                        <Box key={`migration-${index}`} sx={{ pl: 0.75, borderLeft: `2px solid ${item.severity === 'critical' ? c.status.error : c.border.subtle}` }}>
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.45, alignItems: 'center' }}>
+                            <Typography sx={{ fontSize: '0.7rem', color: c.text.secondary, fontWeight: 700 }}>{toDisplayText(item.title, item.code || 'suggestion')}</Typography>
+                            <MetaChip label={toDisplayText(item.severity, 'medium')} tone={item.severity === 'critical' ? 'error' : item.severity === 'high' ? 'warning' : 'default'} />
+                            <MetaChip label={toDisplayText(item.target, 'target')} />
+                          </Box>
+                          <Typography sx={{ fontSize: '0.67rem', color: c.text.ghost, lineHeight: 1.35, mt: 0.2 }}>{toDisplayText(item.message)}</Typography>
+                        </Box>
+                      );
+                    })}
+                  </Box>
+                ) : (
+                  <EmptyReviewState text="No migration suggestions reported." tone="success" />
+                )}
+              </ReviewSection>
+
+              <ReviewSection title="Risk / Policy" tone={policy.decision === 'blocked' || risks.length > 0 ? 'error' : canCreate ? 'success' : 'warning'}>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 0.75 }}>
+                  <MetaChip label={`decision ${toDisplayText(policy.decision, 'unknown')}`} tone={policy.decision === 'blocked' ? 'error' : canCreate ? 'success' : 'warning'} />
+                  <MetaChip label={`risk ${toDisplayText(policy.risk_level, 'unknown')}`} />
+                  <MetaChip label={`tools ${requiredTools.length}`} tone={requiredTools.length ? 'warning' : 'success'} />
+                  <MetaChip label={`mcp ${requiredMcpServers.length}`} tone={requiredMcpServers.length ? 'warning' : 'success'} />
+                  <MetaChip label="no activation" tone="success" />
+                </Box>
+                {policyReasons.length > 0 && (
+                  <Typography sx={{ fontSize: '0.68rem', color: c.text.ghost, lineHeight: 1.4 }}>
+                    Blocked/review reasons: {policyReasons.map((item) => toDisplayText(isPlainObject(item) ? item.code : item)).join(', ')}
+                  </Typography>
+                )}
+                {risks.length > 0 && (
+                  <Typography sx={{ fontSize: '0.68rem', color: c.status.error, lineHeight: 1.4, mt: 0.35 }}>
+                    Risks: {risks.map((item) => toDisplayText(item)).join(', ')}
+                  </Typography>
+                )}
+                {warnings.length > 0 && (
+                  <Typography sx={{ fontSize: '0.68rem', color: c.text.ghost, lineHeight: 1.4, mt: 0.35 }}>
+                    Warnings: {warnings.slice(0, 4).map((item) => toDisplayText(item)).join(', ')}
+                  </Typography>
+                )}
+              </ReviewSection>
+
+              <ReviewSection title="Provenance">
+                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', lg: 'repeat(3, minmax(0, 1fr))' }, gap: 0.7 }}>
+                  <DetailRow label="Source format" value={preview.source_format || importContract.source_format || specPreview.source_format} />
+                  <DetailRow label="Detected format" value={detection.detected_format} />
+                  <DetailRow label="Import adapter" value={preview.import_adapter || importContract.import_adapter || provenance.import_adapter} />
+                  <DetailRow label="Author" value={importContract.source_author || provenance.source_author} />
+                  <DetailRow label="License" value={importContract.source_license || provenance.source_license} />
+                  <DetailRow label="Source ref" value={importContract.source_url || provenance.source_url} />
+                  <DetailRow label="Source hash" value={importContract.source_hash || provenance.source_hash} />
+                  <DetailRow label="Metadata confidence" value={importContract.metadata_confidence || specPreview.metadata_confidence} />
+                </Box>
+              </ReviewSection>
+
+              {previewDiff && (
+                <ReviewSection title="Preview diff">
+                  <Button size="small" onClick={() => setImportDiffOpen((prev) => !prev)} sx={{ textTransform: 'none', fontSize: '0.72rem', p: 0, minWidth: 0 }}>
+                    {importDiffOpen ? 'Hide preview diff' : 'Show preview diff'}
+                  </Button>
+                  <Collapse in={importDiffOpen}>
+                    <Box component="pre" sx={{ mt: 0.75, p: 1, borderRadius: `${c.radius.sm}px`, bgcolor: c.bg.secondary, color: c.text.secondary, fontSize: '0.66rem', overflow: 'auto', maxHeight: 180, whiteSpace: 'pre-wrap', fontFamily: c.font.mono }}>
+                      {previewDiff}
+                    </Box>
+                  </Collapse>
+                  <Typography sx={{ fontSize: '0.66rem', color: c.text.ghost, mt: 0.6 }}>
+                    Preview diff is read-only; edit the source material and preview again.
+                  </Typography>
+                </ReviewSection>
               )}
-              {warnings.length > 0 && (
-                <Typography sx={{ fontSize: '0.7rem', color: c.text.ghost, lineHeight: 1.4 }}>
-                  Warnings: {warnings.slice(0, 4).map((item) => toDisplayText(item)).join(', ')}
-                </Typography>
-              )}
+
+              <Typography sx={{ fontSize: '0.68rem', color: c.text.ghost, lineHeight: 1.4 }}>
+                Candidate creation only creates a review candidate. Install remains separate in candidate review.
+              </Typography>
             </Box>
           )}
         </Box>

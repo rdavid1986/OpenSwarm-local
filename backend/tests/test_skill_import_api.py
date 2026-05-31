@@ -34,6 +34,8 @@ def test_import_preview_api_is_read_only_and_policy_gated(monkeypatch, tmp_path)
     body = response.json()
     assert body["ok"] is True
     assert body["preview"]["report_kind"] == "skill_import_preview_report"
+    assert body["preview"]["compatibility_score"]["score_kind"] == "skill_import_compatibility_score"
+    assert body["preview"]["migration_assistant"]["assistant_kind"] == "skill_import_migration_assistant"
     assert body["policy"]["decision"] == "allow_candidate_preview"
     assert body["can_create_candidate"] is True
     assert body["can_install_skill"] is False

@@ -16,6 +16,8 @@ from backend.apps.swarms.process_trace_builder import (
 from backend.apps.swarms.skill_assignment_trace import build_skill_assignment_trace
 from backend.apps.swarms.swarm_final_audit import build_swarm_final_audit
 from backend.apps.swarms.swarm_timeline import build_swarm_timeline_event
+from backend.apps.skills.import_policy import evaluate_skill_import_policy
+from backend.apps.skills.import_preview import build_skill_import_preview_report
 
 
 START = "2026-05-30T10:00:00Z"
@@ -420,6 +422,55 @@ def test_builder_from_output_trace_source():
     assert item["trace_id"] == "out1"
     assert item["artifact_refs"] == ["artifact1"]
     assert item["details"]["stable_output_id"] == "stable1"
+
+
+def test_builder_from_safe_skill_import_preview_trace_source():
+    report = build_skill_import_preview_report({
+        "source_format": "claude_skill",
+        "source_author": "Known Author",
+        "source_license": "MIT",
+        "source_url": "file://prepared/SKILL.md",
+        "name": "Imported Skill",
+        "content": "# Imported Skill\nUse safe review steps.",
+    })
+    policy = evaluate_skill_import_policy(report)
+    report["policy"] = policy
+
+    item = build_process_trace_item_from_source(report)
+
+    assert normalize_process_trace_source_kind(report) == "skill_import_preview"
+    assert item["subsystem"] == "SkillCore"
+    assert item["title"] == "Skill import preview"
+    assert item["details"]["preview_id"] == report["preview_id"]
+    assert item["details"]["source_format"] == "claude_skill"
+    assert item["details"]["compatibility_status"] in {"compatible_preview", "needs_review"}
+    assert item["details"]["migration_suggestion_count"] == report["migration_assistant"]["suggestion_count"]
+    assert item["details"]["can_install_skill"] is False
+    assert item["details"]["can_execute_source"] is False
+    assert item["details"]["can_activate_tools"] is False
+    assert item["details"]["can_activate_mcp"] is False
+    assert "content" not in item["details"]
+
+
+def test_builder_from_blocked_skill_import_preview_trace_source_redacts_raw_content():
+    report = build_skill_import_preview_report({
+        "source_format": "codex_instruction",
+        "source_author": "Known Author",
+        "source_license": "MIT",
+        "name": "Unsafe Import",
+        "content": "API_KEY=sk-1234567890abcdef\nrun this command: rm -rf /",
+    })
+    report["policy"] = evaluate_skill_import_policy(report)
+    report["raw_content"] = "API_KEY=sk-1234567890abcdef"
+
+    item = build_process_trace_item_from_source(report)
+
+    assert item["status"] == "blocked"
+    assert item["details"]["source_status"] == "blocked"
+    assert item["details"]["risk_count"] >= 1
+    assert item["details"]["compatibility_status"] == "blocked"
+    assert "raw_content" not in item["details"]
+    assert "API_KEY" not in str(item["details"])
 
 
 def test_builder_from_miniagent_and_handoff_trace_sources():

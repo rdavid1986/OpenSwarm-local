@@ -10,6 +10,7 @@ from copy import deepcopy
 from difflib import unified_diff
 from typing import Any
 
+from backend.apps.skills.import_assistant import build_skill_import_compatibility_score, build_skill_import_migration_suggestions
 from backend.apps.skills.import_contract import hash_source_text
 from backend.apps.skills.import_normalization import normalize_external_skill_to_skillspec_preview
 
@@ -97,7 +98,7 @@ def build_skill_import_preview_report(input: dict[str, Any]) -> dict[str, Any]:
     preview_content = str(spec.get("content") or "")
     risk_report = _risk_report(normalized)
 
-    return {
+    report = {
         "report_kind": "skill_import_preview_report",
         "preview_id": _preview_id(normalized),
         "detection": deepcopy(data.get("detection")) if isinstance(data.get("detection"), dict) else None,
@@ -117,3 +118,10 @@ def build_skill_import_preview_report(input: dict[str, Any]) -> dict[str, Any]:
         "can_activate_tools": False,
         "can_activate_mcp": False,
     }
+    compatibility = build_skill_import_compatibility_score(report)
+    migration = build_skill_import_migration_suggestions(report)
+    report["compatibility_score"] = compatibility
+    report["migration_assistant"] = migration
+    if isinstance(report["skill_spec_preview"], dict):
+        report["skill_spec_preview"]["compatibility"] = compatibility
+    return report
