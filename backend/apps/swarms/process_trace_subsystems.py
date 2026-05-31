@@ -94,6 +94,14 @@ SUBSYSTEMS: dict[str, dict[str, str]] = {
         "color_token": "trace.trace",
         "accent_token": "trace.trace.accent",
     },
+    "RuntimeCore": {
+        "subsystem_id": "RuntimeCore",
+        "label": "RuntimeCore",
+        "description": "Temporal runtime, execution timing and freshness.",
+        "icon_id": "runtime-core",
+        "color_token": "trace.runtime",
+        "accent_token": "trace.runtime.accent",
+    },
     "MetricCore": {
         "subsystem_id": "MetricCore",
         "label": "MetricCore",

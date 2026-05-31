@@ -78,6 +78,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "skill_effectiveness_metrics"
     if data.get("metric_kind") == "miniagent_task_runtime_metric":
         return "miniagent_task_runtime_metric"
+    if data.get("temporal_kind") in {"temporal_trace_source", "temporal_core"} or data.get("source_kind") == "temporal_runtime":
+        return "temporal_runtime"
     if data.get("runtime_kind") == "model_runtime_resolution" or data.get("source_kind") == "model_runtime":
         return "model_runtime"
     if data.get("packet_kind") == "context_packet" or data.get("source_kind") == "context_packet":
@@ -97,6 +99,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
     explicit_source = str(data.get("source_kind") or data.get("trace_source_kind") or data.get("producer_kind") or "").strip().lower()
     if explicit_source == "model_runtime":
         return "model_runtime"
+    if explicit_source == "temporal_runtime":
+        return "temporal_runtime"
     if explicit_source in {"context_packet", "context_packets", "context_packet_runtime"}:
         return "context_packet"
     if explicit_source == "context_compaction":
@@ -806,6 +810,60 @@ def build_context_packet_process_trace_item(source: dict[str, Any]) -> dict[str,
     )
 
 
+
+def build_temporal_runtime_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    execution = data.get("execution") if isinstance(data.get("execution"), dict) else {}
+    freshness = data.get("freshness") if isinstance(data.get("freshness"), dict) else {}
+    session = data.get("session") if isinstance(data.get("session"), dict) else {}
+    warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    execution_status = str(execution.get("status") or data.get("status") or "recorded").strip().lower()
+    freshness_status = str(freshness.get("status") or "").strip().lower()
+    blocked = execution_status in {"failed", "interrupted"} or freshness_status == "stale"
+    status = "blocked" if blocked else "warning" if warnings or required_actions or freshness_status == "expiring" else "completed"
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or execution.get("execution_id") or session.get("session_id"),
+        kind="metric",
+        subsystem="RuntimeCore",
+        title="Temporal runtime",
+        summary=(
+            f"Temporal runtime {execution_status or 'recorded'}; "
+            f"duration_ms={data.get('duration_ms')}; freshness={freshness_status or 'unknown'}."
+        ),
+        status=status,
+        started_at=data.get("started_at") or execution.get("started_at"),
+        finished_at=data.get("completed_at") or execution.get("completed_at") or data.get("interrupted_at") or execution.get("interrupted_at"),
+        duration_ms=data.get("duration_ms") or execution.get("duration_ms"),
+        details={
+            "source_kind": "temporal_runtime",
+            "temporal_kind": data.get("temporal_kind") or "temporal_trace_source",
+            "status": data.get("status"),
+            "created_at": data.get("created_at"),
+            "started_at": data.get("started_at") or execution.get("started_at"),
+            "completed_at": data.get("completed_at") or execution.get("completed_at"),
+            "interrupted_at": data.get("interrupted_at") or execution.get("interrupted_at"),
+            "duration_ms": data.get("duration_ms") or execution.get("duration_ms"),
+            "running_duration_ms": data.get("running_duration_ms") or execution.get("running_duration_ms"),
+            "stale_after": data.get("stale_after") or freshness.get("stale_after"),
+            "timezone": data.get("timezone"),
+            "local_time_label": data.get("local_time_label"),
+            "session": session or None,
+            "message": data.get("message") if isinstance(data.get("message"), dict) else None,
+            "part": data.get("part") if isinstance(data.get("part"), dict) else None,
+            "execution": execution or None,
+            "context": data.get("context") if isinstance(data.get("context"), dict) else None,
+            "freshness": freshness or None,
+            "warnings": warnings,
+            "required_actions": required_actions,
+            "can_execute_model": False,
+            "can_execute_tools": False,
+            "can_activate_mcp": False,
+            "contains_private_reasoning": False,
+        },
+        metadata={"source_kind": "temporal_runtime"},
+    )
+
 def build_context_compaction_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
     data = source or {}
     state = data.get("state") if isinstance(data.get("state"), dict) else {}
@@ -1154,6 +1212,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = build_skill_effectiveness_process_trace_item(data)
     elif source_kind == "model_runtime":
         item = build_model_runtime_process_trace_item(data)
+    elif source_kind == "temporal_runtime":
+        item = build_temporal_runtime_process_trace_item(data)
     elif source_kind == "context_packet":
         item = build_context_packet_process_trace_item(data)
     elif source_kind == "context_compaction":
