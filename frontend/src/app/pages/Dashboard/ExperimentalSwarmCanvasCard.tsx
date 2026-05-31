@@ -880,6 +880,101 @@ function buildMiniAgentInspectorProcessTraceItems(task: any, idx: number): Proce
 }
 
 
+
+function buildMiniAgentCardViewModel(task: any, idx: number) {
+  const taskId = renderText(task?.id || task?.task_id || task?.name, `task-${idx + 1}`);
+  const title = renderText(task?.title || task?.name, `Task ${idx + 1}`);
+  const statusRaw = normalizeStatusValue(task?.status || task?.state || 'planned') || 'planned';
+  const miniagentId = renderText(task?.miniagent_id || task?.mini_agent_id || task?.miniagent || task?.agent_id || task?.agent, '');
+  const assignee = renderText(task?.agent || task?.assignee || miniagentId, '');
+  const description = renderText(task?.description || task?.summary || task?.goal, '').trim();
+  const skillName = renderText(task?.skill_name || task?.assigned_skill || task?.skill?.name || task?.skill, '').trim();
+  const skillId = renderText(task?.skill_id || task?.assigned_skill_id || task?.skill?.id, '').trim();
+  const mode = renderText(task?.mode_id || task?.mode, '').trim();
+  const model = renderText(task?.model || task?.model_id || task?.provider_model, '').trim();
+  const currentStep = renderText(task?.current_step || task?.step || task?.phase, '').trim();
+  const currentAction = renderText(task?.current_action || task?.action || task?.last_action || task?.last_event, '').trim();
+  const lastEvent = renderText(task?.last_event || task?.event || task?.runtime_event, '').trim();
+  const blocker = renderText(task?.blocker || task?.blocked_reason || task?.error || task?.failure_reason, '').trim();
+  const handoff = renderText(task?.handoff || task?.handoff_summary || task?.completed_work_summary, '').trim();
+
+  const evidenceRefs = Array.isArray(task?.evidence_refs)
+    ? task.evidence_refs.filter(Boolean)
+    : Array.isArray(task?.evidence)
+      ? task.evidence.map((item: any) => item?.id || item?.evidence_id || item?.ref || item?.path || item?.summary).filter(Boolean)
+      : [];
+
+  const artifactRefs = Array.isArray(task?.artifact_refs)
+    ? task.artifact_refs.filter(Boolean)
+    : Array.isArray(task?.artifacts)
+      ? task.artifacts.map((item: any) => item?.id || item?.artifact_id || item?.path || item?.name).filter(Boolean)
+      : [];
+
+  const durationMs = typeof task?.duration_ms === 'number'
+    ? task.duration_ms
+    : typeof task?.runtime_ms === 'number'
+      ? task.runtime_ms
+      : typeof task?.elapsed_ms === 'number'
+        ? task.elapsed_ms
+        : null;
+
+  const needsAttention = ['needs_context', 'needs_review', 'needs_skill', 'blocked', 'failed'].includes(statusRaw) || Boolean(blocker);
+  const isActive = ['running', 'needs_context', 'needs_review', 'needs_skill', 'blocked'].includes(statusRaw);
+  const isDone = ['completed', 'skipped'].includes(statusRaw);
+
+  return {
+    taskId,
+    title,
+    statusRaw,
+    statusLabel: humanizeStatus(statusRaw, 'planned'),
+    miniagentId,
+    assignee,
+    description,
+    skillName,
+    skillId,
+    mode,
+    model,
+    currentStep,
+    currentAction,
+    lastEvent,
+    blocker,
+    handoff,
+    evidenceRefs,
+    artifactRefs,
+    durationMs,
+    needsAttention,
+    isActive,
+    isDone,
+    inspectorItems: buildMiniAgentInspectorProcessTraceItems(task, idx),
+  };
+}
+
+function miniAgentStatusColor(statusRaw: string, c: any): string {
+  if (statusRaw === 'completed') return c.status.success;
+  if (statusRaw === 'failed') return c.status.error;
+  if (statusRaw === 'blocked' || statusRaw === 'needs_review' || statusRaw === 'needs_skill') return c.status.warning;
+  if (statusRaw === 'running') return c.status.info;
+  if (statusRaw === 'needs_context') return c.accent.primary;
+  if (statusRaw === 'skipped') return c.text.ghost;
+  return c.text.tertiary;
+}
+
+function miniAgentStatusBackground(statusRaw: string, c: any): string {
+  const color = miniAgentStatusColor(statusRaw, c);
+  return `${color}12`;
+}
+
+function formatMiniAgentDuration(durationMs: number | null): string | null {
+  if (durationMs == null) return null;
+  const safeMs = Math.max(0, Math.round(durationMs));
+  if (safeMs < 1000) return `${safeMs}ms`;
+  const seconds = Math.floor(safeMs / 1000);
+  const minutes = Math.floor(seconds / 60);
+  if (minutes <= 0) return `${seconds}s`;
+  return `${minutes}m ${(seconds % 60).toString().padStart(2, '0')}s`;
+}
+
+
 function buildSwarmCardProcessTraceItems(params: {
   activeSwarm: any | null;
   activeSwarmId: string | null;
@@ -1142,6 +1237,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const [isStartingImplementation, setIsStartingImplementation] = useState(false);
   const [lastOutputBridgeOutputId, setLastOutputBridgeOutputId] = useState<string | null>(null);
   const [seenPreviewOutputId, setSeenPreviewOutputId] = useState<string | null>(previewOutputId || null);
+  const [openMiniAgentInspectorIds, setOpenMiniAgentInspectorIds] = useState<Record<string, boolean>>({});
+
   const [openPanelSections, setOpenPanelSections] = useState<Record<string, boolean>>({
     tasks: false,
     approvals: false,
@@ -3117,44 +3214,99 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             Swarm {activeSwarmId ? `· ${activeSwarmId}` : '· not started'}
           </Typography>
 
-          {renderPanelHeader('tasks', 'Tasks', tasks.length)}
+          {renderPanelHeader('tasks', 'MiniAgents', tasks.length)}
           {openPanelSections.tasks && (tasks.length === 0 ? (
-            <Typography sx={{ color: c.text.tertiary, fontSize: '0.78rem', mb: 1.5 }}>No tasks yet.</Typography>
-          ) : tasks.slice(0, 6).map((task: any, idx: number) => (
-            <Box
-              key={task.id || idx}
-              sx={{
-                mb: 0.75,
-                p: 1,
-                border: `1px solid ${c.border.subtle}`,
-                borderRadius: 1.25,
-                bgcolor: c.bg.page,
-              }}
-            >
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
-                <Typography sx={{ fontSize: '0.78rem', fontWeight: 650, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {renderText(task.title || task.name, `Task ${idx + 1}`)}
-                </Typography>
-                <Chip size="small" label={humanizeStatus(task.status, 'queued')} sx={{ height: 20, fontSize: '0.68rem' }} />
-              </Box>
-              {(task.agent || task.assignee || task.description) && (
-                <Typography sx={{ color: c.text.muted, fontSize: '0.72rem', mt: 0.5, lineHeight: 1.45 }}>
-                  {renderText(task.agent || task.assignee || task.description)}
-                </Typography>
-              )}
-
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.65, mt: 0.85 }}>
-                {buildMiniAgentInspectorProcessTraceItems(task, idx).map((item) => (
-                  <ProcessTraceDropdown
-                    key={item.trace_id || `${item.kind}-${item.title}`}
-                    item={item}
-                    compact
-                    defaultExpanded={item.status === 'running' || item.status === 'blocked'}
+            <Typography sx={{ color: c.text.tertiary, fontSize: '0.78rem', mb: 1.5 }}>No MiniAgent tasks yet.</Typography>
+          ) : tasks.slice(0, 6).map((task: any, idx: number) => {
+            const vm = buildMiniAgentCardViewModel(task, idx);
+            const statusColor = miniAgentStatusColor(vm.statusRaw, c);
+            const inspectorOpen = Boolean(openMiniAgentInspectorIds[vm.taskId]);
+            const durationLabel = formatMiniAgentDuration(vm.durationMs);
+            return (
+              <Box
+                key={vm.taskId || idx}
+                sx={{
+                  mb: 0.75,
+                  p: 1,
+                  border: `1px solid ${vm.needsAttention ? `${statusColor}66` : c.border.subtle}`,
+                  borderRadius: 1.35,
+                  bgcolor: vm.isActive ? `${statusColor}08` : c.bg.page,
+                  boxShadow: vm.statusRaw === 'running' ? `0 0 0 1px ${statusColor}22, 0 0 18px ${statusColor}18` : 'none',
+                }}
+              >
+                <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 1 }}>
+                  <Box sx={{ minWidth: 0, flex: 1 }}>
+                    <Typography sx={{ fontSize: '0.78rem', fontWeight: 700, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', color: c.text.primary }}>
+                      {vm.title}
+                    </Typography>
+                    {(vm.assignee || vm.description) && (
+                      <Typography sx={{ color: c.text.muted, fontSize: '0.72rem', mt: 0.35, lineHeight: 1.45, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: inspectorOpen ? 4 : 2, WebkitBoxOrient: 'vertical' }}>
+                        {vm.assignee ? `${vm.assignee}${vm.description ? ' · ' : ''}` : ''}{vm.description}
+                      </Typography>
+                    )}
+                  </Box>
+                  <Chip
+                    size="small"
+                    label={vm.statusLabel}
+                    sx={{ height: 20, fontSize: '0.66rem', color: statusColor, bgcolor: miniAgentStatusBackground(vm.statusRaw, c), fontWeight: 700 }}
                   />
-                ))}
+                </Box>
+
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.45, mt: 0.75 }}>
+                  {vm.skillName && <Chip size="small" label={`skill:${vm.skillName}`} sx={{ height: 20, maxWidth: 170, fontSize: '0.62rem', color: c.accent.primary, bgcolor: `${c.accent.primary}12`, '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' } }} />}
+                  {vm.mode && <Chip size="small" label={`mode:${vm.mode}`} sx={{ height: 20, maxWidth: 150, fontSize: '0.62rem' }} />}
+                  {vm.model && <Chip size="small" label={`model:${vm.model}`} sx={{ height: 20, maxWidth: 170, fontSize: '0.62rem', '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' } }} />}
+                  {durationLabel && <Chip size="small" label={`time:${durationLabel}`} sx={{ height: 20, fontSize: '0.62rem', color: c.text.tertiary }} />}
+                  {vm.evidenceRefs.length > 0 && <Chip size="small" label={`evidence:${vm.evidenceRefs.length}`} sx={{ height: 20, fontSize: '0.62rem', color: c.status.success, bgcolor: `${c.status.success}12` }} />}
+                  {vm.artifactRefs.length > 0 && <Chip size="small" label={`artifacts:${vm.artifactRefs.length}`} sx={{ height: 20, fontSize: '0.62rem', color: c.status.success, bgcolor: `${c.status.success}12` }} />}
+                  {vm.handoff && <Chip size="small" label="handoff ready" sx={{ height: 20, fontSize: '0.62rem', color: c.status.info, bgcolor: `${c.status.info}12` }} />}
+                  {vm.blocker && <Chip size="small" label="blocked" sx={{ height: 20, fontSize: '0.62rem', color: c.status.warning, bgcolor: `${c.status.warning}12` }} />}
+                </Box>
+
+                {(vm.currentStep || vm.currentAction || vm.lastEvent || vm.blocker) && (
+                  <Box sx={{ mt: 0.75, px: 0.8, py: 0.55, borderRadius: 1, bgcolor: `${statusColor}0D`, border: `1px solid ${statusColor}22` }}>
+                    {vm.currentStep && (
+                      <Typography sx={{ color: c.text.secondary, fontSize: '0.66rem', fontWeight: 700 }}>
+                        Current step: {vm.currentStep}
+                      </Typography>
+                    )}
+                    {(vm.currentAction || vm.lastEvent || vm.blocker) && (
+                      <Typography sx={{ color: vm.blocker ? c.status.warning : c.text.tertiary, fontSize: '0.66rem', mt: vm.currentStep ? 0.2 : 0, lineHeight: 1.35 }}>
+                        {vm.blocker || vm.currentAction || vm.lastEvent}
+                      </Typography>
+                    )}
+                  </Box>
+                )}
+
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0.75, gap: 0.75 }}>
+                  <Typography sx={{ color: c.text.ghost, fontSize: '0.61rem', fontFamily: c.font.mono, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    task:{vm.taskId}{vm.miniagentId ? ` · miniagent:${vm.miniagentId}` : ''}
+                  </Typography>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => setOpenMiniAgentInspectorIds((prev) => ({ ...prev, [vm.taskId]: !prev[vm.taskId] }))}
+                    sx={{ minHeight: 24, px: 0.85, py: 0.1, fontSize: '0.65rem', textTransform: 'none', flexShrink: 0 }}
+                  >
+                    {inspectorOpen ? 'Hide inspector' : 'Open inspector'}
+                  </Button>
+                </Box>
+
+                {inspectorOpen && (
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.65, mt: 0.85 }}>
+                    {vm.inspectorItems.map((item) => (
+                      <ProcessTraceDropdown
+                        key={item.trace_id || `${item.kind}-${item.title}`}
+                        item={item}
+                        compact
+                        defaultExpanded={item.status === 'running' || item.status === 'blocked'}
+                      />
+                    ))}
+                  </Box>
+                )}
               </Box>
-            </Box>
-          )))}
+            );
+          }))}
 
           {renderPanelHeader('approvals', 'Approvals', approvals.length)}
           {openPanelSections.approvals && (approvals.length === 0 ? (
