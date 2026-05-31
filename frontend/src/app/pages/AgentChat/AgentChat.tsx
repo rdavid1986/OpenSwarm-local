@@ -5,15 +5,8 @@ import Typography from '@mui/material/Typography';
 import Chip from '@mui/material/Chip';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
-import TextField from '@mui/material/TextField';
-import ClickAwayListener from '@mui/material/ClickAwayListener';
 import CloseIcon from '@mui/icons-material/Close';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
-import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
-import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
-import CheckIcon from '@mui/icons-material/Check';
-import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import { useAppDispatch, useAppSelector } from '@/shared/hooks';
 import { openSettingsModal } from '@/shared/state/settingsSlice';
 import { API_BASE, getAuthToken } from '@/shared/config';
@@ -46,6 +39,8 @@ import ApprovalBar, { BatchApprovalBar } from './ApprovalBar';
 import ChatInput, { ChatInputHandle } from './ChatInput';
 import ContextDrawer from './ContextDrawer';
 import { ErrorSlime } from '@/app/components/ErrorSlime';
+import TaskQueuePanel from '@/app/components/TaskQueuePanel';
+import LongRunningTaskMonitor from '@/app/components/LongRunningTaskMonitor';
 import { ContextPath } from '@/app/components/DirectoryBrowser';
 import DiffViewer from './DiffViewer';
 import { setGlowingBrowserCards, fadeGlowingBrowserCards, clearGlowingBrowserCards } from '@/shared/state/dashboardLayoutSlice';
@@ -95,7 +90,7 @@ const ThinkingBubble: React.FC<{ label?: string | null; seedKey?: string }> = ({
   const shimmerHighlight = c.text.primary;
   // Aux-LLM label wins; otherwise pick a quirky verb keyed off seedKey
   // so different sessions / turns show different verbs without flicker.
-  const display = label ? `${label}…` : `${streamingLabelFor(seedKey)}…`;
+  const display = label ? `${label}â€¦` : `${streamingLabelFor(seedKey)}â€¦`;
   return (
     <Box sx={{ display: 'flex', justifyContent: 'flex-start', my: 0.75 }}>
       <style>{thinkingShimmerKeyframes}</style>
@@ -171,7 +166,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
   const modelsByProvider = useAppSelector((state) => state.models.byProvider);
   const connectionMode = useAppSelector((state) => state.settings.data.connection_mode);
 
-  // Stored value → curated picker label, with a tidy fallback for unknowns.
+  // Stored value â†’ curated picker label, with a tidy fallback for unknowns.
   const resolveModelLabel = useCallback((value: string | null | undefined): string => {
     if (!value) return '';
     for (const models of Object.values(modelsByProvider)) {
@@ -221,7 +216,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
     // events starting at last_seq=0, which includes every stream_*
     // event for messages that finished before the disconnect. The
     // replay-skip guard in WebSocketManager._messageAlreadyComplete
-    // checks `session.messages` to decide whether to drop deltas — so
+    // checks `session.messages` to decide whether to drop deltas â€” so
     // if we connect first, the slice is empty when the replay arrives,
     // the guard returns false, and the user sees the chat type itself
     // out again. Awaiting fetchSession before connect makes the slice
@@ -230,7 +225,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
       try {
         await dispatch(fetchSession(id));
       } catch {
-        // Even if the REST hydrate fails, still connect — the WS resume
+        // Even if the REST hydrate fails, still connect â€” the WS resume
         // protocol can hydrate from buffered events as a fallback.
       }
       if (cancelled) return;
@@ -421,7 +416,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
       const el = scrollContainerRef.current;
       if (!el) return;
       // Only set scrollTop when the scrollable height actually grew.
-      // Otherwise we're forcing a paint for nothing — and on a
+      // Otherwise we're forcing a paint for nothing â€” and on a
       // streaming turn we get one of these per delta, which thrashes
       // the compositor for zero visible benefit. The native
       // overflow-anchor on the container already keeps the viewport
@@ -612,6 +607,50 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
   }, [activeBranchMessages, session?.system_prompt, session?.streamingMessage?.content, model, modelsByProvider]);
 
   const sessionRunning = session?.status === 'running' || session?.status === 'waiting_approval';
+
+  const queuedTaskItems = useMemo(() => messageQueueRef.current.map((msg, idx) => ({
+    id: `queued-${idx}-${msg.prompt.slice(0, 24)}`,
+    prompt: msg.prompt,
+    status: 'queued' as const,
+    meta: [
+      msg.contextPaths?.length ? `${msg.contextPaths.length} context` : null,
+      msg.images?.length ? `${msg.images.length} images` : null,
+      msg.forcedTools?.length ? `${msg.forcedTools.length} tools` : null,
+      msg.attachedSkills?.length ? `${msg.attachedSkills.length} skills` : null,
+    ].filter(Boolean).join(' / '),
+  })), [queueLength]);
+
+  const clearQueuedMessages = useCallback(() => {
+    messageQueueRef.current = [];
+    setQueueLength(0);
+    setQueueExpanded(false);
+    setEditingQueueIdx(null);
+  }, []);
+
+  const removeQueuedMessage = useCallback((idx: number) => {
+    messageQueueRef.current.splice(idx, 1);
+    setQueueLength(messageQueueRef.current.length);
+    if (messageQueueRef.current.length === 0) setQueueExpanded(false);
+  }, []);
+
+  const editQueuedMessage = useCallback((idx: number, prompt: string) => {
+    if (!messageQueueRef.current[idx]) return;
+    messageQueueRef.current[idx] = { ...messageQueueRef.current[idx], prompt };
+    setQueueLength(messageQueueRef.current.length);
+  }, []);
+
+  const moveQueuedMessage = useCallback((fromIdx: number, toIdx: number) => {
+    const queue = messageQueueRef.current;
+    if (fromIdx < 0 || toIdx < 0 || fromIdx >= queue.length || toIdx >= queue.length || fromIdx === toIdx) return;
+    const [item] = queue.splice(fromIdx, 1);
+    queue.splice(toIdx, 0, item);
+    setQueueLength(queue.length);
+  }, []);
+
+  const latestAgentActivity = session?.turn_label?.label
+    || (session?.streamingMessage?.role ? `Streaming ${session.streamingMessage.role}` : null)
+    || (session?.status === 'waiting_approval' ? 'Waiting for approval before continuing.' : null);
+
 
   const renderItems: RenderItem[] = useMemo(() => {
     const isOutputCall = (m: AgentMessage) =>
@@ -869,19 +908,19 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                     if (!(session.cost_usd > 0)) return null;
                     // The SDK reports a per-call $ figure regardless of how
                     // the request was routed. For requests that went through
-                    // a subscription path, that figure is misleading — the
+                    // a subscription path, that figure is misleading â€” the
                     // user pays flat-rate. Show "subscription" instead in
                     // those cases. Show $ only when the call was actually
                     // metered (Anthropic API key, OpenAI API key, etc.).
                     //
                     // Model-id signals (these are short_name values from the
                     // BUILTIN_MODELS registry):
-                    //   - `*-api` → pinned Anthropic API key (METERED)
-                    //   - `*-cc` → pinned Claude Pro/Max via 9Router (sub)
-                    //   - plain sonnet/opus/haiku + openswarm-pro mode → Pro proxy (sub)
-                    //   - plain sonnet/opus/haiku + own_key mode → API key (METERED)
-                    //   - gpt-5.4* / gpt-5.3* → ChatGPT Plus/Pro via 9Router (sub)
-                    //   - gemini-*  → Gemini Advanced via 9Router (sub)
+                    //   - `*-api` â†’ pinned Anthropic API key (METERED)
+                    //   - `*-cc` â†’ pinned Claude Pro/Max via 9Router (sub)
+                    //   - plain sonnet/opus/haiku + openswarm-pro mode â†’ Pro proxy (sub)
+                    //   - plain sonnet/opus/haiku + own_key mode â†’ API key (METERED)
+                    //   - gpt-5.4* / gpt-5.3* â†’ ChatGPT Plus/Pro via 9Router (sub)
+                    //   - gemini-*  â†’ Gemini Advanced via 9Router (sub)
                     const m = (session.model || '').toLowerCase();
                     const isApiRoute = m.endsWith('-api');
                     if (isApiRoute) {
@@ -903,13 +942,13 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                         <Typography
                           variant="caption"
                           sx={{ color: c.text.tertiary }}
-                          title="Routed through subscription — flat-rate, per-call cost not metered"
+                          title="Routed through subscription â€” flat-rate, per-call cost not metered"
                         >
                           subscription
                         </Typography>
                       );
                     }
-                    // own-key Anthropic OR anything else → real $ figure.
+                    // own-key Anthropic OR anything else â†’ real $ figure.
                     void isOwnKeyAnthropic;
                     return (
                       <Typography variant="caption" sx={{ color: c.accent.primary }}>
@@ -927,9 +966,9 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                       <Typography
                         variant="caption"
                         sx={{ color, fontVariantNumeric: 'tabular-nums' }}
-                        title={`Context ${pctTxt} of 200K · ${mcpCount} MCP${mcpCount === 1 ? '' : 's'} active`}
+                        title={`Context ${pctTxt} of 200K Â· ${mcpCount} MCP${mcpCount === 1 ? '' : 's'} active`}
                       >
-                        {pctTxt} ctx · {mcpCount} mcp
+                        {pctTxt} ctx Â· {mcpCount} mcp
                       </Typography>
                     );
                   })()}
@@ -954,18 +993,18 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
               overflow: 'auto',
               px: 2,
               py: 1,
-              // Smoothness bundle (perf-only — no behavior change):
-              //   1. overflow-anchor: auto — Chromium's native scroll
+              // Smoothness bundle (perf-only â€” no behavior change):
+              //   1. overflow-anchor: auto â€” Chromium's native scroll
               //      anchoring keeps the viewport pinned to the user's
               //      visible content as siblings above/below resize.
               //      Eliminates the "transcript snaps back" feel during
               //      streaming and parallel tool fan-outs. Runs on the
               //      compositor thread, free.
-              //   2. contain: layout — tells the browser layout shifts
+              //   2. contain: layout â€” tells the browser layout shifts
               //      inside this scroll container don't affect siblings
               //      outside it. Prevents reflow from cascading up to
               //      the dashboard layout when bubbles grow.
-              //   3. overscroll-behavior: contain — keeps over-scroll
+              //   3. overscroll-behavior: contain â€” keeps over-scroll
               //      gestures from leaking up to the dashboard pan/zoom
               //      when the user hits the chat top/bottom.
               overflowAnchor: 'auto',
@@ -1078,7 +1117,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                           flexShrink: 0,
                         }}
                       >
-                        {activatingMcp === s.id ? 'Activating…' : 'Activate'}
+                        {activatingMcp === s.id ? 'Activatingâ€¦' : 'Activate'}
                       </Typography>
                     </Box>
                   ))}
@@ -1339,7 +1378,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                       subsystem: 'ModelCore',
                       icon_id: 'model-core',
                       title: 'Modelo generando respuesta',
-                      summary: `El modelo está trabajando. Se muestra un resumen operativo, no razonamiento privado paso a paso.`,
+                      summary: `El modelo estÃ¡ trabajando. Se muestra un resumen operativo, no razonamiento privado paso a paso.`,
                       status: 'running',
                       badge: 'running',
                       related_agent_id: session.id,
@@ -1439,207 +1478,39 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
             Continue chat
           </Box>
         ) : (
-          <ClickAwayListener onClickAway={() => { if (queueExpanded) { setQueueExpanded(false); setEditingQueueIdx(null); } }}>
-            <Box>
-              {queueLength > 0 && (
-                <Box sx={{ ml: 3, mr: 1.5 }}>
-                  <Box
-                    onClick={() => { setQueueExpanded((v) => !v); setEditingQueueIdx(null); }}
-                    sx={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 0.5,
-                      px: 1.25,
-                      py: 0.25,
-                      borderRadius: '8px 8px 0 0',
-                      bgcolor: c.bg.surface,
-                      border: `1px solid ${c.border.subtle}`,
-                      borderBottom: 'none',
-                      cursor: 'pointer',
-                      userSelect: 'none',
-                      '&:hover': { bgcolor: c.bg.secondary },
-                      transition: 'background 0.12s',
-                    }}
-                  >
-                    {queueExpanded
-                      ? <KeyboardArrowDownIcon sx={{ fontSize: 12, color: c.text.tertiary }} />
-                      : <KeyboardArrowUpIcon sx={{ fontSize: 12, color: c.text.tertiary }} />
-                    }
-                    <Typography sx={{ fontSize: '0.68rem', fontWeight: 600, color: c.text.muted, letterSpacing: 0.2 }}>
-                      {queueLength} queued
-                    </Typography>
-                    <Tooltip title="Clear all">
-                      <IconButton
-                        size="small"
-                        onClick={(e) => { e.stopPropagation(); messageQueueRef.current = []; setQueueLength(0); setQueueExpanded(false); setEditingQueueIdx(null); }}
-                        sx={{ p: 0.15, color: c.text.tertiary, '&:hover': { color: c.status.error } }}
-                      >
-                        <CloseIcon sx={{ fontSize: 10 }} />
-                      </IconButton>
-                    </Tooltip>
-                  </Box>
-
-                  {queueExpanded && (
-                    <Box
-                      sx={{
-                        bgcolor: c.bg.surface,
-                        border: `1px solid ${c.border.subtle}`,
-                        borderBottom: 'none',
-                        borderRadius: '0 8px 0 0',
-                        maxHeight: 240,
-                        overflowY: 'auto',
-                        '&::-webkit-scrollbar': { width: 4 },
-                        '&::-webkit-scrollbar-thumb': { background: c.border.medium, borderRadius: 2 },
-                      }}
-                    >
-                      {messageQueueRef.current.map((msg, idx) => (
-                        <Box
-                          key={idx}
-                          draggable={editingQueueIdx !== idx}
-                          onDragStart={(e) => {
-                            setDragIdx(idx);
-                            e.dataTransfer.effectAllowed = 'move';
-                          }}
-                          onDragOver={(e) => {
-                            e.preventDefault();
-                            e.dataTransfer.dropEffect = 'move';
-                            if (dragIdx !== null && dragIdx !== idx) setDropTargetIdx(idx);
-                          }}
-                          onDragLeave={() => { if (dropTargetIdx === idx) setDropTargetIdx(null); }}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            if (dragIdx !== null && dragIdx !== idx) {
-                              const q = messageQueueRef.current;
-                              const [item] = q.splice(dragIdx, 1);
-                              q.splice(idx, 0, item);
-                              setQueueLength(q.length);
-                            }
-                            setDragIdx(null);
-                            setDropTargetIdx(null);
-                          }}
-                          onDragEnd={() => { setDragIdx(null); setDropTargetIdx(null); }}
-                          sx={{
-                            display: 'flex',
-                            alignItems: 'flex-start',
-                            gap: 0.75,
-                            px: 1.5,
-                            py: 1,
-                            borderBottom: idx < queueLength - 1 ? `1px solid ${c.border.subtle}` : 'none',
-                            '&:hover': { bgcolor: c.bg.secondary },
-                            transition: 'background 0.1s, opacity 0.15s',
-                            ...(dragIdx === idx ? { opacity: 0.35 } : {}),
-                            ...(dropTargetIdx === idx && dragIdx !== null && dragIdx !== idx
-                              ? { borderTop: `2px solid ${c.accent.primary}` }
-                              : {}),
-                          }}
-                        >
-                          <Box
-                            sx={{
-                              cursor: editingQueueIdx === idx ? 'default' : 'grab',
-                              display: 'flex',
-                              alignItems: 'center',
-                              mt: 0.3,
-                              color: c.text.ghost,
-                              '&:hover': { color: c.text.tertiary },
-                              '&:active': { cursor: 'grabbing' },
-                            }}
-                          >
-                            <DragIndicatorIcon sx={{ fontSize: 14 }} />
-                          </Box>
-                          {editingQueueIdx === idx ? (
-                            <Box sx={{ flex: 1, display: 'flex', gap: 0.5, alignItems: 'flex-start' }}>
-                              <TextField
-                                multiline
-                                fullWidth
-                                size="small"
-                                value={editingQueueText}
-                                onChange={(e) => setEditingQueueText(e.target.value)}
-                                autoFocus
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter' && !e.shiftKey) {
-                                    e.preventDefault();
-                                    const trimmed = editingQueueText.trim();
-                                    if (trimmed) {
-                                      messageQueueRef.current[idx] = { ...messageQueueRef.current[idx], prompt: trimmed };
-                                      setQueueLength(messageQueueRef.current.length);
-                                    }
-                                    setEditingQueueIdx(null);
-                                  }
-                                  if (e.key === 'Escape') setEditingQueueIdx(null);
-                                }}
-                                sx={{
-                                  '& .MuiOutlinedInput-root': {
-                                    fontSize: '0.78rem',
-                                    color: c.text.primary,
-                                    '& fieldset': { borderColor: c.border.medium },
-                                    '&.Mui-focused fieldset': { borderColor: c.accent.primary },
-                                  },
-                                }}
-                              />
-                              <IconButton
-                                size="small"
-                                onClick={() => {
-                                  const trimmed = editingQueueText.trim();
-                                  if (trimmed) {
-                                    messageQueueRef.current[idx] = { ...messageQueueRef.current[idx], prompt: trimmed };
-                                    setQueueLength(messageQueueRef.current.length);
-                                  }
-                                  setEditingQueueIdx(null);
-                                }}
-                                sx={{ p: 0.25, color: c.accent.primary, mt: 0.25 }}
-                              >
-                                <CheckIcon sx={{ fontSize: 14 }} />
-                              </IconButton>
-                            </Box>
-                          ) : (
-                            <Typography
-                              sx={{
-                                flex: 1,
-                                fontSize: '0.78rem',
-                                color: c.text.secondary,
-                                lineHeight: 1.5,
-                                overflow: 'hidden',
-                                display: '-webkit-box',
-                                WebkitLineClamp: 3,
-                                WebkitBoxOrient: 'vertical',
-                                wordBreak: 'break-word',
-                              }}
-                            >
-                              {msg.prompt}
-                            </Typography>
-                          )}
-                          {editingQueueIdx !== idx && (
-                            <Box sx={{ display: 'flex', gap: 0.25, flexShrink: 0, mt: 0.15 }}>
-                              <Tooltip title="Edit">
-                                <IconButton
-                                  size="small"
-                                  onClick={() => { setEditingQueueIdx(idx); setEditingQueueText(msg.prompt); }}
-                                  sx={{ p: 0.25, color: c.text.tertiary, '&:hover': { color: c.text.primary } }}
-                                >
-                                  <EditOutlinedIcon sx={{ fontSize: 13 }} />
-                                </IconButton>
-                              </Tooltip>
-                              <Tooltip title="Remove">
-                                <IconButton
-                                  size="small"
-                                  onClick={() => {
-                                    messageQueueRef.current.splice(idx, 1);
-                                    setQueueLength(messageQueueRef.current.length);
-                                    if (messageQueueRef.current.length === 0) setQueueExpanded(false);
-                                  }}
-                                  sx={{ p: 0.25, color: c.text.tertiary, '&:hover': { color: c.status.error } }}
-                                >
-                                  <DeleteOutlineIcon sx={{ fontSize: 13 }} />
-                                </IconButton>
-                              </Tooltip>
-                            </Box>
-                          )}
-                        </Box>
-                      ))}
-                    </Box>
-                  )}
-                </Box>
-              )}
+          <Box>
+            <TaskQueuePanel
+            items={queuedTaskItems}
+            expanded={queueExpanded}
+            onExpandedChange={setQueueExpanded}
+            editingIndex={editingQueueIdx}
+            editingText={editingQueueText}
+            onEditingIndexChange={setEditingQueueIdx}
+            onEditingTextChange={setEditingQueueText}
+            dragIndex={dragIdx}
+            dropTargetIndex={dropTargetIdx}
+            onDragIndexChange={setDragIdx}
+            onDropTargetIndexChange={setDropTargetIdx}
+            onClear={clearQueuedMessages}
+            onRemove={removeQueuedMessage}
+            onEdit={editQueuedMessage}
+            onMove={moveQueuedMessage}
+          />
+          <LongRunningTaskMonitor
+            visible={agentBusy || queueLength > 0}
+            title="Chat task monitor"
+            status={session?.status === 'waiting_approval' ? 'waiting_approval' : agentBusy ? 'running' : 'idle'}
+            surfaceLabel="AgentChat"
+            sessionId={id}
+            mode={mode}
+            model={model}
+            queueCount={queueLength}
+            pendingApprovalsCount={session?.pending_approvals?.length || 0}
+            traceCount={Object.keys(session?.tool_group_meta || {}).length}
+            latestActivity={latestAgentActivity}
+            onStop={sessionRunning ? handleStop : undefined}
+            stopLabel="Stop"
+          />
               {(() => {
                 // Proactive Haiku-overflow warning. Each connected MCP adds
                 // a sizeable tools-schema chunk to every Claude request;
@@ -1676,9 +1547,9 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                       <Typography sx={{ fontSize: '0.78rem', color: c.text.secondary, lineHeight: 1.45 }}>
                         Haiku is the fastest Claude model but holds the least at once.
                         Each connected app adds instructions Claude has to read first.
-                        If your message fails with “Prompt is too long,” turn off a few
-                        apps (Microsoft 365 is the heaviest) or switch to Sonnet/Opus —
-                        both have 5× more room.
+                        If your message fails with â€œPrompt is too long,â€ turn off a few
+                        apps (Microsoft 365 is the heaviest) or switch to Sonnet/Opus â€”
+                        both have 5Ã— more room.
                       </Typography>
                     </Box>
                   </Box>
@@ -1702,7 +1573,6 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                 onThinkingLevelChange={handleThinkingLevelChange}
               />
             </Box>
-          </ClickAwayListener>
         )}
       </Box>
     </Box>

@@ -43,6 +43,7 @@ import type { UnifiedComposerSubmitPayload } from '@/shared/types/unifiedCompose
 import { API_BASE } from '@/shared/config';
 import SourceEvidencePanel from '@/app/components/SourceEvidencePanel';
 import ChangeReviewPanel from '@/app/components/ChangeReviewPanel';
+import LongRunningTaskMonitor, { type TaskMonitorStatus } from '@/app/components/LongRunningTaskMonitor';
 import ProcessTraceDropdown, { ProcessTraceItem, ProcessTraceTurnDropdown, normalizeProcessTraceTurnContainer } from './ProcessTraceDropdown';
 import { buildCardVisualTokens } from './cardVisualTokens';
 
@@ -1413,6 +1414,26 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       chatMessages.length,
     ],
   );
+  const swarmTaskMonitorStatus: TaskMonitorStatus = approvals.length > 0
+    ? 'waiting_approval'
+    : swarmState.actionLoading
+      ? 'running'
+      : swarmState.loading
+        ? 'loading'
+        : implementationVisualState === 'failed' || implementationVisualState === 'bridge_failed'
+          ? 'error'
+          : implementationVisualState === 'completed' || implementationVisualState === 'completed_with_output' || implementationVisualState === 'verified'
+            ? 'completed'
+            : 'idle';
+  const latestSwarmActivity = swarmState.actionLoading
+    ? (isImplementationActionRunning ? 'Implementation action running from Swarm state.' : 'Swarm action running from Swarm state.')
+    : events[0]
+      ? humanizeEvent(events[0])
+      : activeSwarmId
+        ? implementationMeta.message
+        : 'No Swarm task started yet.';
+  const showSwarmTaskMonitor = swarmState.actionLoading || swarmState.loading || approvals.length > 0 || Boolean(activeSwarmId && (events.length > 0 || finalResult));
+
   const finalRoute = typeof finalResult === 'object' && finalResult ? (finalResult as any).route : null;
   const finalAnswerGuardApplied = typeof finalResult === 'object' && finalResult ? (finalResult as any).answer_guard_applied : null;
   const showFinalResultDebugMetadata = false;
@@ -2971,6 +2992,25 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 </Typography>
               </Box>
             )}
+            <LongRunningTaskMonitor
+              visible={showSwarmTaskMonitor}
+              title="Swarm task monitor"
+              status={swarmTaskMonitorStatus}
+              surfaceLabel="SwarmCard"
+              sessionId={activeSwarmId || swarmCardId}
+              mode={getSwarmModeOption(activeSwarmMode).label}
+              model={activeSwarmModel}
+              queueCount={0}
+              pendingApprovalsCount={approvals.length || swarmState.pendingCount || 0}
+              traceCount={swarmProcessTraceItems.length}
+              evidenceCount={finalEvidence.length}
+              artifactCount={artifacts.length}
+              latestActivity={latestSwarmActivity}
+              metrics={[
+                { label: 'Messages', value: chatMessages.length },
+                { label: 'Events', value: events.length },
+              ]}
+            />
             <SwarmPromptInput
               value={prompt}
               onChange={setPrompt}
