@@ -70,6 +70,12 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         or data.get("gate_kind") == "skill_promotion_gate"
     ):
         return "skill_harness"
+    if data.get("snapshot_kind") == "skill_version_snapshot":
+        return "skill_version_snapshot"
+    if data.get("plan_kind") == "skill_rollback_plan":
+        return "skill_rollback_plan"
+    if data.get("summary_kind") == "skill_effectiveness_summary" or data.get("record_kind") == "skill_effectiveness_metric_record" or data.get("source_kind") == "skill_effectiveness_metrics":
+        return "skill_effectiveness_metrics"
     if data.get("metric_kind") == "miniagent_task_runtime_metric":
         return "miniagent_task_runtime_metric"
     if data.get("metric_kind") == "ollama_runtime_metrics":
@@ -678,6 +684,88 @@ def build_skill_harness_process_trace_item(source: dict[str, Any]) -> dict[str, 
     )
 
 
+def build_skill_version_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    return build_process_trace_item(
+        trace_id=data.get("snapshot_id") or data.get("skill_ref"),
+        kind="skill",
+        subsystem="SkillCore",
+        title="Skill version snapshot",
+        summary="Skill version snapshot metadata recorded without raw content or restore execution.",
+        status="completed" if data.get("snapshot_id") else "warning",
+        details={
+            "source_kind": "skill_version_snapshot",
+            "snapshot_id": data.get("snapshot_id"),
+            "skill_ref": data.get("skill_ref"),
+            "skill_name": data.get("skill_name"),
+            "source": data.get("source"),
+            "content_hash": data.get("content_hash"),
+            "spec_hash": data.get("spec_hash"),
+            "metadata_hash": data.get("metadata_hash"),
+            "rollback_supported": data.get("rollback_supported"),
+            "can_restore": data.get("can_restore"),
+            "can_install_skill": False,
+            "can_execute_source": False,
+            "can_activate_tools": False,
+            "can_activate_mcp": False,
+        },
+        metadata={"source_kind": "skill_version_snapshot"},
+    )
+
+
+def build_skill_rollback_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    decision = data.get("decision") or "unmeasured"
+    return build_process_trace_item(
+        trace_id=data.get("target_snapshot_id") or data.get("current_snapshot_id"),
+        kind="review",
+        subsystem="ReviewCore",
+        title="Skill rollback plan",
+        summary="Rollback plan prepared read-only; restore was not performed.",
+        status="completed" if decision == "restore_ready" else "blocked" if decision == "blocked" else "warning",
+        details={
+            "source_kind": "skill_rollback_plan",
+            "rollback_decision": decision,
+            "current_snapshot_id": data.get("current_snapshot_id"),
+            "target_snapshot_id": data.get("target_snapshot_id"),
+            "changed_fields_count": len(data.get("changed_fields") or []),
+            "can_restore": data.get("can_restore"),
+            "restore_performed": data.get("restore_performed", False),
+            "can_install_skill": False,
+            "can_execute_source": False,
+            "can_activate_tools": False,
+            "can_activate_mcp": False,
+        },
+        metadata={"source_kind": "skill_rollback_plan"},
+    )
+
+
+def build_skill_effectiveness_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    status = data.get("status") or "unmeasured"
+    return build_process_trace_item(
+        trace_id=data.get("skill_ref"),
+        kind="metric",
+        subsystem="MetricCore",
+        title="Skill effectiveness metrics",
+        summary="Effectiveness metrics summary from explicit records only.",
+        status="completed" if status == "effective" else "blocked" if status == "failing" else "warning",
+        details={
+            "source_kind": "skill_effectiveness_metrics",
+            "skill_ref": data.get("skill_ref"),
+            "record_count": data.get("record_count", 0),
+            "measured_count": data.get("measured_count", 0),
+            "status": status,
+            "average_score": data.get("average_score"),
+            "can_install_skill": False,
+            "can_execute_source": False,
+            "can_activate_tools": False,
+            "can_activate_mcp": False,
+        },
+        metadata={"source_kind": "skill_effectiveness_metrics"},
+    )
+
+
 def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
     source_kind = normalize_process_trace_source_kind(source)
     data = redact_process_trace_source(source)
@@ -714,6 +802,12 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = build_skill_import_process_trace_item(data, policy=data.get("policy") if isinstance(data.get("policy"), dict) else None)
     elif source_kind == "skill_harness":
         item = build_skill_harness_process_trace_item(data)
+    elif source_kind == "skill_version_snapshot":
+        item = build_skill_version_process_trace_item(data)
+    elif source_kind == "skill_rollback_plan":
+        item = build_skill_rollback_process_trace_item(data)
+    elif source_kind == "skill_effectiveness_metrics":
+        item = build_skill_effectiveness_process_trace_item(data)
     elif source_kind == "miniagent_task_runtime_metric":
         item = process_trace_item_from_runtime_metric(data)
     elif source_kind == "tool_trace":

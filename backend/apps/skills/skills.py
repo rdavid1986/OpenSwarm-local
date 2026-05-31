@@ -4,7 +4,8 @@ import logging
 import re
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import HTTPException
+from typing import Any
+from fastapi import Body, HTTPException
 from backend.config.Apps import SubApp
 from backend.apps.skills.candidate_store import SkillCandidateStore
 from backend.apps.skills.candidate_approval import apply_skill_candidate_install_approval
@@ -31,6 +32,14 @@ from backend.apps.skills.skill_harness import (
     build_skill_runtime_validation_report,
     build_skill_test_case_contract,
 )
+from backend.apps.skills.skill_metrics import build_skill_effectiveness_metric_record, build_skill_effectiveness_summary
+from backend.apps.skills.skill_metrics_store import SkillMetricsStore
+from backend.apps.skills.skill_version_store import SkillVersionStore
+from backend.apps.skills.skill_versioning import (
+    build_skill_rollback_plan,
+    build_skill_version_history_summary,
+    build_skill_version_snapshot,
+)
 from backend.apps.tools_lib.models import BUILTIN_TOOLS
 
 logger = logging.getLogger(__name__)
@@ -50,6 +59,8 @@ async def skills_lifespan():
 
 skills = SubApp("skills", skills_lifespan)
 skill_candidate_store = SkillCandidateStore()
+skill_version_store = SkillVersionStore()
+skill_metrics_store = SkillMetricsStore()
 
 
 def _load_index() -> dict[str, dict]:
@@ -402,13 +413,99 @@ async def get_skill_candidate_harness_promotion_gate(candidate_id: str):
     validation = build_skill_runtime_validation_report(payload)
     regression = build_skill_regression_suite(payload, validation)
     evidence = build_skill_evidence_quality_report(payload, validation, evidence_refs=payload.get("evidence_refs"))
-    return build_skill_promotion_gate(payload, validation, evidence, regression)
+    version_summary = build_skill_version_history_summary(skill_version_store.list(candidate_id))
+    effectiveness_summary = build_skill_effectiveness_summary(skill_metrics_store.list(candidate_id), skill_ref=candidate_id)
+    return build_skill_promotion_gate(payload, validation, evidence, regression, version_summary, effectiveness_summary)
 
 
 @skills.router.get("/candidates/{candidate_id}/harness/full")
 async def get_skill_candidate_harness_full(candidate_id: str):
     candidate = _load_skill_candidate_or_404(candidate_id)
-    return build_skill_harness_full_report(candidate.model_dump(mode="json"))
+    report = build_skill_harness_full_report(candidate.model_dump(mode="json"))
+    version_summary = build_skill_version_history_summary(skill_version_store.list(candidate_id))
+    effectiveness_summary = build_skill_effectiveness_summary(skill_metrics_store.list(candidate_id), skill_ref=candidate_id)
+    report["version_summary"] = version_summary
+    report["effectiveness_summary"] = effectiveness_summary
+    report["promotion_gate"] = build_skill_promotion_gate(
+        candidate.model_dump(mode="json"),
+        report.get("runtime_validation"),
+        report.get("evidence_quality"),
+        report.get("regression_suite"),
+        version_summary,
+        effectiveness_summary,
+    )
+    return report
+
+
+@skills.router.get("/candidates/{candidate_id}/versions")
+async def list_skill_candidate_versions(candidate_id: str):
+    _load_skill_candidate_or_404(candidate_id)
+    snapshots = skill_version_store.list(candidate_id)
+    return {"ok": True, "snapshots": snapshots, "summary": build_skill_version_history_summary(snapshots), "can_install_skill": False, "can_execute_source": False, "can_activate_tools": False, "can_activate_mcp": False}
+
+
+@skills.router.post("/candidates/{candidate_id}/versions/snapshot")
+async def create_skill_candidate_version_snapshot(candidate_id: str, body: dict[str, Any] = Body(default={})):
+    candidate = _load_skill_candidate_or_404(candidate_id)
+    snapshot = build_skill_version_snapshot(candidate.model_dump(mode="json"), source="candidate", reason=str((body or {}).get("reason") or "manual_snapshot"))
+    saved = skill_version_store.save(snapshot)
+    snapshots = skill_version_store.list(candidate_id)
+    return {"ok": True, "snapshot": saved, "summary": build_skill_version_history_summary(snapshots), "can_install_skill": False, "can_execute_source": False, "can_activate_tools": False, "can_activate_mcp": False}
+
+
+@skills.router.get("/candidates/{candidate_id}/versions/{snapshot_id}")
+async def get_skill_candidate_version_snapshot(candidate_id: str, snapshot_id: str):
+    _load_skill_candidate_or_404(candidate_id)
+    try:
+        return skill_version_store.load(candidate_id, snapshot_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Skill version snapshot not found")
+
+
+@skills.router.post("/candidates/{candidate_id}/versions/rollback-plan")
+async def create_skill_candidate_rollback_plan(candidate_id: str, body: dict[str, Any] = Body(default={})):
+    candidate = _load_skill_candidate_or_404(candidate_id)
+    current = build_skill_version_snapshot(candidate.model_dump(mode="json"), source="candidate", reason="current_candidate_state")
+    target_id = str((body or {}).get("target_snapshot_id") or "")
+    if not target_id:
+        raise HTTPException(status_code=400, detail="target_snapshot_id is required")
+    try:
+        target = skill_version_store.load(candidate_id, target_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Skill version snapshot not found")
+    return build_skill_rollback_plan(current, target)
+
+
+@skills.router.get("/candidates/{candidate_id}/metrics")
+async def list_skill_candidate_metrics(candidate_id: str):
+    _load_skill_candidate_or_404(candidate_id)
+    records = skill_metrics_store.list(candidate_id)
+    return {"ok": True, "records": records, "summary": build_skill_effectiveness_summary(records, skill_ref=candidate_id), "can_install_skill": False, "can_execute_source": False, "can_activate_tools": False, "can_activate_mcp": False}
+
+
+@skills.router.post("/candidates/{candidate_id}/metrics/record")
+async def create_skill_candidate_metric_record(candidate_id: str, body: dict[str, Any] = Body(default={})):
+    _load_skill_candidate_or_404(candidate_id)
+    record = build_skill_effectiveness_metric_record(
+        skill_ref=candidate_id,
+        candidate_id=candidate_id,
+        source=str((body or {}).get("source") or "unknown"),
+        outcome=str((body or {}).get("outcome") or "unknown"),
+        score=(body or {}).get("score"),
+        evidence_refs=(body or {}).get("evidence_refs"),
+        trace_refs=(body or {}).get("trace_refs"),
+        notes=(body or {}).get("notes") or "",
+        measured=(body or {}).get("measured"),
+    )
+    saved = skill_metrics_store.save(record)
+    records = skill_metrics_store.list(candidate_id)
+    return {"ok": True, "record": saved, "summary": build_skill_effectiveness_summary(records, skill_ref=candidate_id), "can_install_skill": False, "can_execute_source": False, "can_activate_tools": False, "can_activate_mcp": False}
+
+
+@skills.router.get("/candidates/{candidate_id}/metrics/summary")
+async def get_skill_candidate_metrics_summary(candidate_id: str):
+    _load_skill_candidate_or_404(candidate_id)
+    return build_skill_effectiveness_summary(skill_metrics_store.list(candidate_id), skill_ref=candidate_id)
 
 
 @skills.router.get("/candidates/{candidate_id}/quality-review")

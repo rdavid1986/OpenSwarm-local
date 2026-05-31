@@ -383,11 +383,15 @@ def build_skill_promotion_gate(
     validation_report: dict[str, Any] | None = None,
     evidence_report: dict[str, Any] | None = None,
     regression_suite: dict[str, Any] | None = None,
+    version_summary: dict[str, Any] | None = None,
+    effectiveness_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     candidate, spec = _candidate_and_spec(candidate_or_spec)
     validation = _as_dict(validation_report) or build_skill_runtime_validation_report(candidate_or_spec)
     evidence = _as_dict(evidence_report) or build_skill_evidence_quality_report(candidate_or_spec, validation)
     regression = _as_dict(regression_suite) or build_skill_regression_suite(candidate_or_spec, validation)
+    version = _as_dict(version_summary)
+    effectiveness = _as_dict(effectiveness_summary)
     tools, mcp = _required_tools_or_mcp(spec)
     reasons: list[dict[str, Any]] = []
     required_actions: list[dict[str, Any]] = []
@@ -406,6 +410,16 @@ def build_skill_promotion_gate(
         required_actions.append({"code": "review_required_mcp_servers", "message": "Review declared MCP servers before install approval.", "target": "required_mcp_servers"})
     if candidate.get("install_approved"):
         required_actions.append({"code": "install_already_approved_elsewhere", "message": "Harness does not install even when candidate is already approved.", "target": "candidate.install_approved"})
+    if version and int(version.get("snapshot_count") or 0) <= 0:
+        required_actions.append({"code": "create_version_snapshot_before_install", "message": "Create an explicit version snapshot before requesting install approval.", "target": "skill_versions"})
+    elif not version:
+        required_actions.append({"code": "create_version_snapshot_before_install", "message": "Version snapshot status is unknown; create one before install approval.", "target": "skill_versions"})
+    if not effectiveness:
+        required_actions.append({"code": "effectiveness_unmeasured", "message": "Effectiveness metrics are unmeasured; this is a review warning, not a fake pass.", "target": "skill_metrics"})
+    elif effectiveness.get("status") == "failing":
+        reasons.append({"code": "effectiveness_failing", "message": "Explicit effectiveness records indicate failing outcomes.", "severity": "critical"})
+    elif effectiveness.get("status") in {"needs_review", "insufficient_data", "unmeasured"}:
+        required_actions.append({"code": f"effectiveness_{effectiveness.get('status')}", "message": "Review explicit effectiveness metrics before approval.", "target": "skill_metrics"})
 
     if reasons:
         decision = "blocked" if any(reason.get("severity") == "critical" for reason in reasons) else "needs_review"

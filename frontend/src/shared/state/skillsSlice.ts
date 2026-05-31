@@ -209,10 +209,24 @@ export interface SkillHarnessFullReport {
   regression_suite?: Record<string, any>;
   evidence_quality?: Record<string, any>;
   promotion_gate?: Record<string, any>;
+  version_summary?: Record<string, any>;
+  effectiveness_summary?: Record<string, any>;
   can_install_skill?: boolean;
   can_execute_source?: boolean;
   can_activate_tools?: boolean;
   can_activate_mcp?: boolean;
+}
+
+export interface SkillVersionListResult {
+  ok: boolean;
+  snapshots: Record<string, any>[];
+  summary: Record<string, any>;
+}
+
+export interface SkillMetricsResult {
+  ok?: boolean;
+  records?: Record<string, any>[];
+  summary: Record<string, any>;
 }
 
 export type SkillCandidateCreateBody = Partial<Omit<SkillSpecCandidate, 'skill_spec'>> & {
@@ -282,6 +296,12 @@ interface SkillsState {
   candidateHarnessReports: Record<string, SkillHarnessFullReport>;
   candidateHarnessReportsLoading: Record<string, boolean>;
   candidateHarnessReportsError: Record<string, string | null>;
+  candidateVersionLists: Record<string, SkillVersionListResult>;
+  candidateVersionLoading: Record<string, boolean>;
+  candidateVersionError: Record<string, string | null>;
+  candidateMetrics: Record<string, SkillMetricsResult>;
+  candidateMetricsLoading: Record<string, boolean>;
+  candidateMetricsError: Record<string, string | null>;
   skillImportPreview: SkillImportPreviewResult | null;
   skillImportPreviewLoading: boolean;
   skillImportPreviewError: string | null;
@@ -317,6 +337,12 @@ const initialState: SkillsState = {
   candidateHarnessReports: {},
   candidateHarnessReportsLoading: {},
   candidateHarnessReportsError: {},
+  candidateVersionLists: {},
+  candidateVersionLoading: {},
+  candidateVersionError: {},
+  candidateMetrics: {},
+  candidateMetricsLoading: {},
+  candidateMetricsError: {},
   skillImportPreview: null,
   skillImportPreviewLoading: false,
   skillImportPreviewError: null,
@@ -470,6 +496,37 @@ export const fetchSkillCandidateHarnessFull = createAsyncThunk(
       throw new Error(data.detail || 'Failed to fetch skill harness report');
     }
     return await res.json() as SkillHarnessFullReport;
+  },
+);
+
+export const fetchSkillCandidateVersions = createAsyncThunk(
+  'skills/fetchCandidateVersions',
+  async (candidateId: string) => {
+    const res = await fetch(`${SKILLS_API}/candidates/${candidateId}/versions`);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Failed to fetch skill versions');
+    return { candidateId, data: await res.json() as SkillVersionListResult };
+  },
+);
+
+export const createSkillCandidateVersionSnapshot = createAsyncThunk(
+  'skills/createCandidateVersionSnapshot',
+  async ({ candidateId, reason }: { candidateId: string; reason?: string }) => {
+    const res = await fetch(`${SKILLS_API}/candidates/${candidateId}/versions/snapshot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: reason || 'manual_snapshot' }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Failed to create skill version snapshot');
+    return { candidateId, data: await res.json() as SkillVersionListResult & { snapshot: Record<string, any> } };
+  },
+);
+
+export const fetchSkillCandidateMetrics = createAsyncThunk(
+  'skills/fetchCandidateMetrics',
+  async (candidateId: string) => {
+    const res = await fetch(`${SKILLS_API}/candidates/${candidateId}/metrics`);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Failed to fetch skill metrics');
+    return { candidateId, data: await res.json() as SkillMetricsResult };
   },
 );
 
@@ -737,6 +794,46 @@ const skillsSlice = createSlice({
       .addCase(fetchSkillCandidateHarnessFull.rejected, (state, action) => {
         state.candidateHarnessReportsLoading[action.meta.arg] = false;
         state.candidateHarnessReportsError[action.meta.arg] = action.error.message || 'Failed to fetch skill harness report';
+      })
+      .addCase(fetchSkillCandidateVersions.pending, (state, action) => {
+        state.candidateVersionLoading[action.meta.arg] = true;
+        state.candidateVersionError[action.meta.arg] = null;
+      })
+      .addCase(fetchSkillCandidateVersions.fulfilled, (state, action) => {
+        state.candidateVersionLoading[action.payload.candidateId] = false;
+        state.candidateVersionLists[action.payload.candidateId] = action.payload.data;
+      })
+      .addCase(fetchSkillCandidateVersions.rejected, (state, action) => {
+        state.candidateVersionLoading[action.meta.arg] = false;
+        state.candidateVersionError[action.meta.arg] = action.error.message || 'Failed to fetch skill versions';
+      })
+      .addCase(createSkillCandidateVersionSnapshot.pending, (state, action) => {
+        state.candidateVersionLoading[action.meta.arg.candidateId] = true;
+        state.candidateVersionError[action.meta.arg.candidateId] = null;
+      })
+      .addCase(createSkillCandidateVersionSnapshot.fulfilled, (state, action) => {
+        state.candidateVersionLoading[action.payload.candidateId] = false;
+        state.candidateVersionLists[action.payload.candidateId] = {
+          ok: true,
+          snapshots: action.payload.data.summary ? [...(state.candidateVersionLists[action.payload.candidateId]?.snapshots || []), action.payload.data.snapshot] : [],
+          summary: action.payload.data.summary,
+        };
+      })
+      .addCase(createSkillCandidateVersionSnapshot.rejected, (state, action) => {
+        state.candidateVersionLoading[action.meta.arg.candidateId] = false;
+        state.candidateVersionError[action.meta.arg.candidateId] = action.error.message || 'Failed to create skill version snapshot';
+      })
+      .addCase(fetchSkillCandidateMetrics.pending, (state, action) => {
+        state.candidateMetricsLoading[action.meta.arg] = true;
+        state.candidateMetricsError[action.meta.arg] = null;
+      })
+      .addCase(fetchSkillCandidateMetrics.fulfilled, (state, action) => {
+        state.candidateMetricsLoading[action.payload.candidateId] = false;
+        state.candidateMetrics[action.payload.candidateId] = action.payload.data;
+      })
+      .addCase(fetchSkillCandidateMetrics.rejected, (state, action) => {
+        state.candidateMetricsLoading[action.meta.arg] = false;
+        state.candidateMetricsError[action.meta.arg] = action.error.message || 'Failed to fetch skill metrics';
       })
       .addCase(applySkillCandidateImprovementProposal.pending, (state, action) => {
         state.candidateImprovementApplyLoading[action.meta.arg.candidateId] = true;

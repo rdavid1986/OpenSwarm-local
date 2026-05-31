@@ -19,6 +19,8 @@ from backend.apps.swarms.swarm_timeline import build_swarm_timeline_event
 from backend.apps.skills.import_policy import evaluate_skill_import_policy
 from backend.apps.skills.import_preview import build_skill_import_preview_report
 from backend.apps.skills.skill_harness import build_skill_harness_full_report
+from backend.apps.skills.skill_metrics import build_skill_effectiveness_metric_record, build_skill_effectiveness_summary
+from backend.apps.skills.skill_versioning import build_skill_rollback_plan, build_skill_version_snapshot
 
 
 START = "2026-05-30T10:00:00Z"
@@ -500,6 +502,46 @@ def test_builder_from_skill_harness_trace_source():
     assert item["details"]["can_activate_tools"] is False
     assert item["details"]["can_activate_mcp"] is False
     assert "content" not in item["details"]
+
+
+def test_builder_from_skill_version_snapshot_trace_source_no_raw_content():
+    snapshot = build_skill_version_snapshot({"candidate_id": "cand1", "skill_spec": {"name": "Skill", "content": "# Secret free body"}})
+
+    item = build_process_trace_item_from_source(snapshot)
+
+    assert normalize_process_trace_source_kind(snapshot) == "skill_version_snapshot"
+    assert item["subsystem"] == "SkillCore"
+    assert item["details"]["snapshot_id"] == snapshot["snapshot_id"]
+    assert item["details"]["can_install_skill"] is False
+    assert "content" not in item["details"]
+    assert "Secret free body" not in str(item["details"])
+
+
+def test_builder_from_skill_rollback_plan_trace_source():
+    current = build_skill_version_snapshot({"candidate_id": "cand1", "skill_spec": {"name": "Skill", "content": "# New"}})
+    target = build_skill_version_snapshot({"candidate_id": "cand1", "skill_spec": {"name": "Skill", "content": "# Old"}})
+    plan = build_skill_rollback_plan(current, target)
+
+    item = build_process_trace_item_from_source(plan)
+
+    assert normalize_process_trace_source_kind(plan) == "skill_rollback_plan"
+    assert item["subsystem"] == "ReviewCore"
+    assert item["details"]["rollback_decision"] == "restore_ready"
+    assert item["details"]["restore_performed"] is False
+
+
+def test_builder_from_skill_effectiveness_metrics_trace_source():
+    summary = build_skill_effectiveness_summary([
+        build_skill_effectiveness_metric_record(skill_ref="skill1", outcome="success", score=0.9, measured=True)
+    ], skill_ref="skill1")
+
+    item = build_process_trace_item_from_source(summary)
+
+    assert normalize_process_trace_source_kind(summary) == "skill_effectiveness_metrics"
+    assert item["subsystem"] == "MetricCore"
+    assert item["details"]["record_count"] == 1
+    assert item["details"]["measured_count"] == 1
+    assert item["details"]["can_execute_source"] is False
 
 
 def test_builder_from_miniagent_and_handoff_trace_sources():

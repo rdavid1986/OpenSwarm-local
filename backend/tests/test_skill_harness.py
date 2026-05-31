@@ -6,6 +6,8 @@ from backend.apps.skills.skill_harness import (
     build_skill_runtime_validation_report,
     build_skill_test_case_contract,
 )
+from backend.apps.skills.skill_metrics import build_skill_effectiveness_metric_record, build_skill_effectiveness_summary
+from backend.apps.skills.skill_versioning import build_skill_version_history_summary, build_skill_version_snapshot
 
 
 def _candidate(**spec_overrides):
@@ -176,8 +178,12 @@ def test_promotion_gate_promote_ready_only_after_validation_and_evidence():
     validation = build_skill_runtime_validation_report(candidate)
     evidence = build_skill_evidence_quality_report(candidate, validation, evidence_refs=["review_notes"])
     regression = build_skill_regression_suite(candidate, validation)
+    version_summary = build_skill_version_history_summary([build_skill_version_snapshot(candidate)])
+    effectiveness_summary = build_skill_effectiveness_summary([
+        build_skill_effectiveness_metric_record(skill_ref="cand1", outcome="success", score=0.9, measured=True)
+    ], skill_ref="cand1")
 
-    gate = build_skill_promotion_gate(candidate, validation, evidence, regression)
+    gate = build_skill_promotion_gate(candidate, validation, evidence, regression, version_summary, effectiveness_summary)
 
     assert gate["decision"] == "promote_ready"
     assert gate["can_request_install_approval"] is True
@@ -191,7 +197,7 @@ def test_promotion_gate_requires_permission_review_for_tools_mcp():
     evidence = build_skill_evidence_quality_report(candidate, validation, evidence_refs=["review_notes"])
     regression = build_skill_regression_suite(candidate, validation)
 
-    gate = build_skill_promotion_gate(candidate, validation, evidence, regression)
+    gate = build_skill_promotion_gate(candidate, validation, evidence, regression, build_skill_version_history_summary([build_skill_version_snapshot(candidate)]), build_skill_effectiveness_summary([], skill_ref="cand1"))
 
     assert gate["decision"] == "needs_review"
     assert gate["can_request_install_approval"] is False
@@ -205,3 +211,31 @@ def test_promotion_gate_blocks_without_evidence_or_with_critical_risk():
     assert gate["decision"] == "blocked"
     assert gate["can_request_install_approval"] is False
     assert any(reason["code"] == "critical_risk_present" for reason in gate["reasons"])
+
+
+def test_promotion_gate_adds_snapshot_required_action_when_missing():
+    candidate = _candidate()
+    validation = build_skill_runtime_validation_report(candidate)
+    evidence = build_skill_evidence_quality_report(candidate, validation, evidence_refs=["review_notes"])
+    regression = build_skill_regression_suite(candidate, validation)
+
+    gate = build_skill_promotion_gate(candidate, validation, evidence, regression, build_skill_version_history_summary([]), build_skill_effectiveness_summary([], skill_ref="cand1"))
+
+    assert "create_version_snapshot_before_install" in {item["code"] for item in gate["required_actions"]}
+    assert "effectiveness_unmeasured" in {item["code"] for item in gate["required_actions"]}
+
+
+def test_promotion_gate_failing_effectiveness_blocks():
+    candidate = _candidate()
+    validation = build_skill_runtime_validation_report(candidate)
+    evidence = build_skill_evidence_quality_report(candidate, validation, evidence_refs=["review_notes"])
+    regression = build_skill_regression_suite(candidate, validation)
+    version_summary = build_skill_version_history_summary([build_skill_version_snapshot(candidate)])
+    effectiveness = build_skill_effectiveness_summary([
+        build_skill_effectiveness_metric_record(skill_ref="cand1", outcome="failure", score=0.1, measured=True)
+    ], skill_ref="cand1")
+
+    gate = build_skill_promotion_gate(candidate, validation, evidence, regression, version_summary, effectiveness)
+
+    assert gate["decision"] == "blocked"
+    assert any(reason["code"] == "effectiveness_failing" for reason in gate["reasons"])

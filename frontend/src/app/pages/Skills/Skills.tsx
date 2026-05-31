@@ -43,6 +43,9 @@ import {
   fetchSkillCandidateQualityReview,
   fetchSkillCandidateResearchContract,
   fetchSkillCandidateHarnessFull,
+  fetchSkillCandidateVersions,
+  createSkillCandidateVersionSnapshot,
+  fetchSkillCandidateMetrics,
   approveSkillCandidateResearch,
   fetchSkillCandidateImprovementProposal,
   applySkillCandidateImprovementProposal,
@@ -62,6 +65,8 @@ import {
   SkillCandidateResearchContract,
   SkillCandidateImprovementProposal,
   SkillHarnessFullReport,
+  SkillVersionListResult,
+  SkillMetricsResult,
   SkillSpecCandidate,
 } from '@/shared/state/skillsSlice';
 import {
@@ -119,6 +124,12 @@ const Skills: React.FC = () => {
     candidateHarnessReports,
     candidateHarnessReportsLoading,
     candidateHarnessReportsError,
+    candidateVersionLists,
+    candidateVersionLoading,
+    candidateVersionError,
+    candidateMetrics,
+    candidateMetricsLoading,
+    candidateMetricsError,
     skillImportPreview,
     skillImportPreviewLoading,
     skillImportPreviewError,
@@ -160,6 +171,8 @@ const Skills: React.FC = () => {
     contract: false,
     research: true,
     harness: true,
+    versioning: true,
+    effectiveness: true,
     source: false,
     content: false,
     improvement: true,
@@ -282,6 +295,18 @@ const Skills: React.FC = () => {
     selectedCandidate ? !!candidateHarnessReportsLoading[selectedCandidate.candidate_id] : false;
   const selectedHarnessError =
     selectedCandidate ? candidateHarnessReportsError[selectedCandidate.candidate_id] ?? null : null;
+  const selectedVersionList: SkillVersionListResult | null =
+    selectedCandidate ? candidateVersionLists[selectedCandidate.candidate_id] ?? null : null;
+  const selectedVersionLoading =
+    selectedCandidate ? !!candidateVersionLoading[selectedCandidate.candidate_id] : false;
+  const selectedVersionError =
+    selectedCandidate ? candidateVersionError[selectedCandidate.candidate_id] ?? null : null;
+  const selectedMetrics: SkillMetricsResult | null =
+    selectedCandidate ? candidateMetrics[selectedCandidate.candidate_id] ?? null : null;
+  const selectedMetricsLoading =
+    selectedCandidate ? !!candidateMetricsLoading[selectedCandidate.candidate_id] : false;
+  const selectedMetricsError =
+    selectedCandidate ? candidateMetricsError[selectedCandidate.candidate_id] ?? null : null;
   const selectedReg: RegistrySkillDetail | null =
     selection?.type === 'registry' && regDetail?.name === selection.name ? regDetail : null;
 
@@ -319,6 +344,16 @@ const Skills: React.FC = () => {
     if (candidateHarnessReportsLoading[selectedCandidate.candidate_id]) return;
     dispatch(fetchSkillCandidateHarnessFull(selectedCandidate.candidate_id));
   }, [candidateHarnessReports, candidateHarnessReportsLoading, dispatch, selectedCandidate]);
+
+  useEffect(() => {
+    if (!selectedCandidate) return;
+    if (!candidateVersionLists[selectedCandidate.candidate_id] && !candidateVersionLoading[selectedCandidate.candidate_id]) {
+      dispatch(fetchSkillCandidateVersions(selectedCandidate.candidate_id));
+    }
+    if (!candidateMetrics[selectedCandidate.candidate_id] && !candidateMetricsLoading[selectedCandidate.candidate_id]) {
+      dispatch(fetchSkillCandidateMetrics(selectedCandidate.candidate_id));
+    }
+  }, [candidateMetrics, candidateMetricsLoading, candidateVersionLists, candidateVersionLoading, dispatch, selectedCandidate]);
 
   // CRUD
   const openCreate = () => {
@@ -1157,6 +1192,18 @@ const Skills: React.FC = () => {
     );
   };
 
+  const handleCreateVersionSnapshot = async () => {
+    if (!selectedCandidate) return;
+    try {
+      await dispatch(createSkillCandidateVersionSnapshot({ candidateId: selectedCandidate.candidate_id, reason: 'manual_ui_snapshot' })).unwrap();
+      dispatch(fetchSkillCandidateHarnessFull(selectedCandidate.candidate_id));
+      setSnackbar({ open: true, message: 'Version snapshot created. No restore or install was performed.' });
+    } catch (err) {
+      console.error('Failed to create version snapshot:', err);
+      setSnackbar({ open: true, message: err instanceof Error ? err.message : 'Failed to create version snapshot' });
+    }
+  };
+
   const SkillHarnessPanel: React.FC<{ report: SkillHarnessFullReport | null; loading: boolean; error: string | null }> = ({ report, loading, error }) => {
     const testContract = report?.test_contract || {};
     const dryRun = report?.dry_run || {};
@@ -1243,6 +1290,56 @@ const Skills: React.FC = () => {
           {actions.length > 0 && <Typography sx={{ fontSize: '0.67rem', color: c.text.ghost, lineHeight: 1.4, mt: 0.35 }}>Required actions: {actions.map((item) => toDisplayText(isPlainObject(item) ? item.code : item)).join(', ')}</Typography>}
         </ReviewSection>
       </Box>
+    );
+  };
+
+  const SkillVersioningPanel: React.FC<{ versions: SkillVersionListResult | null; loading: boolean; error: string | null; onSnapshot: () => void }> = ({ versions, loading, error, onSnapshot }) => {
+    const summary = versions?.summary || {};
+    const snapshots = Array.isArray(versions?.snapshots) ? versions!.snapshots : [];
+    const latest = snapshots[snapshots.length - 1] || {};
+    return (
+      <ReviewSection title="Skill Versioning" tone={error ? 'error' : snapshots.length ? 'success' : 'warning'}>
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 0.75 }}>
+          <MetaChip label={`snapshots ${toDisplayText(summary.snapshot_count, snapshots.length)}`} />
+          <MetaChip label={`latest ${toDisplayText(summary.latest_snapshot_id, 'not_available')}`} />
+          <MetaChip label="restore requires approval" tone="warning" />
+          <MetaChip label="no install" tone="warning" />
+        </Box>
+        {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
+        {loading && <EmptyReviewState text="Loading version snapshots..." />}
+        {latest.snapshot_id ? (
+          <Box sx={{ mb: 1 }}>
+            <DetailRow label="Latest snapshot" value={latest.snapshot_id} />
+            <DetailRow label="Created at" value={latest.created_at} />
+            <DetailRow label="Content hash" value={latest.content_hash} />
+          </Box>
+        ) : (
+          <EmptyReviewState text="No snapshots recorded. Create an explicit snapshot before install approval." />
+        )}
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Button size="small" variant="outlined" onClick={onSnapshot} disabled={loading} sx={{ textTransform: 'none', fontSize: '0.74rem' }}>
+            Create snapshot
+          </Button>
+        </Box>
+      </ReviewSection>
+    );
+  };
+
+  const SkillEffectivenessPanel: React.FC<{ metrics: SkillMetricsResult | null; loading: boolean; error: string | null }> = ({ metrics, loading, error }) => {
+    const summary = metrics?.summary || {};
+    return (
+      <ReviewSection title="Effectiveness" tone={error ? 'error' : summary.status === 'effective' ? 'success' : summary.status === 'failing' ? 'error' : 'warning'}>
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 0.75 }}>
+          <MetaChip label={`status ${toDisplayText(summary.status, 'unmeasured')}`} />
+          <MetaChip label={`records ${toDisplayText(summary.record_count, 0)}`} />
+          <MetaChip label={`measured ${toDisplayText(summary.measured_count, 0)}`} />
+          <MetaChip label={`avg ${summary.average_score == null ? 'not_available' : toDisplayText(summary.average_score)}`} />
+        </Box>
+        {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
+        {loading && <EmptyReviewState text="Loading effectiveness metrics..." />}
+        {!loading && !error && Number(summary.record_count || 0) === 0 && <EmptyReviewState text="No explicit effectiveness records. Metrics are not inferred or invented." />}
+        <ChipList values={summary.limitations || []} empty="No limitations recorded" />
+      </ReviewSection>
     );
   };
 
@@ -2760,6 +2857,33 @@ const Skills: React.FC = () => {
                 report={selectedHarnessReport}
                 loading={selectedHarnessLoading}
                 error={selectedHarnessError}
+              />
+            </CollapsibleCandidatePanel>
+
+            <CollapsibleCandidatePanel
+              id="versioning"
+              title="Skill Versioning"
+              summary="Controlled snapshots and read-only rollback planning. Restore requires explicit approval."
+              defaultTone={selectedVersionError ? 'error' : selectedVersionList?.summary?.snapshot_count ? 'success' : 'warning'}
+            >
+              <SkillVersioningPanel
+                versions={selectedVersionList}
+                loading={selectedVersionLoading}
+                error={selectedVersionError}
+                onSnapshot={handleCreateVersionSnapshot}
+              />
+            </CollapsibleCandidatePanel>
+
+            <CollapsibleCandidatePanel
+              id="effectiveness"
+              title="Effectiveness"
+              summary="Explicit effectiveness records only. No usage counts or success rates are invented."
+              defaultTone={selectedMetricsError ? 'error' : selectedMetrics?.summary?.status === 'effective' ? 'success' : 'warning'}
+            >
+              <SkillEffectivenessPanel
+                metrics={selectedMetrics}
+                loading={selectedMetricsLoading}
+                error={selectedMetricsError}
               />
             </CollapsibleCandidatePanel>
 
