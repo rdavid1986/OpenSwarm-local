@@ -76,6 +76,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "skill_rollback_plan"
     if data.get("summary_kind") == "skill_effectiveness_summary" or data.get("record_kind") == "skill_effectiveness_metric_record" or data.get("source_kind") == "skill_effectiveness_metrics":
         return "skill_effectiveness_metrics"
+    if data.get("source_kind") == "opencode_command" or data.get("trace_source_kind") == "opencode_command" or data.get("audit_kind") == "opencode_command_audit":
+        return "opencode_command"
     if data.get("metric_kind") == "miniagent_task_runtime_metric":
         return "miniagent_task_runtime_metric"
     if data.get("source_kind") == "temporal_user_time":
@@ -117,6 +119,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "lsp_diagnostic_feedback"
     if explicit_source == "policy_matrix_runtime":
         return "policy_matrix_runtime"
+    if explicit_source == "opencode_command":
+        return "opencode_command"
     if explicit_source in {"tool_trace", "tool_call", "tool_result", "tool_error"}:
         return "tool_trace"
     if explicit_source in {"action_trace", "pending_action", "approval", "action_result"}:
@@ -1225,6 +1229,47 @@ def build_skill_effectiveness_process_trace_item(source: dict[str, Any]) -> dict
     )
 
 
+
+def build_opencode_command_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    audit = data.get("audit") if isinstance(data.get("audit"), dict) else data if data.get("audit_kind") == "opencode_command_audit" else {}
+    routing = data.get("routing") if isinstance(data.get("routing"), dict) else {}
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else audit.get("required_actions") if isinstance(audit.get("required_actions"), list) else []
+    risk = _first_text(data, "risk_level", default=_first_text(audit, "risk_level", default="unknown"))
+    compatibility = _first_text(data, "compatibility_status", default=_first_text(audit, "compatibility_status", default="unknown"))
+    command_name = _first_text(data, "command_name", default=_first_text(audit, "command_name", default="/unknown"))
+    origin = _first_text(data, "origin", "command_origin", default=_first_text(audit, "command_origin", default="unknown"))
+    blocked = compatibility == "blocked" or risk == "critical"
+    status = "blocked" if blocked else "warning" if required_actions or compatibility in {"needs_review", "unsupported"} or risk in {"medium", "high"} else "completed"
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or command_name,
+        kind="action",
+        subsystem="ActionCore",
+        title=f"OpenCode command: {command_name}",
+        summary=f"OpenCode command parity contract for {command_name}; execution disabled.",
+        status=status,
+        evidence_refs=audit.get("evidence_refs") if isinstance(audit, dict) else [],
+        details={
+            "source_kind": "opencode_command",
+            "command_core": True,
+            "command_name": command_name,
+            "origin": origin,
+            "compatibility_status": compatibility,
+            "risk_level": risk,
+            "routing_target": routing.get("target_kind") or data.get("target_kind") or "unknown",
+            "routing": routing or None,
+            "required_actions": required_actions,
+            "audit": audit or None,
+            "can_execute": False,
+            "shell_interpolation_executed": False,
+            "files_read": False,
+            "tools_called": False,
+            "mcp_activated": False,
+            "contains_private_reasoning": False,
+        },
+        metadata={"source_kind": "opencode_command", "command_core": True},
+    )
+
 def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
     source_kind = normalize_process_trace_source_kind(source)
     data = redact_process_trace_source(source)
@@ -1285,6 +1330,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = build_lsp_diagnostic_process_trace_item(data)
     elif source_kind == "policy_matrix_runtime":
         item = build_policy_matrix_process_trace_item(data)
+    elif source_kind == "opencode_command":
+        item = build_opencode_command_process_trace_item(data)
     elif source_kind == "miniagent_task_runtime_metric":
         item = process_trace_item_from_runtime_metric(data)
     elif source_kind == "tool_trace":
