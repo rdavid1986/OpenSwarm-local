@@ -86,6 +86,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "project_instructions_bootstrap"
     if data.get("loading_kind") == "skill_loading_runtime" or data.get("source_kind") == "skill_loading_runtime":
         return "skill_loading_runtime"
+    if data.get("diagnostic_kind") == "lsp_diagnostic_feedback" or data.get("source_kind") == "lsp_diagnostic_feedback":
+        return "lsp_diagnostic_feedback"
     if data.get("metric_kind") == "ollama_runtime_metrics":
         return "runtime_timer"
     explicit_source = str(data.get("source_kind") or data.get("trace_source_kind") or data.get("producer_kind") or "").strip().lower()
@@ -97,6 +99,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "project_instructions_bootstrap"
     if explicit_source == "skill_loading_runtime":
         return "skill_loading_runtime"
+    if explicit_source == "lsp_diagnostic_feedback":
+        return "lsp_diagnostic_feedback"
     if explicit_source in {"tool_trace", "tool_call", "tool_result", "tool_error"}:
         return "tool_trace"
     if explicit_source in {"action_trace", "pending_action", "approval", "action_result"}:
@@ -272,6 +276,46 @@ def build_action_trace_item(data: dict[str, Any]) -> dict[str, Any]:
             "affected_files": _refs(data.get("affected_files")) + _refs(data.get("affected_paths")),
             "source_kind": _first_text(data, "source_kind", default="action_trace"),
         },
+    )
+
+
+
+def build_lsp_diagnostic_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    snapshot = data.get("snapshot") if isinstance(data.get("snapshot"), dict) else {}
+    bundle = data.get("evidence_bundle") if isinstance(data.get("evidence_bundle"), dict) else {}
+    delta = data.get("delta") if isinstance(data.get("delta"), dict) else {}
+    decision = data.get("decision") if isinstance(data.get("decision"), dict) else {}
+    warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    evidence_refs = snapshot.get("evidence_refs") if isinstance(snapshot.get("evidence_refs"), list) else bundle.get("evidence_refs") if isinstance(bundle.get("evidence_refs"), list) else []
+    failed = data.get("status") == "failed" or decision.get("status") == "failed" or snapshot.get("status") == "has_errors"
+    warning = data.get("status") in {"needs_review", "has_warnings"} or decision.get("status") in {"needs_review", "unmeasured"} or snapshot.get("status") in {"has_warnings", "empty"} or bool(warnings or required_actions)
+    status = "blocked" if failed else "warning" if warning else "completed"
+    return build_process_trace_item(
+        trace_id=snapshot.get("snapshot_id") or decision.get("snapshot_id") or data.get("status"),
+        kind="validation",
+        subsystem="ValidationCore",
+        title="LSP diagnostic feedback",
+        summary=f"Diagnostics {data.get('status') or decision.get('status') or snapshot.get('status') or 'recorded'}; errors={snapshot.get('error_count') or 0}; warnings={snapshot.get('warning_count') or 0}.",
+        status=status,
+        details={
+            "source_kind": "lsp_diagnostic_feedback",
+            "diagnostic_kind": data.get("diagnostic_kind") or "lsp_diagnostic_feedback",
+            "snapshot": snapshot or None,
+            "evidence_bundle": bundle or None,
+            "delta": delta or None,
+            "decision": decision or None,
+            "warnings": warnings,
+            "required_actions": required_actions,
+            "can_execute_diagnostics": False,
+            "can_modify_files": False,
+            "can_activate_tools": False,
+            "can_activate_mcp": False,
+        },
+        evidence_refs=evidence_refs,
+        related_task_id=data.get("task_id") or decision.get("task_id"),
+        metadata={"source_kind": "lsp_diagnostic_feedback"},
     )
 
 
@@ -1009,6 +1053,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = build_project_instructions_process_trace_item(data)
     elif source_kind == "skill_loading_runtime":
         item = build_skill_loading_process_trace_item(data)
+    elif source_kind == "lsp_diagnostic_feedback":
+        item = build_lsp_diagnostic_process_trace_item(data)
     elif source_kind == "miniagent_task_runtime_metric":
         item = process_trace_item_from_runtime_metric(data)
     elif source_kind == "tool_trace":
