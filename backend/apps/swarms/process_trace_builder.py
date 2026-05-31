@@ -82,6 +82,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "model_runtime"
     if data.get("compaction_kind") == "context_compaction_runtime" or data.get("source_kind") == "context_compaction":
         return "context_compaction"
+    if data.get("bootstrap_kind") == "project_instructions_bootstrap" or data.get("source_kind") == "project_instructions_bootstrap":
+        return "project_instructions_bootstrap"
     if data.get("metric_kind") == "ollama_runtime_metrics":
         return "runtime_timer"
     explicit_source = str(data.get("source_kind") or data.get("trace_source_kind") or data.get("producer_kind") or "").strip().lower()
@@ -89,6 +91,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "model_runtime"
     if explicit_source == "context_compaction":
         return "context_compaction"
+    if explicit_source == "project_instructions_bootstrap":
+        return "project_instructions_bootstrap"
     if explicit_source in {"tool_trace", "tool_call", "tool_result", "tool_error"}:
         return "tool_trace"
     if explicit_source in {"action_trace", "pending_action", "approval", "action_result"}:
@@ -606,6 +610,47 @@ def _adaptive_skill_item(data: dict[str, Any]) -> dict[str, Any]:
 
 
 
+
+def build_project_instructions_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    scan = data.get("scan") if isinstance(data.get("scan"), dict) else {}
+    candidate = data.get("candidate") if isinstance(data.get("candidate"), dict) else {}
+    review = data.get("review") if isinstance(data.get("review"), dict) else {}
+    refresh = data.get("refresh") if isinstance(data.get("refresh"), dict) else {}
+    warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    blocked = (
+        data.get("status") == "blocked"
+        or scan.get("status") == "blocked"
+        or candidate.get("status") == "blocked"
+        or review.get("status") == "blocked"
+    )
+    status = "blocked" if blocked else "warning" if warnings or required_actions or candidate.get("review_required") else "completed"
+    return build_process_trace_item(
+        trace_id=candidate.get("candidate_id") or scan.get("fingerprint") or data.get("status"),
+        kind="config",
+        subsystem="ConfigCore",
+        title="Project instructions bootstrap",
+        summary=f"Workspace instruction bootstrap {data.get('status') or scan.get('status') or 'recorded'}; sources={scan.get('selected_count') or candidate.get('source_count') or 0}.",
+        status=status,
+        details={
+            "source_kind": "project_instructions_bootstrap",
+            "bootstrap_kind": data.get("bootstrap_kind") or "project_instructions_bootstrap",
+            "scan": scan or None,
+            "candidate": candidate or None,
+            "review": review or None,
+            "refresh": refresh or None,
+            "warnings": warnings,
+            "required_actions": required_actions,
+            "can_authorize_actions": False,
+            "can_write_files": False,
+            "can_activate_tools": False,
+            "can_activate_mcp": False,
+        },
+        metadata={"source_kind": "project_instructions_bootstrap"},
+    )
+
+
 def build_context_compaction_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
     data = source or {}
     state = data.get("state") if isinstance(data.get("state"), dict) else {}
@@ -913,6 +958,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = build_model_runtime_process_trace_item(data)
     elif source_kind == "context_compaction":
         item = build_context_compaction_process_trace_item(data)
+    elif source_kind == "project_instructions_bootstrap":
+        item = build_project_instructions_process_trace_item(data)
     elif source_kind == "miniagent_task_runtime_metric":
         item = process_trace_item_from_runtime_metric(data)
     elif source_kind == "tool_trace":
