@@ -1,10 +1,21 @@
 ﻿from backend.apps.agents.runtime.model_runtime_lifecycle import (
+    ContextBudgetInput,
+    LongTaskHealthInput,
     ModelRuntimeRequest,
+    RuntimeEscalationInput,
+    attach_context_budget_to_model_runtime,
+    attach_escalation_to_model_runtime,
+    attach_long_task_health_to_model_runtime,
     attach_model_runtime_to_handoff,
     attach_model_runtime_to_task_packet,
     build_default_model_role_profiles,
+    build_context_window_budget,
     build_model_runtime_trace_source,
+    build_runtime_escalation_decision,
+    dump_model_context_budget,
     dump_model_runtime_resolution,
+    dump_runtime_escalation_decision,
+    evaluate_long_task_model_health,
     extract_model_runtime_from_metadata,
     resolve_model_runtime,
 )
@@ -108,3 +119,158 @@ def test_variant_propagates_into_resolution_and_trace():
 
     assert resolution.variant == "planner-fast"
     assert trace["variant"] == "planner-fast"
+
+
+
+def _runtime_with_limit(limit=10000):
+    return resolve_model_runtime({"model": "qwen2.5-coder:14b"}, local_registry={"ollama/qwen2.5-coder:14b": {"context_window": limit, "supports_thinking": True}})
+
+
+def test_context_budget_within_budget():
+    budget = build_context_window_budget(ContextBudgetInput(resolution=_runtime_with_limit(10000), estimated_input_tokens=1000, requested_output_tokens=500))
+
+    assert budget.status == "within_budget"
+    assert budget.usage_ratio is not None and budget.usage_ratio < 0.85
+
+
+def test_context_budget_near_limit():
+    budget = build_context_window_budget({"resolution": _runtime_with_limit(10000), "estimated_input_tokens": 7700, "requested_output_tokens": 500})
+
+    assert budget.status == "near_limit"
+    assert "context_budget_near_limit" in budget.warnings
+
+
+def test_context_budget_over_limit():
+    budget = build_context_window_budget({"resolution": _runtime_with_limit(10000), "estimated_input_tokens": 12000, "requested_output_tokens": 500})
+
+    assert budget.status == "over_limit"
+    assert "reduce_context_or_select_larger_model" in budget.required_actions
+
+
+def test_context_budget_missing_context_limit():
+    budget = build_context_window_budget({"resolution": {"provider_id": "unknown", "model_id": "custom"}, "estimated_input_tokens": 100})
+
+    assert budget.status == "missing_context_limit"
+    assert "context_limit_missing" in budget.warnings
+
+
+def test_long_task_health_healthy_with_provider_ok_and_budget_within():
+    resolution = _runtime_with_limit(10000)
+    budget = build_context_window_budget({"resolution": resolution, "estimated_input_tokens": 1000, "requested_output_tokens": 500})
+    health = evaluate_long_task_model_health(LongTaskHealthInput(resolution=resolution, context_budget=budget, provider_health={"ok": True, "status": "available"}))
+
+    assert health.status == "healthy"
+    assert health.can_continue is True
+    assert health.should_pause is False
+
+
+def test_long_task_health_provider_unavailable_blocks_continue():
+    resolution = _runtime_with_limit(10000)
+    budget = build_context_window_budget({"resolution": resolution, "estimated_input_tokens": 1000})
+    health = evaluate_long_task_model_health({"resolution": resolution, "context_budget": budget, "provider_health": {"ok": False, "status": "unavailable"}})
+
+    assert health.status == "provider_unavailable"
+    assert health.can_continue is False
+    assert health.should_pause is True
+    assert health.should_escalate is True
+
+
+def test_long_task_health_context_over_limit_pauses_and_escalates():
+    resolution = _runtime_with_limit(10000)
+    budget = build_context_window_budget({"resolution": resolution, "estimated_input_tokens": 20000})
+    health = evaluate_long_task_model_health({"resolution": resolution, "context_budget": budget, "provider_health": {"ok": True}})
+
+    assert health.status == "context_over_limit"
+    assert health.should_pause is True
+    assert health.should_escalate is True
+
+
+def test_long_task_health_stream_stalled_detected():
+    resolution = _runtime_with_limit(10000)
+    budget = build_context_window_budget({"resolution": resolution, "estimated_input_tokens": 1000})
+    health = evaluate_long_task_model_health({"resolution": resolution, "context_budget": budget, "provider_health": {"ok": True}, "stream_last_event_ms_ago": 60000})
+
+    assert health.status == "stream_stalled"
+    assert "stream_stalled" in health.risks
+
+
+def test_long_task_health_output_truncated_warns_and_escalates():
+    resolution = _runtime_with_limit(10000)
+    budget = build_context_window_budget({"resolution": resolution, "estimated_input_tokens": 1000})
+    health = evaluate_long_task_model_health({"resolution": resolution, "context_budget": budget, "provider_health": {"ok": True}, "output_truncated": True})
+
+    assert health.status == "output_truncated"
+    assert "output_truncated" in health.warnings
+    assert health.should_escalate is True
+
+
+def test_escalation_continue_current_model_when_healthy():
+    resolution = _runtime_with_limit(10000)
+    budget = build_context_window_budget({"resolution": resolution, "estimated_input_tokens": 1000})
+    health = evaluate_long_task_model_health({"resolution": resolution, "context_budget": budget, "provider_health": {"ok": True}})
+    decision = build_runtime_escalation_decision(RuntimeEscalationInput(resolution=resolution, health=health, context_budget=budget))
+
+    assert decision.decision == "continue_current_model"
+    assert decision.allowed_without_approval is True
+
+
+def test_escalation_suggest_installed_model_when_explicit_better_alternative_exists():
+    resolution = _runtime_with_limit(10000)
+    budget = build_context_window_budget({"resolution": resolution, "estimated_input_tokens": 12000})
+    health = evaluate_long_task_model_health({"resolution": resolution, "context_budget": budget, "provider_health": {"ok": True}})
+    decision = build_runtime_escalation_decision({
+        "resolution": resolution,
+        "health": health,
+        "context_budget": budget,
+        "available_models": [{"model": "qwen2.5-coder:32b", "provider_id": "ollama", "context_window": 64000}],
+    })
+
+    assert decision.decision == "suggest_installed_model"
+    assert decision.suggested_model_id == "ollama/qwen2.5-coder:32b"
+    assert decision.requires_user_approval is True
+    assert decision.allowed_without_approval is False
+
+
+def test_escalation_blocked_no_safe_fallback_when_no_alternative():
+    resolution = _runtime_with_limit(10000)
+    budget = build_context_window_budget({"resolution": resolution, "estimated_input_tokens": 12000})
+    health = evaluate_long_task_model_health({"resolution": resolution, "context_budget": budget, "provider_health": {"ok": True}})
+    decision = build_runtime_escalation_decision({"resolution": resolution, "health": health, "context_budget": budget, "available_models": []})
+
+    assert decision.decision == "blocked_no_safe_fallback"
+    assert decision.requires_user_approval is True
+
+
+def test_fallback_never_allows_model_change_without_user_approval():
+    decision = dump_runtime_escalation_decision({"decision": "suggest_installed_model", "suggested_model_id": "ollama/other", "requires_user_approval": False, "allowed_without_approval": True})
+
+    assert decision["requires_user_approval"] is True
+    assert decision["allowed_without_approval"] is False
+
+
+def test_budget_health_escalation_attach_helpers_do_not_mutate_originals():
+    resolution = dump_model_runtime_resolution(_runtime_with_limit(10000))
+    original = dict(resolution)
+    budget = build_context_window_budget({"resolution": resolution, "estimated_input_tokens": 12000})
+    health = evaluate_long_task_model_health({"resolution": resolution, "context_budget": budget, "provider_health": {"ok": True}})
+    decision = build_runtime_escalation_decision({"resolution": resolution, "health": health, "context_budget": budget})
+
+    with_budget = attach_context_budget_to_model_runtime(resolution, budget)
+    with_health = attach_long_task_health_to_model_runtime(with_budget, health)
+    with_decision = attach_escalation_to_model_runtime(with_health, decision)
+
+    assert resolution == original
+    assert with_decision["context_budget"]["status"] == "over_limit"
+    assert with_decision["long_task_health"]["status"] == "context_over_limit"
+    assert with_decision["escalation_decision"]["decision"] == "blocked_no_safe_fallback"
+
+
+def test_budget_health_escalation_dump_and_trace_redact_sensitive_metadata():
+    resolution = _runtime_with_limit(10000)
+    budget = build_context_window_budget({"resolution": resolution, "estimated_input_tokens": 100, "metadata": {"secret_token": "leak", "prompt": "leak"}})
+    runtime = attach_context_budget_to_model_runtime(resolution, budget)
+    trace = build_model_runtime_trace_source(runtime)
+    text = str({"budget": dump_model_context_budget(budget), "trace": trace}).lower()
+
+    for forbidden in ("leak", "secret_token", "prompt", "response", "raw_response", "token"):
+        assert forbidden not in text

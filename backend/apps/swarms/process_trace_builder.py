@@ -606,7 +606,12 @@ def build_model_runtime_process_trace_item(source: dict[str, Any]) -> dict[str, 
     warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
     required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
     fallback = data.get("fallback_policy") if isinstance(data.get("fallback_policy"), dict) else {}
-    status = "warning" if warnings or required_actions or fallback.get("requires_user_approval") else "completed"
+    context_budget = data.get("context_budget") if isinstance(data.get("context_budget"), dict) else {}
+    long_task_health = data.get("long_task_health") if isinstance(data.get("long_task_health"), dict) else {}
+    escalation = data.get("escalation_decision") if isinstance(data.get("escalation_decision"), dict) else {}
+    needs_approval = bool(fallback.get("requires_user_approval") or escalation.get("requires_user_approval"))
+    blocked = escalation.get("decision") in {"blocked_no_safe_fallback", "recovery_required"} or long_task_health.get("status") in {"provider_unavailable", "context_over_limit", "model_missing"}
+    status = "blocked" if blocked else "warning" if warnings or required_actions or needs_approval else "completed"
     return build_process_trace_item(
         trace_id=data.get("model_id") or data.get("local_model_name") or data.get("provider_id"),
         kind="model",
@@ -629,9 +634,13 @@ def build_model_runtime_process_trace_item(source: dict[str, Any]) -> dict[str, 
             "context_limit_source": data.get("context_limit_source"),
             "model_source": data.get("model_source"),
             "source_chain": data.get("source_chain") or [],
+            "context_budget": context_budget or None,
+            "long_task_health": long_task_health or None,
+            "escalation_decision": escalation or None,
             "warning_count": len(warnings),
             "required_actions": required_actions,
             "fallback_requires_user_approval": fallback.get("requires_user_approval", False),
+            "escalation_requires_user_approval": escalation.get("requires_user_approval", False),
             "auto_switch_performed": fallback.get("auto_switch_performed", False),
             "can_execute_model": False,
             "can_start_ollama": False,
