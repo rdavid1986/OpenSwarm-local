@@ -347,6 +347,147 @@ class TemporalMigrationBackfillPlan:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+WORK_ACTIVITY_KINDS = {
+    "user_input",
+    "preview_review",
+    "output_review",
+    "agent_run",
+    "swarm_run",
+    "qa_run",
+    "approval_review",
+    "blocked_wait",
+    "background",
+    "idle",
+    "unknown",
+}
+
+
+@dataclass(frozen=True)
+class PersonalWorkTimeRecord:
+    record_id: str = ""
+    source_kind: str = "temporal_user_time"
+    project_id: str | None = None
+    dashboard_id: str | None = None
+    swarm_id: str | None = None
+    agent_id: str | None = None
+    session_id: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    duration_ms: int = 0
+    total_openswarm_time_ms: int = 0
+    active_work_ms: int = 0
+    idle_ms: int = 0
+    agent_run_ms: int = 0
+    user_review_ms: int = 0
+    blocked_ms: int = 0
+    background_ms: int = 0
+    qa_ms: int = 0
+    activity_kind: str = "unknown"
+    evidence_refs: list[str] = field(default_factory=list)
+    local_only: bool = True
+    can_send_telemetry: bool = False
+    can_share_community: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class WorkActivityEvent:
+    event_id: str = ""
+    activity_kind: str = "unknown"
+    occurred_at: str | None = None
+    duration_ms: int = 0
+    project_id: str | None = None
+    dashboard_id: str | None = None
+    swarm_id: str | None = None
+    agent_id: str | None = None
+    session_id: str | None = None
+    evidence_refs: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ActiveIdleClassification:
+    status: str = "unknown"
+    active_work_time_ms: int = 0
+    idle_time_ms: int = 0
+    agent_run_time_ms: int = 0
+    user_review_time_ms: int = 0
+    blocked_time_ms: int = 0
+    background_time_ms: int = 0
+    reason: str = "unknown"
+    warnings: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ProjectDashboardTimeSummary:
+    summary_id: str = ""
+    total_by_project: dict[str, int] = field(default_factory=dict)
+    total_by_dashboard: dict[str, int] = field(default_factory=dict)
+    total_by_swarm: dict[str, int] = field(default_factory=dict)
+    total_by_agent: dict[str, int] = field(default_factory=dict)
+    total_by_activity_kind: dict[str, int] = field(default_factory=dict)
+    session_count: int = 0
+    longest_session_ms: int = 0
+    average_session_ms: float = 0.0
+    last_activity_at: str | None = None
+    sort_key: str = "most_time"
+    sorted_refs: list[str] = field(default_factory=list)
+    local_only: bool = True
+    can_send_telemetry: bool = False
+    can_share_community: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BreakReminderPolicy:
+    policy_id: str = ""
+    enabled: bool = True
+    interval_minutes: int = 50
+    snooze_minutes: int = 10
+    project_override: dict[str, Any] = field(default_factory=dict)
+    dashboard_override: dict[str, Any] = field(default_factory=dict)
+    only_when_active: bool = True
+    last_break_at: str | None = None
+    last_reminder_at: str | None = None
+    next_reminder_at: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BreakReminderDecision:
+    decision: str = "not_due"
+    reason: str = "not_due"
+    next_reminder_at: str | None = None
+    should_notify: bool = False
+    should_snooze: bool = False
+    required_actions: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TemporalUserTimeTraceSource:
+    source_kind: str = "temporal_user_time"
+    trace_id: str = ""
+    active_ms: int = 0
+    idle_ms: int = 0
+    agent_run_ms: int = 0
+    user_review_ms: int = 0
+    blocked_ms: int = 0
+    background_ms: int = 0
+    qa_ms: int = 0
+    project_id: str | None = None
+    dashboard_id: str | None = None
+    break_decision: dict[str, Any] = field(default_factory=dict)
+    summary: dict[str, Any] = field(default_factory=dict)
+    local_only: bool = True
+    can_send_telemetry: bool = False
+    can_share_community: bool = False
+    warnings: list[str] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -1037,6 +1178,312 @@ def build_temporal_runtime_trace_source(*, log_policy: TemporalLogPolicy | dict[
     source["required_actions"] = list(dict.fromkeys(required))
     return sanitize_temporal_metadata(source)
 
+
+
+def normalize_work_activity_kind(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in WORK_ACTIVITY_KINDS else "unknown"
+
+
+def _optional_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _safe_refs(values: Any) -> list[str]:
+    raw = values if isinstance(values, list) else ([] if values in (None, "") else [values])
+    output: list[str] = []
+    for value in raw:
+        text = str(value or "").strip()
+        if text and text not in output:
+            output.append(text)
+    return output
+
+
+def build_personal_work_time_record(**kwargs: Any) -> PersonalWorkTimeRecord:
+    started = normalize_temporal_timestamp(kwargs.get("started_at"), fallback_now=kwargs.get("started_at") is None)
+    completed = normalize_temporal_timestamp(kwargs.get("completed_at"))
+    duration = _int(kwargs.get("duration_ms"))
+    if duration is None:
+        duration = temporal_duration_ms(started, completed or kwargs.get("now")) or 0
+    kind = normalize_work_activity_kind(kwargs.get("activity_kind"))
+    active = idle = agent = review = blocked = background = qa = 0
+    if kind == "idle":
+        idle = duration
+    elif kind == "background":
+        background = duration
+    elif kind in {"agent_run", "swarm_run"}:
+        agent = duration
+    elif kind == "qa_run":
+        qa = duration
+    elif kind == "blocked_wait":
+        blocked = duration
+    elif kind in {"preview_review", "output_review", "approval_review", "user_input"}:
+        active = duration
+        review = duration if kind in {"preview_review", "output_review", "approval_review"} else 0
+    return PersonalWorkTimeRecord(
+        record_id=str(kwargs.get("record_id") or uuid4().hex),
+        project_id=_optional_text(kwargs.get("project_id")),
+        dashboard_id=_optional_text(kwargs.get("dashboard_id")),
+        swarm_id=_optional_text(kwargs.get("swarm_id")),
+        agent_id=_optional_text(kwargs.get("agent_id")),
+        session_id=_optional_text(kwargs.get("session_id")),
+        started_at=started,
+        completed_at=completed,
+        duration_ms=duration,
+        total_openswarm_time_ms=duration,
+        active_work_ms=_int(kwargs.get("active_work_ms")) if kwargs.get("active_work_ms") is not None else active,
+        idle_ms=_int(kwargs.get("idle_ms")) if kwargs.get("idle_ms") is not None else idle,
+        agent_run_ms=_int(kwargs.get("agent_run_ms")) if kwargs.get("agent_run_ms") is not None else agent,
+        user_review_ms=_int(kwargs.get("user_review_ms")) if kwargs.get("user_review_ms") is not None else review,
+        blocked_ms=_int(kwargs.get("blocked_ms")) if kwargs.get("blocked_ms") is not None else blocked,
+        background_ms=_int(kwargs.get("background_ms")) if kwargs.get("background_ms") is not None else background,
+        qa_ms=_int(kwargs.get("qa_ms")) if kwargs.get("qa_ms") is not None else qa,
+        activity_kind=kind,
+        evidence_refs=_safe_refs(kwargs.get("evidence_refs")),
+        metadata=sanitize_temporal_metadata(kwargs.get("metadata") or {}),
+    )
+
+
+def build_work_activity_event(**kwargs: Any) -> WorkActivityEvent:
+    return WorkActivityEvent(
+        event_id=str(kwargs.get("event_id") or uuid4().hex),
+        activity_kind=normalize_work_activity_kind(kwargs.get("activity_kind")),
+        occurred_at=normalize_temporal_timestamp(kwargs.get("occurred_at"), fallback_now=True),
+        duration_ms=_int(kwargs.get("duration_ms")) or 0,
+        project_id=_optional_text(kwargs.get("project_id")),
+        dashboard_id=_optional_text(kwargs.get("dashboard_id")),
+        swarm_id=_optional_text(kwargs.get("swarm_id")),
+        agent_id=_optional_text(kwargs.get("agent_id")),
+        session_id=_optional_text(kwargs.get("session_id")),
+        evidence_refs=_safe_refs(kwargs.get("evidence_refs")),
+        metadata=sanitize_temporal_metadata(kwargs.get("metadata") or {}),
+    )
+
+
+def classify_active_idle_time(**kwargs: Any) -> ActiveIdleClassification:
+    current = normalize_temporal_timestamp(kwargs.get("current_time"), fallback_now=True)
+    threshold = _int(kwargs.get("idle_threshold_ms")) or 5 * 60 * 1000
+    background_allowed = bool(kwargs.get("background_allowed", False))
+    candidates = [
+        normalize_temporal_timestamp(kwargs.get("last_user_input_at")),
+        normalize_temporal_timestamp(kwargs.get("last_canvas_interaction_at")),
+        normalize_temporal_timestamp(kwargs.get("last_preview_interaction_at")),
+    ]
+    last_user_activity = max([c for c in candidates if c] or [None])
+    run_started = normalize_temporal_timestamp(kwargs.get("active_agent_run_started_at"))
+    run_completed = normalize_temporal_timestamp(kwargs.get("active_agent_run_completed_at"))
+    agent_run = temporal_duration_ms(run_started, run_completed or current) or 0 if run_started else 0
+    since_user = temporal_duration_ms(last_user_activity, current) if last_user_activity else None
+    background_ms = 0
+    active_ms = 0
+    idle_ms = 0
+    reason = "unknown"
+    status = "unknown"
+    warnings: list[str] = []
+    if run_started and not run_completed:
+        status = "agent_run_time"
+        reason = "active_agent_run"
+    elif since_user is None:
+        status = "idle_time"
+        reason = "no_recent_user_activity"
+        idle_ms = threshold
+    elif since_user > threshold:
+        status = "idle_time"
+        reason = "idle_threshold_exceeded"
+        idle_ms = since_user
+    else:
+        status = "active_work_time"
+        reason = "recent_user_activity"
+        active_ms = max(0, since_user)
+    if kwargs.get("is_background") is True:
+        if background_allowed:
+            background_ms = agent_run or idle_ms or active_ms
+            status = "background_time"
+            reason = "background_allowed"
+        else:
+            warnings.append("background_activity_not_counted")
+            active_ms = 0
+            background_ms = 0
+            if status != "agent_run_time":
+                status = "idle_time"
+                reason = "background_blocked"
+    blocked_ms = _int(kwargs.get("blocked_time_ms")) or 0
+    review_ms = active_ms if status == "active_work_time" else 0
+    return ActiveIdleClassification(
+        status=status,
+        active_work_time_ms=active_ms,
+        idle_time_ms=idle_ms,
+        agent_run_time_ms=agent_run,
+        user_review_time_ms=review_ms,
+        blocked_time_ms=blocked_ms,
+        background_time_ms=background_ms,
+        reason=reason,
+        warnings=warnings,
+        metadata=sanitize_temporal_metadata(kwargs.get("metadata") or {}),
+    )
+
+
+def _record_dict(record: PersonalWorkTimeRecord | WorkActivityEvent | dict[str, Any]) -> dict[str, Any]:
+    return _dump(record)
+
+
+def build_project_dashboard_time_summary(records: list[PersonalWorkTimeRecord | dict[str, Any]] | None = None, *, sort_key: str = "most_time", metadata: dict[str, Any] | None = None) -> ProjectDashboardTimeSummary:
+    totals = {
+        "project": {},
+        "dashboard": {},
+        "swarm": {},
+        "agent": {},
+        "activity": {},
+    }
+    durations: list[int] = []
+    last_activity: str | None = None
+    agent_runtime: dict[str, int] = {}
+    qa_time: dict[str, int] = {}
+    for raw in records or []:
+        record = _record_dict(raw)
+        duration = _int(record.get("duration_ms")) or _int(record.get("total_openswarm_time_ms")) or 0
+        durations.append(duration)
+        for key, bucket, fallback in (
+            ("project_id", "project", "unknown"),
+            ("dashboard_id", "dashboard", "unknown"),
+            ("swarm_id", "swarm", "unknown"),
+            ("agent_id", "agent", "unknown"),
+            ("activity_kind", "activity", "unknown"),
+        ):
+            group = str(record.get(key) or fallback)
+            totals[bucket][group] = totals[bucket].get(group, 0) + duration
+        timestamp = record.get("completed_at") or record.get("started_at")
+        if isinstance(timestamp, str) and (last_activity is None or timestamp > last_activity):
+            last_activity = timestamp
+        agent_id = str(record.get("agent_id") or "unknown")
+        agent_runtime[agent_id] = agent_runtime.get(agent_id, 0) + (_int(record.get("agent_run_ms")) or 0)
+        qa_time[agent_id] = qa_time.get(agent_id, 0) + (_int(record.get("qa_ms")) or 0)
+    sort_map = {
+        "most_time": sorted(totals["project"], key=lambda k: totals["project"][k], reverse=True),
+        "least_time": sorted(totals["project"], key=lambda k: totals["project"][k]),
+        "most_sessions": sorted(totals["project"], key=lambda k: sum(1 for r in records or [] if (_record_dict(r).get("project_id") or "unknown") == k), reverse=True),
+        "latest_activity": sorted(totals["project"], reverse=True),
+        "most_agent_runtime": sorted(agent_runtime, key=lambda k: agent_runtime[k], reverse=True),
+        "most_qa_time": sorted(qa_time, key=lambda k: qa_time[k], reverse=True),
+    }
+    return ProjectDashboardTimeSummary(
+        summary_id=str((metadata or {}).get("summary_id") or uuid4().hex),
+        total_by_project=totals["project"],
+        total_by_dashboard=totals["dashboard"],
+        total_by_swarm=totals["swarm"],
+        total_by_agent=totals["agent"],
+        total_by_activity_kind=totals["activity"],
+        session_count=len(durations),
+        longest_session_ms=max(durations) if durations else 0,
+        average_session_ms=(sum(durations) / len(durations)) if durations else 0.0,
+        last_activity_at=last_activity,
+        sort_key=sort_key,
+        sorted_refs=sort_map.get(sort_key, sort_map["most_time"]),
+        metadata=sanitize_temporal_metadata(metadata or {}),
+    )
+
+
+def build_break_reminder_policy(**kwargs: Any) -> BreakReminderPolicy:
+    interval = _int(kwargs.get("interval_minutes")) or 50
+    snooze = _int(kwargs.get("snooze_minutes")) or 10
+    last_break = normalize_temporal_timestamp(kwargs.get("last_break_at"))
+    last_reminder = normalize_temporal_timestamp(kwargs.get("last_reminder_at"))
+    base = last_reminder or last_break or normalize_temporal_timestamp(kwargs.get("created_at"), fallback_now=True)
+    next_reminder = normalize_temporal_timestamp(kwargs.get("next_reminder_at")) or _iso_from_epoch_ms(_add_ms_to_timestamp(base, interval * 60_000))
+    return BreakReminderPolicy(
+        policy_id=str(kwargs.get("policy_id") or uuid4().hex),
+        enabled=bool(kwargs.get("enabled", True)),
+        interval_minutes=interval,
+        snooze_minutes=snooze,
+        project_override=sanitize_temporal_metadata(kwargs.get("project_override") or {}),
+        dashboard_override=sanitize_temporal_metadata(kwargs.get("dashboard_override") or {}),
+        only_when_active=bool(kwargs.get("only_when_active", True)),
+        last_break_at=last_break,
+        last_reminder_at=last_reminder,
+        next_reminder_at=next_reminder,
+        metadata=sanitize_temporal_metadata(kwargs.get("metadata") or {}),
+    )
+
+
+def build_break_reminder_decision(policy: BreakReminderPolicy | dict[str, Any] | None = None, **kwargs: Any) -> BreakReminderDecision:
+    data = _dump(policy) if policy is not None else _dump(build_break_reminder_policy(**kwargs))
+    now = normalize_temporal_timestamp(kwargs.get("current_time"), fallback_now=True)
+    active = bool(kwargs.get("is_active", True))
+    background = bool(kwargs.get("is_background", False))
+    if not data.get("enabled", True):
+        decision, reason, notify, snooze = "disabled", "policy_disabled", False, False
+    elif background:
+        decision, reason, notify, snooze = "background_blocked", "background_not_eligible", False, False
+    elif data.get("only_when_active", True) and not active:
+        decision, reason, notify, snooze = "idle", "not_active", False, False
+    elif data.get("last_reminder_at") and kwargs.get("snoozed"):
+        snooze_until = _iso_from_epoch_ms(_add_ms_to_timestamp(data.get("last_reminder_at"), (_int(data.get("snooze_minutes")) or 10) * 60_000))
+        if snooze_until and _parse_datetime(now) and _parse_datetime(snooze_until) and _parse_datetime(now) < _parse_datetime(snooze_until):
+            return BreakReminderDecision(decision="snooze", reason="snooze_active", next_reminder_at=snooze_until, should_notify=False, should_snooze=True, metadata=sanitize_temporal_metadata(kwargs.get("metadata") or {}))
+        decision, reason, notify, snooze = "notify", "snooze_elapsed", True, False
+    else:
+        due = data.get("next_reminder_at")
+        if due and _parse_datetime(now) and _parse_datetime(due) and _parse_datetime(now) >= _parse_datetime(due):
+            decision, reason, notify, snooze = "notify", "interval_elapsed", True, False
+        else:
+            decision, reason, notify, snooze = "not_due", "interval_not_elapsed", False, False
+    next_at = data.get("next_reminder_at")
+    actions = ["show_break_reminder"] if notify else []
+    return BreakReminderDecision(decision=decision, reason=reason, next_reminder_at=next_at, should_notify=notify, should_snooze=snooze, required_actions=actions, metadata=sanitize_temporal_metadata(kwargs.get("metadata") or {}))
+
+
+def build_temporal_user_time_trace_source(*, record: PersonalWorkTimeRecord | dict[str, Any] | None = None, classification: ActiveIdleClassification | dict[str, Any] | None = None, summary: ProjectDashboardTimeSummary | dict[str, Any] | None = None, break_decision: BreakReminderDecision | dict[str, Any] | None = None, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    record_data = _dump(record)
+    classification_data = _dump(classification)
+    summary_data = _dump(summary)
+    break_data = _dump(break_decision)
+    source = TemporalUserTimeTraceSource(
+        trace_id=str((metadata or {}).get("trace_id") or record_data.get("record_id") or uuid4().hex),
+        active_ms=_int(record_data.get("active_work_ms")) or _int(classification_data.get("active_work_time_ms")) or 0,
+        idle_ms=_int(record_data.get("idle_ms")) or _int(classification_data.get("idle_time_ms")) or 0,
+        agent_run_ms=_int(record_data.get("agent_run_ms")) or _int(classification_data.get("agent_run_time_ms")) or 0,
+        user_review_ms=_int(record_data.get("user_review_ms")) or _int(classification_data.get("user_review_time_ms")) or 0,
+        blocked_ms=_int(record_data.get("blocked_ms")) or _int(classification_data.get("blocked_time_ms")) or 0,
+        background_ms=_int(record_data.get("background_ms")) or _int(classification_data.get("background_time_ms")) or 0,
+        qa_ms=_int(record_data.get("qa_ms")) or 0,
+        project_id=record_data.get("project_id"),
+        dashboard_id=record_data.get("dashboard_id"),
+        break_decision=break_data,
+        summary=summary_data,
+        warnings=list(dict.fromkeys((classification_data.get("warnings") or []) + (summary_data.get("warnings") or []))),
+        required_actions=break_data.get("required_actions") or [],
+        metadata=sanitize_temporal_metadata(metadata or {}),
+    )
+    return _dump(source)
+
+
+def dump_personal_work_time_record(value: PersonalWorkTimeRecord | dict[str, Any]) -> dict[str, Any]:
+    return _dump(value)
+
+
+def dump_work_activity_event(value: WorkActivityEvent | dict[str, Any]) -> dict[str, Any]:
+    return _dump(value)
+
+
+def dump_active_idle_classification(value: ActiveIdleClassification | dict[str, Any]) -> dict[str, Any]:
+    return _dump(value)
+
+
+def dump_project_dashboard_time_summary(value: ProjectDashboardTimeSummary | dict[str, Any]) -> dict[str, Any]:
+    return _dump(value)
+
+
+def dump_break_reminder_policy(value: BreakReminderPolicy | dict[str, Any]) -> dict[str, Any]:
+    return _dump(value)
+
+
+def dump_break_reminder_decision(value: BreakReminderDecision | dict[str, Any]) -> dict[str, Any]:
+    return _dump(value)
+
+
+def dump_temporal_user_time_trace_source(value: TemporalUserTimeTraceSource | dict[str, Any]) -> dict[str, Any]:
+    return _dump(value)
 
 def dump_temporal_log_policy(value: TemporalLogPolicy | dict[str, Any]) -> dict[str, Any]:
     return _dump(value)

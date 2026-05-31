@@ -78,6 +78,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "skill_effectiveness_metrics"
     if data.get("metric_kind") == "miniagent_task_runtime_metric":
         return "miniagent_task_runtime_metric"
+    if data.get("source_kind") == "temporal_user_time":
+        return "temporal_user_time"
     if data.get("temporal_kind") in {"temporal_trace_source", "temporal_core"} or data.get("source_kind") == "temporal_runtime":
         return "temporal_runtime"
     if data.get("runtime_kind") == "model_runtime_resolution" or data.get("source_kind") == "model_runtime":
@@ -101,6 +103,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "model_runtime"
     if explicit_source == "temporal_runtime":
         return "temporal_runtime"
+    if explicit_source == "temporal_user_time":
+        return "temporal_user_time"
     if explicit_source in {"context_packet", "context_packets", "context_packet_runtime"}:
         return "context_packet"
     if explicit_source == "context_compaction":
@@ -811,6 +815,50 @@ def build_context_packet_process_trace_item(source: dict[str, Any]) -> dict[str,
 
 
 
+
+def build_temporal_user_time_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    break_decision = data.get("break_decision") if isinstance(data.get("break_decision"), dict) else {}
+    summary_data = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    status = "warning" if warnings or required_actions or break_decision.get("decision") == "notify" else "completed"
+    active_ms = data.get("active_ms") or 0
+    idle_ms = data.get("idle_ms") or 0
+    agent_run_ms = data.get("agent_run_ms") or 0
+    return build_process_trace_item(
+        trace_id=data.get("trace_id"),
+        kind="metric",
+        subsystem="RuntimeCore",
+        title="Local work time",
+        summary=f"Local-only work time recorded; active_ms={active_ms}; idle_ms={idle_ms}; agent_run_ms={agent_run_ms}.",
+        status=status,
+        details={
+            "source_kind": "temporal_user_time",
+            "active_ms": active_ms,
+            "idle_ms": idle_ms,
+            "agent_run_ms": agent_run_ms,
+            "user_review_ms": data.get("user_review_ms") or 0,
+            "blocked_ms": data.get("blocked_ms") or 0,
+            "background_ms": data.get("background_ms") or 0,
+            "qa_ms": data.get("qa_ms") or 0,
+            "project_id": data.get("project_id"),
+            "dashboard_id": data.get("dashboard_id"),
+            "break_decision": break_decision or None,
+            "summary": summary_data or None,
+            "warnings": warnings,
+            "required_actions": required_actions,
+            "local_only": True,
+            "can_send_telemetry": False,
+            "can_share_community": False,
+            "can_execute_model": False,
+            "can_execute_tools": False,
+            "can_activate_mcp": False,
+            "contains_private_reasoning": False,
+        },
+        metadata={"source_kind": "temporal_user_time"},
+    )
+
 def build_temporal_runtime_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
     data = source or {}
     execution = data.get("execution") if isinstance(data.get("execution"), dict) else {}
@@ -1223,6 +1271,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = build_model_runtime_process_trace_item(data)
     elif source_kind == "temporal_runtime":
         item = build_temporal_runtime_process_trace_item(data)
+    elif source_kind == "temporal_user_time":
+        item = build_temporal_user_time_process_trace_item(data)
     elif source_kind == "context_packet":
         item = build_context_packet_process_trace_item(data)
     elif source_kind == "context_compaction":
