@@ -80,6 +80,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "miniagent_task_runtime_metric"
     if data.get("runtime_kind") == "model_runtime_resolution" or data.get("source_kind") == "model_runtime":
         return "model_runtime"
+    if data.get("packet_kind") == "context_packet" or data.get("source_kind") == "context_packet":
+        return "context_packet"
     if data.get("compaction_kind") == "context_compaction_runtime" or data.get("source_kind") == "context_compaction":
         return "context_compaction"
     if data.get("bootstrap_kind") == "project_instructions_bootstrap" or data.get("source_kind") == "project_instructions_bootstrap":
@@ -95,6 +97,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
     explicit_source = str(data.get("source_kind") or data.get("trace_source_kind") or data.get("producer_kind") or "").strip().lower()
     if explicit_source == "model_runtime":
         return "model_runtime"
+    if explicit_source in {"context_packet", "context_packets", "context_packet_runtime"}:
+        return "context_packet"
     if explicit_source == "context_compaction":
         return "context_compaction"
     if explicit_source == "project_instructions_bootstrap":
@@ -735,6 +739,73 @@ def build_project_instructions_process_trace_item(source: dict[str, Any]) -> dic
     )
 
 
+def build_context_packet_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    quality = data.get("context_quality_gate") if isinstance(data.get("context_quality_gate"), dict) else {}
+    budget = data.get("context_budget") if isinstance(data.get("context_budget"), dict) else {}
+    memory_tiers = data.get("memory_tiers") if isinstance(data.get("memory_tiers"), dict) else {}
+    quality_status = str(quality.get("status") or "").strip()
+    budget_status = str(budget.get("context_budget_status") or "").strip()
+    blocked = quality_status in {"blocked_by_permissions", "contradictory"} or budget_status == "over_budget"
+    status = "blocked" if blocked else "warning" if warnings or required_actions or quality_status not in {"", "sufficient"} else "completed"
+
+    evidence_refs: list[Any] = []
+    for tier_items in memory_tiers.values():
+        if isinstance(tier_items, list):
+            for item in tier_items:
+                if isinstance(item, dict):
+                    evidence_refs.extend(item.get("evidence_refs") or [])
+    for item in data.get("items") if isinstance(data.get("items"), list) else []:
+        if isinstance(item, dict):
+            evidence_refs.extend(item.get("evidence_refs") or [])
+    seen: set[str] = set()
+    deduped_evidence: list[str] = []
+    for ref in evidence_refs:
+        ref_text = str(ref or "").strip()
+        if ref_text and ref_text not in seen:
+            seen.add(ref_text)
+            deduped_evidence.append(ref_text)
+
+    return build_process_trace_item(
+        trace_id=data.get("packet_id"),
+        kind="context",
+        subsystem="ContextCore",
+        title="Context packet",
+        summary=(
+            f"Context packet {data.get('status') or 'recorded'}; "
+            f"items={data.get('item_count', 0)}; selected={data.get('selected_source_count', 0)}; "
+            f"quality={quality_status or 'unknown'}."
+        ),
+        status=status,
+        details={
+            "source_kind": "context_packet",
+            "packet_kind": data.get("packet_kind") or "context_packet",
+            "packet_id": data.get("packet_id"),
+            "target_kind": data.get("target_kind"),
+            "target_id": data.get("target_id"),
+            "task_id": data.get("task_id"),
+            "item_count": data.get("item_count", 0),
+            "selected_source_count": data.get("selected_source_count", 0),
+            "excluded_source_count": data.get("excluded_source_count", 0),
+            "memory_tiers": memory_tiers or None,
+            "context_budget": budget or None,
+            "context_quality_gate": quality or None,
+            "warnings": warnings,
+            "required_actions": required_actions,
+            "can_execute_tools": False,
+            "can_mutate_memory": False,
+            "can_activate_mcp": False,
+            "contains_private_reasoning": False,
+        },
+        evidence_refs=deduped_evidence,
+        related_task_id=data.get("task_id") or "",
+        related_agent_id=data.get("target_id") or "",
+        metadata={"source_kind": "context_packet"},
+    )
+
+
 def build_context_compaction_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
     data = source or {}
     state = data.get("state") if isinstance(data.get("state"), dict) else {}
@@ -1083,6 +1154,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = build_skill_effectiveness_process_trace_item(data)
     elif source_kind == "model_runtime":
         item = build_model_runtime_process_trace_item(data)
+    elif source_kind == "context_packet":
+        item = build_context_packet_process_trace_item(data)
     elif source_kind == "context_compaction":
         item = build_context_compaction_process_trace_item(data)
     elif source_kind == "project_instructions_bootstrap":
