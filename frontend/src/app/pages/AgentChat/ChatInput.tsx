@@ -32,6 +32,7 @@ import CommandPicker, { CommandPickerItem, getToolGroupIcon } from '@/app/compon
 import ComposerContextPreview from '@/app/components/ComposerContextPreview';
 import ChatDebugContextView from '@/app/components/ChatDebugContextView';
 import ProjectMemoryContextPanel from '@/app/components/ProjectMemoryContextPanel';
+import PromptSkillAuthoringPanel from '@/app/components/PromptSkillAuthoringPanel';
 import ComposerResearchSourceControl from '@/app/components/ComposerResearchSourceControl';
 import ModelPicker from '@/app/components/ModelPicker';
 import { useElementSelection, SelectedElement } from '@/app/components/ElementSelectionContext';
@@ -1198,6 +1199,7 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
       <ComposerContextPreview state={unifiedComposerState} compact />
       <ChatDebugContextView title="Composer debug" state={unifiedComposerState} compact />
       <ProjectMemoryContextPanel state={unifiedComposerState} compact />
+      <PromptSkillAuthoringPanel title="Composer authoring" state={unifiedComposerState} compact />
       <ComposerResearchSourceControl
         sources={researchSources}
         visible={showResearchSources}

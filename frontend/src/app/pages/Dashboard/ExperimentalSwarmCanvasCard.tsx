@@ -46,6 +46,8 @@ import ChangeReviewPanel from '@/app/components/ChangeReviewPanel';
 import LongRunningTaskMonitor, { type TaskMonitorStatus } from '@/app/components/LongRunningTaskMonitor';
 import ChatDebugContextView from '@/app/components/ChatDebugContextView';
 import ProjectMemoryContextPanel from '@/app/components/ProjectMemoryContextPanel';
+import AgentHandoffPanel from '@/app/components/AgentHandoffPanel';
+import RemoteTaskStateContractPanel from '@/app/components/RemoteTaskStateContractPanel';
 import ProcessTraceDropdown, { ProcessTraceItem, ProcessTraceTurnDropdown, normalizeProcessTraceTurnContainer } from './ProcessTraceDropdown';
 import { buildCardVisualTokens } from './cardVisualTokens';
 
@@ -3038,6 +3040,26 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             />
             <ProjectMemoryContextPanel
               processTraceItems={swarmProcessTraceItems}
+              compact
+            />
+            <AgentHandoffPanel
+              processTraceItems={swarmProcessTraceItems}
+              compact
+            />
+            <RemoteTaskStateContractPanel
+              snapshot={{
+                surfaceLabel: 'SwarmCard',
+                taskId: activeSwarmId || swarmCardId,
+                status: swarmTaskMonitorStatus,
+                host: 'local',
+                model: activeSwarmModel,
+                mode: getSwarmModeOption(activeSwarmMode).label,
+                approvalsCount: approvals.length || swarmState.pendingCount || 0,
+                outputRefs: previewOutputId ? [previewOutputId] : [],
+                evidenceRefs: finalEvidence.map((item: any) => String(item?.id || item?.ref || item?.path || item?.summary || '')).filter(Boolean),
+                connectionState: 'local_visible',
+                progressLabel: latestSwarmActivity,
+              }}
               compact
             />
             <SwarmPromptInput

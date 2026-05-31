@@ -17,6 +17,7 @@ import CommandPicker, { CommandPickerItem, getToolGroupIcon } from '@/app/compon
 import ComposerContextPreview from '@/app/components/ComposerContextPreview';
 import ChatDebugContextView from '@/app/components/ChatDebugContextView';
 import ProjectMemoryContextPanel from '@/app/components/ProjectMemoryContextPanel';
+import PromptSkillAuthoringPanel from '@/app/components/PromptSkillAuthoringPanel';
 import ComposerResearchSourceControl from '@/app/components/ComposerResearchSourceControl';
 import { useElementSelection } from '@/app/components/ElementSelectionContext';
 import ModelPicker from '@/app/components/ModelPicker';
@@ -433,6 +434,7 @@ const SwarmPromptInput: React.FC<Props> = ({
       <ComposerContextPreview state={unifiedComposerState} compact />
       <ChatDebugContextView title="Swarm composer debug" state={unifiedComposerState} compact />
       <ProjectMemoryContextPanel state={unifiedComposerState} compact />
+      <PromptSkillAuthoringPanel title="Swarm authoring" state={unifiedComposerState} compact />
       <ComposerResearchSourceControl
         sources={researchSources}
         visible={showResearchSources}

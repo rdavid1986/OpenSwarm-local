@@ -43,6 +43,8 @@ import TaskQueuePanel from '@/app/components/TaskQueuePanel';
 import LongRunningTaskMonitor from '@/app/components/LongRunningTaskMonitor';
 import ChatDebugContextView from '@/app/components/ChatDebugContextView';
 import ProjectMemoryContextPanel from '@/app/components/ProjectMemoryContextPanel';
+import AgentHandoffPanel from '@/app/components/AgentHandoffPanel';
+import RemoteTaskStateContractPanel from '@/app/components/RemoteTaskStateContractPanel';
 import { ContextPath } from '@/app/components/DirectoryBrowser';
 import DiffViewer from './DiffViewer';
 import { setGlowingBrowserCards, fadeGlowingBrowserCards, clearGlowingBrowserCards } from '@/shared/state/dashboardLayoutSlice';
@@ -1533,6 +1535,25 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
           />
           <ProjectMemoryContextPanel
             processTraceItems={activeBranchMessages.flatMap((m: any) => m.traceItems || m.process_trace_items || m.process_trace_turn?.items || m.process_trace_turn_container?.items || [])}
+            compact
+          />
+          <AgentHandoffPanel
+            processTraceItems={activeBranchMessages.flatMap((m: any) => m.traceItems || m.process_trace_items || m.process_trace_turn?.items || m.process_trace_turn_container?.items || [])}
+            compact
+          />
+          <RemoteTaskStateContractPanel
+            snapshot={{
+              surfaceLabel: 'AgentChat',
+              taskId: session.id,
+              status: session.status,
+              host: 'local',
+              provider: connectionMode,
+              model,
+              mode,
+              approvalsCount: session.pending_approvals.length,
+              connectionState: session.connection_state || 'local_visible',
+              progressLabel: agentBusy ? 'running' : queueLength > 0 ? 'queued' : 'idle',
+            }}
             compact
           />
               {(() => {
