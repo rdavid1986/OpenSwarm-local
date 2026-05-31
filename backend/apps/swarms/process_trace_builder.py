@@ -80,11 +80,15 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "miniagent_task_runtime_metric"
     if data.get("runtime_kind") == "model_runtime_resolution" or data.get("source_kind") == "model_runtime":
         return "model_runtime"
+    if data.get("compaction_kind") == "context_compaction_runtime" or data.get("source_kind") == "context_compaction":
+        return "context_compaction"
     if data.get("metric_kind") == "ollama_runtime_metrics":
         return "runtime_timer"
     explicit_source = str(data.get("source_kind") or data.get("trace_source_kind") or data.get("producer_kind") or "").strip().lower()
     if explicit_source == "model_runtime":
         return "model_runtime"
+    if explicit_source == "context_compaction":
+        return "context_compaction"
     if explicit_source in {"tool_trace", "tool_call", "tool_result", "tool_error"}:
         return "tool_trace"
     if explicit_source in {"action_trace", "pending_action", "approval", "action_result"}:
@@ -601,6 +605,48 @@ def _adaptive_skill_item(data: dict[str, Any]) -> dict[str, Any]:
 
 
 
+
+def build_context_compaction_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    state = data.get("state") if isinstance(data.get("state"), dict) else {}
+    summary_data = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    pinned = data.get("pinned_context") if isinstance(data.get("pinned_context"), dict) else summary_data.get("pinned_context") if isinstance(summary_data.get("pinned_context"), dict) else {}
+    loop_guard = data.get("loop_guard") if isinstance(data.get("loop_guard"), dict) else {}
+    recovery = data.get("recovery") if isinstance(data.get("recovery"), dict) else {}
+    warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    recovery_required = recovery.get("status") == "recovery_required" or summary_data.get("status") == "recovery_required" or state.get("status") == "recovery_required"
+    blocked = bool(loop_guard.get("should_block")) or recovery_required
+    status = "blocked" if blocked else "warning" if warnings or required_actions else "completed"
+    preserved_ref_count = sum(len(pinned.get(key) or []) for key in ("evidence_refs", "handoff_refs", "validation_refs", "decision_refs", "blocker_refs"))
+    return build_process_trace_item(
+        trace_id=state.get("compaction_id") or summary_data.get("summary_id"),
+        kind="memory",
+        subsystem="MemoryCore",
+        title="Context compaction",
+        summary=f"Context compaction {state.get('status') or summary_data.get('status') or 'recorded'}; preserved_refs={preserved_ref_count}; warnings={len(warnings)}.",
+        status=status,
+        details={
+            "source_kind": "context_compaction",
+            "compaction_kind": data.get("compaction_kind") or "context_compaction_runtime",
+            "state": state or None,
+            "summary": summary_data or None,
+            "pinned_context": pinned or None,
+            "loop_guard": loop_guard or None,
+            "recovery": recovery or None,
+            "warnings": warnings,
+            "required_actions": required_actions,
+            "preserved_ref_count": preserved_ref_count,
+            "can_execute_model": False,
+            "can_activate_tools": False,
+            "can_activate_mcp": False,
+        },
+        evidence_refs=pinned.get("evidence_refs") or summary_data.get("evidence_refs") or [],
+        related_task_id=(pinned.get("task_ids") or [""])[0] if isinstance(pinned.get("task_ids"), list) else "",
+        related_agent_id=(pinned.get("agent_ids") or [""])[0] if isinstance(pinned.get("agent_ids"), list) else "",
+        metadata={"source_kind": "context_compaction"},
+    )
+
 def build_model_runtime_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
     data = source or {}
     warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
@@ -865,6 +911,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = build_skill_effectiveness_process_trace_item(data)
     elif source_kind == "model_runtime":
         item = build_model_runtime_process_trace_item(data)
+    elif source_kind == "context_compaction":
+        item = build_context_compaction_process_trace_item(data)
     elif source_kind == "miniagent_task_runtime_metric":
         item = process_trace_item_from_runtime_metric(data)
     elif source_kind == "tool_trace":
