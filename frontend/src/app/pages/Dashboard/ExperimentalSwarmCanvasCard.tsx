@@ -1167,6 +1167,7 @@ function buildMiniAgentCardViewModel(task: any, idx: number) {
   const lastEvent = renderText(task?.last_event || task?.event || task?.runtime_event, '').trim();
   const blocker = renderText(task?.blocker || task?.blocked_reason || task?.error || task?.failure_reason, '').trim();
   const handoff = renderText(task?.handoff || task?.handoff_summary || task?.completed_work_summary, '').trim();
+  const adaptiveSkillState = getMiniAgentAdaptiveSkillState(task);
 
   const evidenceRefs = Array.isArray(task?.evidence_refs)
     ? task.evidence_refs.filter(Boolean)
@@ -1209,6 +1210,7 @@ function buildMiniAgentCardViewModel(task: any, idx: number) {
     lastEvent,
     blocker,
     handoff,
+    adaptiveSkillState,
     evidenceRefs,
     artifactRefs,
     durationMs,
@@ -1242,6 +1244,41 @@ function formatMiniAgentDuration(durationMs: number | null): string | null {
   const minutes = Math.floor(seconds / 60);
   if (minutes <= 0) return `${seconds}s`;
   return `${minutes}m ${(seconds % 60).toString().padStart(2, '0')}s`;
+}
+
+function getMiniAgentAdaptiveSkillState(task: any): {
+  hasSkillGap: boolean;
+  gapType: string;
+  adaptiveState: string;
+  approvalRequired: boolean;
+  resumeBlocked: boolean;
+  waitingSkill: boolean;
+} {
+  const skillGap = task?.skill_gap || task?.skillGap || task?.adaptive_skill_gap || task?.adaptiveSkillGap || {};
+  const adaptive = task?.adaptive_state || task?.adaptiveState || task?.adaptive_skill_state || task?.adaptiveSkillState || {};
+  const gapType = normalizeStatusValue(
+    skillGap?.gap_type || skillGap?.gapType || adaptive?.gap_type || adaptive?.gapType || task?.skill_gap_type,
+  );
+  const adaptiveState = normalizeStatusValue(
+    adaptive?.adaptive_state || adaptive?.state || task?.adaptive_state || task?.skill_request_state,
+  );
+  const hasSkillGap = Boolean(
+    skillGap?.has_gap === true
+      || task?.has_skill_gap === true
+      || gapType
+      || ['skill_gap_detected', 'waiting_swarm_decision', 'waiting_skill_acquisition'].includes(adaptiveState),
+  );
+  const approvalRequired = Boolean(skillGap?.required_approval || adaptive?.approval_required || task?.skill_approval_required);
+  const resumeAllowed = adaptive?.resume_allowed ?? task?.resume_allowed;
+  const waitingSkill = ['waiting_swarm_decision', 'waiting_skill_acquisition', 'skill_gap_detected'].includes(adaptiveState);
+  return {
+    hasSkillGap,
+    gapType,
+    adaptiveState,
+    approvalRequired,
+    waitingSkill,
+    resumeBlocked: waitingSkill || resumeAllowed === false,
+  };
 }
 
 
@@ -3598,6 +3635,10 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.45, mt: 0.75 }}>
                   {vm.skillName && <Chip size="small" label={`skill:${vm.skillName}`} sx={{ height: 20, maxWidth: 170, fontSize: '0.62rem', color: c.accent.primary, bgcolor: `${c.accent.primary}12`, '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' } }} />}
+                  {vm.adaptiveSkillState.hasSkillGap && <Chip size="small" label={vm.adaptiveSkillState.gapType ? `skill gap:${vm.adaptiveSkillState.gapType}` : 'skill gap'} sx={{ height: 20, maxWidth: 170, fontSize: '0.62rem', color: c.status.warning, bgcolor: `${c.status.warning}12`, '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' } }} />}
+                  {vm.adaptiveSkillState.waitingSkill && <Chip size="small" label={vm.adaptiveSkillState.adaptiveState ? `waiting skill:${vm.adaptiveSkillState.adaptiveState}` : 'waiting skill'} sx={{ height: 20, maxWidth: 190, fontSize: '0.62rem', color: c.status.warning, bgcolor: `${c.status.warning}12`, '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' } }} />}
+                  {vm.adaptiveSkillState.approvalRequired && <Chip size="small" label="approval required" sx={{ height: 20, fontSize: '0.62rem', color: c.status.warning, bgcolor: `${c.status.warning}12` }} />}
+                  {vm.adaptiveSkillState.resumeBlocked && <Chip size="small" label="resume blocked" sx={{ height: 20, fontSize: '0.62rem', color: c.status.error, bgcolor: `${c.status.error}10` }} />}
                   {vm.mode && <Chip size="small" label={`mode:${vm.mode}`} sx={{ height: 20, maxWidth: 150, fontSize: '0.62rem' }} />}
                   {vm.model && <Chip size="small" label={`model:${vm.model}`} sx={{ height: 20, maxWidth: 170, fontSize: '0.62rem', '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' } }} />}
                   {durationLabel && <Chip size="small" label={`time:${durationLabel}`} sx={{ height: 20, fontSize: '0.62rem', color: c.text.tertiary }} />}

@@ -16,6 +16,7 @@ from backend.apps.swarms.process_trace_item import (
     process_trace_item_from_timeline_event,
 )
 from backend.apps.swarms.process_trace_subsystems import apply_subsystem_identity_to_trace_item
+from backend.apps.swarms.miniagent_skill_adaptive import build_adaptive_skill_trace_items
 
 
 def redact_process_trace_source(source: Any) -> Any:
@@ -46,6 +47,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "skill_assignment_trace"
     if data.get("handoff_kind") == "miniagent_handoff":
         return "miniagent_handoff"
+    if data.get("adaptive_kind") in {"miniagent_skill_gap", "miniagent_adaptive_state", "swarm_skill_resolution_decision"}:
+        return "miniagent_skill_adaptive"
     if data.get("audit_kind") == "swarm_final_audit":
         return "swarm_final_audit"
     if data.get("metric_kind") == "miniagent_task_runtime_metric":
@@ -540,6 +543,26 @@ def _evidence_item(data: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _adaptive_skill_item(data: dict[str, Any]) -> dict[str, Any]:
+    adaptive_kind = data.get("adaptive_kind")
+    kwargs: dict[str, Any] = {}
+    if adaptive_kind == "miniagent_skill_gap":
+        kwargs["skill_gap"] = data
+    elif adaptive_kind == "miniagent_adaptive_state":
+        kwargs["adaptive_state"] = data
+    elif adaptive_kind == "swarm_skill_resolution_decision":
+        kwargs["decision"] = data
+    items = build_adaptive_skill_trace_items(**kwargs)
+    return items[0] if items else build_process_trace_item(
+        kind="skill",
+        subsystem="SkillCore",
+        title="Adaptive skill state",
+        summary="Adaptive MiniAgent skill contract recorded.",
+        status="warning",
+        details={"adaptive_kind": adaptive_kind},
+    )
+
+
 def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
     source_kind = normalize_process_trace_source_kind(source)
     data = redact_process_trace_source(source)
@@ -568,6 +591,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = _skill_item(data)
     elif source_kind == "miniagent_handoff":
         item = _handoff_item(data)
+    elif source_kind == "miniagent_skill_adaptive":
+        item = _adaptive_skill_item(data)
     elif source_kind == "swarm_final_audit":
         item = _audit_item(data)
     elif source_kind == "miniagent_task_runtime_metric":
