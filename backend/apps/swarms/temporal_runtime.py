@@ -219,6 +219,134 @@ class TemporalTraceSource:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class TemporalLogPolicy:
+    policy_id: str = ""
+    timestamp_format: str = "%Y%m%dT%H%M%SZ"
+    retention_count: int = 10
+    max_log_size_bytes: int = 5_000_000
+    local_path_label: str = "runtime/logs"
+    redaction_enabled: bool = True
+    extract_evidence: bool = False
+    include_chain_of_thought: bool = False
+    warnings: list[str] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TemporalLogFileCandidate:
+    candidate_id: str = ""
+    filename: str = ""
+    timestamp: str | None = None
+    local_path_label: str = ""
+    should_rotate: bool = False
+    rotation_reason: str = "none"
+    retention_count: int = 10
+    max_log_size_bytes: int = 5_000_000
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TemporalTimelineOrderingDecision:
+    decision_id: str = ""
+    order_key: str = "created_at"
+    order_timestamp: str | None = None
+    reason: str = "created_at_fallback"
+    last_message_at: str | None = None
+    last_activity_at: str | None = None
+    metadata_updated_at: str | None = None
+    created_at: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TemporalTimezonePolicy:
+    policy_id: str = ""
+    timezone: str = DEFAULT_TIMEZONE
+    locale: str = "en-US"
+    hour_cycle: str = "24h"
+    utc_debug_mode: bool = False
+    storage_timezone: str = "UTC"
+    local_time_label: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TemporalTitleFallback:
+    title: str = ""
+    title_status: str = "fallback"
+    reason: str = "title_generation_failed"
+    allow_regenerate: bool = True
+    timestamp: str | None = None
+    timezone: str = DEFAULT_TIMEZONE
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TemporalRetryBackoffState:
+    retry_id: str = ""
+    attempt_count: int = 0
+    first_attempt_at: str | None = None
+    last_attempt_at: str | None = None
+    next_retry_at: str | None = None
+    backoff_ms: int = 0
+    max_retry_deadline: str | None = None
+    total_retry_duration_ms: int | None = None
+    should_retry: bool = False
+    blocked_reason: str = ""
+    warnings: list[str] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TemporalDurationAggregation:
+    aggregation_id: str = ""
+    total_agent_run_time_ms: int = 0
+    model_duration_ms: int = 0
+    tool_duration_ms: int = 0
+    command_duration_ms: int = 0
+    qa_duration_ms: int = 0
+    idle_time_ms: int = 0
+    user_gap_time_ms: int = 0
+    assistant_gap_time_ms: int = 0
+    longest_blocked_state_ms: int = 0
+    evidence_refs: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TemporalEvidenceRecord:
+    evidence_id: str = ""
+    produced_at: str | None = None
+    observed_at: str | None = None
+    ingested_at: str | None = None
+    source_updated_at: str | None = None
+    validation_at: str | None = None
+    expires_at: str | None = None
+    freshness_status: str = "unknown"
+    evidence_stale: bool = False
+    warnings: list[str] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TemporalMigrationBackfillPlan:
+    plan_id: str = ""
+    target_id: str = ""
+    inferred_created_at: str | None = None
+    timestamp_status: str = "unknown"
+    migration_source: str = "unknown"
+    confidence: float = 0.0
+    stable_order_key: str = ""
+    warnings: list[str] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -576,6 +704,374 @@ def build_temporal_trace_source(*, session: SessionTemporalState | dict[str, Any
     )
     return dump_temporal_trace_source(trace)
 
+
+
+def _dedupe_text(values: Any) -> list[str]:
+    items = values if isinstance(values, list) else [values]
+    output: list[str] = []
+    for item in items:
+        text = str(item or "").strip()
+        if text and text not in output:
+            output.append(text)
+    return output
+
+
+def _add_ms(target: dict[str, int], key: str, value: Any) -> None:
+    parsed = _int(value)
+    if parsed is not None:
+        target[key] = target.get(key, 0) + parsed
+
+
+def _format_with_policy(timestamp: str | datetime | None, policy: TemporalTimezonePolicy | dict[str, Any] | None = None) -> str:
+    data = _dump(policy)
+    tz_name = data.get("timezone") or DEFAULT_TIMEZONE
+    hour_cycle = data.get("hour_cycle") or "24h"
+    normalized = normalize_temporal_timestamp(timestamp, fallback_now=True)
+    parsed = _parse_datetime(normalized)
+    zone_name, zone = _zoneinfo(tz_name)
+    if not parsed:
+        return ""
+    fmt = "%Y-%m-%d %H:%M:%S" if hour_cycle != "12h" else "%Y-%m-%d %I:%M:%S %p"
+    label = f"{parsed.astimezone(zone).strftime(fmt)} {zone_name}"
+    if data.get("utc_debug_mode"):
+        label = f"{label} / {normalized} UTC"
+    return label
+
+
+def build_temporal_log_policy(**kwargs: Any) -> TemporalLogPolicy:
+    retention = _int(kwargs.get("retention_count"))
+    max_size = _int(kwargs.get("max_log_size_bytes"))
+    warnings: list[str] = []
+    if retention is None or retention <= 0:
+        retention = 10
+        warnings.append("retention_count_normalized")
+    if max_size is None or max_size <= 0:
+        max_size = 5_000_000
+        warnings.append("max_log_size_normalized")
+    include_cot = bool(kwargs.get("include_chain_of_thought"))
+    if include_cot:
+        warnings.append("chain_of_thought_excluded")
+    return TemporalLogPolicy(
+        policy_id=str(kwargs.get("policy_id") or uuid4().hex),
+        timestamp_format=str(kwargs.get("timestamp_format") or "%Y%m%dT%H%M%SZ"),
+        retention_count=retention,
+        max_log_size_bytes=max_size,
+        local_path_label=str(kwargs.get("local_path_label") or "runtime/logs"),
+        redaction_enabled=bool(kwargs.get("redaction_enabled", True)),
+        extract_evidence=bool(kwargs.get("extract_evidence", False)),
+        include_chain_of_thought=False,
+        warnings=list(dict.fromkeys(warnings + list(kwargs.get("warnings") or []))),
+        required_actions=list(kwargs.get("required_actions") or []),
+        metadata=sanitize_temporal_metadata(kwargs.get("metadata") or {}),
+    )
+
+
+def build_temporal_log_file_candidate(*, timestamp: str | datetime | None = None, policy: TemporalLogPolicy | dict[str, Any] | None = None, current_size_bytes: int | None = None, metadata: dict[str, Any] | None = None) -> TemporalLogFileCandidate:
+    policy_data = _dump(policy) or _dump(build_temporal_log_policy())
+    ts = normalize_temporal_timestamp(timestamp, fallback_now=True)
+    parsed = _parse_datetime(ts)
+    fmt = policy_data.get("timestamp_format") or "%Y%m%dT%H%M%SZ"
+    stamp = parsed.strftime(fmt) if parsed else "unknown"
+    filename = f"openswarm-runtime-{stamp}.log"
+    max_size = _int(policy_data.get("max_log_size_bytes")) or 5_000_000
+    size = _int(current_size_bytes) or 0
+    should_rotate = size >= max_size
+    return TemporalLogFileCandidate(
+        candidate_id=str((metadata or {}).get("candidate_id") or uuid4().hex),
+        filename=filename,
+        timestamp=ts,
+        local_path_label=policy_data.get("local_path_label") or "runtime/logs",
+        should_rotate=should_rotate,
+        rotation_reason="max_size" if should_rotate else "none",
+        retention_count=_int(policy_data.get("retention_count")) or 10,
+        max_log_size_bytes=max_size,
+        metadata=sanitize_temporal_metadata(metadata or {}),
+    )
+
+
+def build_timeline_ordering_decision(**kwargs: Any) -> TemporalTimelineOrderingDecision:
+    last_message = normalize_temporal_timestamp(kwargs.get("last_message_at"))
+    last_activity = normalize_temporal_timestamp(kwargs.get("last_activity_at"))
+    metadata_updated = normalize_temporal_timestamp(kwargs.get("metadata_updated_at"))
+    created = normalize_temporal_timestamp(kwargs.get("created_at"), fallback_now=True)
+    scope = str(kwargs.get("scope") or kwargs.get("timeline_kind") or "conversation").strip().lower()
+    if scope == "execution" and last_activity:
+        key, ts, reason = "last_activity_at", last_activity, "execution_last_activity"
+    elif last_message:
+        key, ts, reason = "last_message_at", last_message, "conversation_last_message"
+    elif scope == "metadata" and metadata_updated:
+        key, ts, reason = "metadata_updated_at", metadata_updated, "metadata_update_only"
+    else:
+        key, ts, reason = "created_at", created, "created_at_fallback"
+    return TemporalTimelineOrderingDecision(
+        decision_id=str(kwargs.get("decision_id") or uuid4().hex),
+        order_key=key,
+        order_timestamp=ts,
+        reason=reason,
+        last_message_at=last_message,
+        last_activity_at=last_activity,
+        metadata_updated_at=metadata_updated,
+        created_at=created,
+        metadata=sanitize_temporal_metadata(kwargs.get("metadata") or {}),
+    )
+
+
+def build_timezone_format_policy(**kwargs: Any) -> TemporalTimezonePolicy:
+    tz_name, _ = _zoneinfo(kwargs.get("timezone"))
+    hour_cycle = str(kwargs.get("hour_cycle") or "24h").lower()
+    if hour_cycle not in {"12h", "24h"}:
+        hour_cycle = "24h"
+    timestamp = kwargs.get("timestamp") or kwargs.get("now")
+    policy = TemporalTimezonePolicy(
+        policy_id=str(kwargs.get("policy_id") or uuid4().hex),
+        timezone=tz_name,
+        locale=str(kwargs.get("locale") or "en-US"),
+        hour_cycle=hour_cycle,
+        utc_debug_mode=bool(kwargs.get("utc_debug_mode", False)),
+        storage_timezone="UTC",
+        local_time_label="",
+        metadata=sanitize_temporal_metadata(kwargs.get("metadata") or {}),
+    )
+    return TemporalTimezonePolicy(**{**asdict(policy), "local_time_label": _format_with_policy(timestamp, policy)})
+
+
+def build_session_title_timestamp_fallback(**kwargs: Any) -> TemporalTitleFallback:
+    policy = kwargs.get("timezone_policy")
+    timestamp = normalize_temporal_timestamp(kwargs.get("timestamp") or kwargs.get("created_at"), fallback_now=True)
+    label = _format_with_policy(timestamp, policy if isinstance(policy, (TemporalTimezonePolicy, dict)) else build_timezone_format_policy(timezone=kwargs.get("timezone"), timestamp=timestamp))
+    title = str(kwargs.get("title") or f"Session {label}").strip()
+    return TemporalTitleFallback(
+        title=title,
+        title_status="fallback",
+        reason=str(kwargs.get("reason") or "title_generation_failed"),
+        allow_regenerate=bool(kwargs.get("allow_regenerate", True)),
+        timestamp=timestamp,
+        timezone=(_dump(policy).get("timezone") if isinstance(policy, (TemporalTimezonePolicy, dict)) else _zoneinfo(kwargs.get("timezone"))[0]),
+        metadata=sanitize_temporal_metadata(kwargs.get("metadata") or {}),
+    )
+
+
+def _add_ms_to_timestamp(timestamp: str | None, ms: int) -> str | None:
+    parsed = _parse_datetime(timestamp)
+    if not parsed:
+        return None
+    return (parsed.timestamp() * 1000 + ms)
+
+
+def _iso_from_epoch_ms(epoch_ms: float | int | None) -> str | None:
+    if epoch_ms is None:
+        return None
+    return datetime.fromtimestamp(float(epoch_ms) / 1000, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def build_retry_backoff_state(**kwargs: Any) -> TemporalRetryBackoffState:
+    attempt = _int(kwargs.get("attempt_count")) or 0
+    max_attempts = _int(kwargs.get("max_attempts")) or 3
+    base = _int(kwargs.get("base_backoff_ms")) or 500
+    cap = _int(kwargs.get("max_backoff_ms")) or 30_000
+    first = normalize_temporal_timestamp(kwargs.get("first_attempt_at"), fallback_now=True)
+    last = normalize_temporal_timestamp(kwargs.get("last_attempt_at")) or first
+    deadline = normalize_temporal_timestamp(kwargs.get("max_retry_deadline"))
+    now = normalize_temporal_timestamp(kwargs.get("now")) or last
+    backoff = min(cap, base * (2 ** max(0, attempt - 1))) if attempt else base
+    next_epoch = _add_ms_to_timestamp(last, backoff)
+    next_retry = _iso_from_epoch_ms(next_epoch)
+    total = temporal_duration_ms(first, last)
+    warnings: list[str] = []
+    required: list[str] = []
+    blocked = ""
+    should_retry = attempt < max_attempts
+    if deadline and next_retry and _parse_datetime(next_retry) and _parse_datetime(deadline) and _parse_datetime(next_retry) > _parse_datetime(deadline):
+        should_retry = False
+        blocked = "deadline_exceeded"
+    if attempt >= max_attempts:
+        should_retry = False
+        blocked = blocked or "max_attempts_exceeded"
+    if not should_retry:
+        warnings.append(blocked or "retry_blocked")
+        required.append("stop_retry_or_request_review")
+    return TemporalRetryBackoffState(
+        retry_id=str(kwargs.get("retry_id") or uuid4().hex),
+        attempt_count=attempt,
+        first_attempt_at=first,
+        last_attempt_at=last,
+        next_retry_at=next_retry if should_retry else None,
+        backoff_ms=backoff,
+        max_retry_deadline=deadline,
+        total_retry_duration_ms=total,
+        should_retry=should_retry,
+        blocked_reason=blocked,
+        warnings=warnings,
+        required_actions=required,
+        metadata=sanitize_temporal_metadata(kwargs.get("metadata") or {}),
+    )
+
+
+def build_duration_aggregation(records: list[dict[str, Any]] | None = None, **kwargs: Any) -> TemporalDurationAggregation:
+    buckets = {
+        "total_agent_run_time_ms": 0,
+        "model_duration_ms": 0,
+        "tool_duration_ms": 0,
+        "command_duration_ms": 0,
+        "qa_duration_ms": 0,
+        "idle_time_ms": _int(kwargs.get("idle_time_ms")) or 0,
+        "user_gap_time_ms": _int(kwargs.get("user_gap_time_ms")) or 0,
+        "assistant_gap_time_ms": _int(kwargs.get("assistant_gap_time_ms")) or 0,
+        "longest_blocked_state_ms": _int(kwargs.get("longest_blocked_state_ms")) or 0,
+    }
+    evidence_refs: list[str] = []
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        duration = _int(record.get("duration_ms")) or temporal_duration_ms(record.get("started_at"), record.get("completed_at") or record.get("finished_at")) or 0
+        kind = str(record.get("execution_kind") or record.get("scope") or record.get("kind") or "").lower()
+        _add_ms(buckets, "total_agent_run_time_ms", duration)
+        if kind in {"model", "model_call"}:
+            _add_ms(buckets, "model_duration_ms", duration)
+        elif kind in {"tool", "tool_call"}:
+            _add_ms(buckets, "tool_duration_ms", duration)
+        elif kind in {"command", "script"}:
+            _add_ms(buckets, "command_duration_ms", duration)
+        elif kind in {"qa", "validation"}:
+            _add_ms(buckets, "qa_duration_ms", duration)
+        if record.get("status") in {"blocked", "waiting_approval"}:
+            buckets["longest_blocked_state_ms"] = max(buckets["longest_blocked_state_ms"], duration)
+        for ref in record.get("evidence_refs") or []:
+            if str(ref) not in evidence_refs:
+                evidence_refs.append(str(ref))
+    warnings = [] if evidence_refs else ["duration_metrics_without_evidence_refs"]
+    return TemporalDurationAggregation(
+        aggregation_id=str(kwargs.get("aggregation_id") or uuid4().hex),
+        evidence_refs=evidence_refs,
+        warnings=warnings,
+        metadata=sanitize_temporal_metadata(kwargs.get("metadata") or {}),
+        **buckets,
+    )
+
+
+def build_temporal_evidence_record(**kwargs: Any) -> TemporalEvidenceRecord:
+    now = normalize_temporal_timestamp(kwargs.get("now"), fallback_now=True)
+    expires = normalize_temporal_timestamp(kwargs.get("expires_at"))
+    source_updated = normalize_temporal_timestamp(kwargs.get("source_updated_at"))
+    validation = normalize_temporal_timestamp(kwargs.get("validation_at"))
+    freshness = build_temporal_freshness_state(
+        created_at=kwargs.get("ingested_at") or kwargs.get("observed_at") or kwargs.get("produced_at"),
+        stale_after=expires,
+        last_verified_at=validation,
+        now=now,
+        ttl_seconds=kwargs.get("ttl_seconds"),
+    )
+    stale = freshness.status == "stale"
+    warnings = list(freshness.warnings)
+    required = list(freshness.required_actions)
+    if source_updated and validation and _parse_datetime(source_updated) and _parse_datetime(validation) and _parse_datetime(source_updated) > _parse_datetime(validation):
+        stale = True
+        warnings.append("source_updated_after_validation")
+        required.append("revalidate_temporal_evidence")
+    return TemporalEvidenceRecord(
+        evidence_id=str(kwargs.get("evidence_id") or uuid4().hex),
+        produced_at=normalize_temporal_timestamp(kwargs.get("produced_at")),
+        observed_at=normalize_temporal_timestamp(kwargs.get("observed_at")),
+        ingested_at=normalize_temporal_timestamp(kwargs.get("ingested_at"), fallback_now=True),
+        source_updated_at=source_updated,
+        validation_at=validation,
+        expires_at=expires,
+        freshness_status="stale" if stale else freshness.status,
+        evidence_stale=stale,
+        warnings=list(dict.fromkeys(warnings)),
+        required_actions=list(dict.fromkeys(required)),
+        metadata=sanitize_temporal_metadata(kwargs.get("metadata") or {}),
+    )
+
+
+def build_temporal_migration_backfill_plan(**kwargs: Any) -> TemporalMigrationBackfillPlan:
+    source = str(kwargs.get("migration_source") or "unknown")
+    target_id = str(kwargs.get("target_id") or kwargs.get("id") or "")
+    candidates = [kwargs.get("created_at"), kwargs.get("timestamp"), kwargs.get("started_at"), kwargs.get("updated_at")]
+    inferred = next((normalize_temporal_timestamp(value) for value in candidates if normalize_temporal_timestamp(value)), None)
+    warnings: list[str] = []
+    required: list[str] = []
+    if inferred:
+        status = "inferred"
+        confidence = float(kwargs.get("confidence") if kwargs.get("confidence") is not None else 0.75)
+    else:
+        status = "unknown"
+        confidence = 0.0
+        warnings.append("created_at_source_missing")
+        required.append("manual_timestamp_review")
+    stable_order_key = str(kwargs.get("stable_order_key") or f"{inferred or 'unknown'}:{target_id or uuid4().hex}")
+    return TemporalMigrationBackfillPlan(
+        plan_id=str(kwargs.get("plan_id") or uuid4().hex),
+        target_id=target_id,
+        inferred_created_at=inferred,
+        timestamp_status=status,
+        migration_source=source if source else "unknown",
+        confidence=max(0.0, min(1.0, confidence)),
+        stable_order_key=stable_order_key,
+        warnings=warnings,
+        required_actions=required,
+        metadata=sanitize_temporal_metadata(kwargs.get("metadata") or {}),
+    )
+
+
+def build_temporal_runtime_trace_source(*, log_policy: TemporalLogPolicy | dict[str, Any] | None = None, log_file: TemporalLogFileCandidate | dict[str, Any] | None = None, ordering: TemporalTimelineOrderingDecision | dict[str, Any] | None = None, timezone_policy: TemporalTimezonePolicy | dict[str, Any] | None = None, title_fallback: TemporalTitleFallback | dict[str, Any] | None = None, retry_backoff: TemporalRetryBackoffState | dict[str, Any] | None = None, duration_aggregation: TemporalDurationAggregation | dict[str, Any] | None = None, temporal_evidence: TemporalEvidenceRecord | dict[str, Any] | None = None, migration_backfill: TemporalMigrationBackfillPlan | dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
+    source = build_temporal_trace_source(**kwargs)
+    extensions = {
+        "log_policy": _dump(log_policy),
+        "log_file": _dump(log_file),
+        "ordering": _dump(ordering),
+        "timezone_policy": _dump(timezone_policy),
+        "title_fallback": _dump(title_fallback),
+        "retry_backoff": _dump(retry_backoff),
+        "duration_aggregation": _dump(duration_aggregation),
+        "temporal_evidence": _dump(temporal_evidence),
+        "migration_backfill": _dump(migration_backfill),
+    }
+    warnings = list(source.get("warnings") or [])
+    required = list(source.get("required_actions") or [])
+    for item in extensions.values():
+        warnings.extend(item.get("warnings") or [])
+        required.extend(item.get("required_actions") or [])
+    source.update({key: value for key, value in extensions.items() if value})
+    source["warnings"] = list(dict.fromkeys(warnings))
+    source["required_actions"] = list(dict.fromkeys(required))
+    return sanitize_temporal_metadata(source)
+
+
+def dump_temporal_log_policy(value: TemporalLogPolicy | dict[str, Any]) -> dict[str, Any]:
+    return _dump(value)
+
+
+def dump_temporal_log_file_candidate(value: TemporalLogFileCandidate | dict[str, Any]) -> dict[str, Any]:
+    return _dump(value)
+
+
+def dump_timeline_ordering_decision(value: TemporalTimelineOrderingDecision | dict[str, Any]) -> dict[str, Any]:
+    return _dump(value)
+
+
+def dump_timezone_format_policy(value: TemporalTimezonePolicy | dict[str, Any]) -> dict[str, Any]:
+    return _dump(value)
+
+
+def dump_session_title_timestamp_fallback(value: TemporalTitleFallback | dict[str, Any]) -> dict[str, Any]:
+    return _dump(value)
+
+
+def dump_retry_backoff_state(value: TemporalRetryBackoffState | dict[str, Any]) -> dict[str, Any]:
+    return _dump(value)
+
+
+def dump_duration_aggregation(value: TemporalDurationAggregation | dict[str, Any]) -> dict[str, Any]:
+    return _dump(value)
+
+
+def dump_temporal_evidence_record(value: TemporalEvidenceRecord | dict[str, Any]) -> dict[str, Any]:
+    return _dump(value)
+
+
+def dump_temporal_migration_backfill_plan(value: TemporalMigrationBackfillPlan | dict[str, Any]) -> dict[str, Any]:
+    return _dump(value)
 
 def dump_temporal_core_record(value: TemporalCoreRecord | dict[str, Any]) -> dict[str, Any]:
     return _dump(value)
