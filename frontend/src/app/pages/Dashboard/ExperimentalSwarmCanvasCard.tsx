@@ -688,6 +688,276 @@ function getClaimGuardStatus(finalResult: any): string {
   return normalizeStatusValue(finalResult?.claim_guard?.status);
 }
 
+
+type SwarmFinalAuditStatus = 'ready' | 'passed' | 'warning' | 'blocked' | 'failed' | 'unknown';
+
+type SwarmFinalAuditModel = {
+  auditStatus: SwarmFinalAuditStatus;
+  canDeclareComplete: boolean;
+  blockers: string[];
+  warnings: string[];
+  summary: string;
+  counts: {
+    tasks: number;
+    completedTasks: number;
+    failedTasks: number;
+    blockedTasks: number;
+    approvals: number;
+    artifacts: number;
+    evidence: number;
+    events: number;
+    traceItems: number;
+  };
+  validationStatus: string;
+  claimGuardStatus: string;
+  missingEvidence: boolean;
+  handoffCount: number;
+  failedValidation: boolean;
+  pendingApprovals: boolean;
+  criticalBlockers: boolean;
+  gateLabel: string;
+  disabledReason?: string;
+  integratorSummary: {
+    completed: string;
+    evidence: string;
+    missing: string;
+    blockers: string;
+    handoffValidation: string;
+    reviewAction: string;
+  };
+};
+
+function countRefsFrom(value: any, keys: string[]): number {
+  if (!value || typeof value !== 'object') return 0;
+  let total = 0;
+  for (const key of keys) {
+    const raw = value[key];
+    if (Array.isArray(raw)) total += raw.filter(Boolean).length;
+    else if (raw) total += 1;
+  }
+  return total;
+}
+
+function getValidationStatus(finalResult: any, tasks: any[]): string {
+  const direct = normalizeStatusValue(
+    finalResult?.validation_status
+      || finalResult?.validationStatus
+      || finalResult?.validation?.status
+      || finalResult?.review_result?.status
+      || finalResult?.refinement_execution_result?.validation_status,
+  );
+  if (direct) return direct;
+  const taskValidation = tasks
+    .map((task) => normalizeStatusValue(task?.validation_status || task?.validation?.status || task?.validation_result?.status))
+    .find(Boolean);
+  return taskValidation || 'unknown';
+}
+
+function isCompletionLikeStatus(status: string): boolean {
+  return ['completed', 'complete', 'verified', 'passed', 'done', 'success', 'completed_with_output', 'completed_without_output'].includes(status);
+}
+
+function buildSwarmFinalAuditModel(params: {
+  tasks: any[];
+  approvals: any[];
+  artifacts: any[];
+  finalEvidence: any[];
+  events: any[];
+  finalResult: any;
+  swarmProcessTraceItems?: ProcessTraceItem[];
+  implementationStatus: string;
+  implementationVisualState: ImplementationVisualState;
+  activeSwarmId: string | null;
+  activeSwarmMode: SwarmMode;
+  activeSwarmModel: string | null;
+}): SwarmFinalAuditModel {
+  const taskStatuses = params.tasks.map((task) => normalizeStatusValue(task?.status || task?.state || 'planned'));
+  const completedTasks = taskStatuses.filter((status) => ['completed', 'done', 'verified', 'passed'].includes(status)).length;
+  const failedTasks = taskStatuses.filter((status) => ['failed', 'error', 'cancelled'].includes(status)).length;
+  const blockedTasks = taskStatuses.filter((status) => ['blocked', 'needs_review', 'needs_context', 'needs_skill'].includes(status)).length;
+  const pendingApprovals = params.approvals.some((approval) => ['pending', 'requested', 'requires_approval', 'waiting_approval'].includes(normalizeStatusValue(approval?.status || 'pending')));
+  const validationStatus = getValidationStatus(params.finalResult, params.tasks);
+  const claimGuardStatus = getClaimGuardStatus(params.finalResult) || 'not reported';
+  const failedValidation = ['failed', 'error', 'rejected', 'invalid'].includes(validationStatus);
+  const validationUnknownWhileComplete = validationStatus === 'unknown' && isCompletionLikeStatus(params.implementationStatus);
+  const implementationBlocked = ['failed', 'bridge_failed', 'missing_flags'].includes(params.implementationVisualState);
+  const finalStatus = normalizeStatusValue(params.finalResult?.status || params.implementationStatus);
+  const looksComplete = isCompletionLikeStatus(finalStatus) || isCompletionLikeStatus(params.implementationStatus) || ['verified', 'completed_with_output', 'completed_without_output'].includes(params.implementationVisualState);
+  const evidenceRefsFromTasks = params.tasks.reduce((sum, task) => sum + countRefsFrom(task, ['evidence_refs', 'evidenceRefs', 'evidence']), 0);
+  const artifactRefsFromTasks = params.tasks.reduce((sum, task) => sum + countRefsFrom(task, ['artifact_refs', 'artifactRefs', 'artifacts']), 0);
+  const finalResultEvidenceRefs = countRefsFrom(params.finalResult, ['evidence_refs', 'evidenceRefs', 'final_evidence', 'finalEvidence', 'sources', 'citations']);
+  const finalResultArtifactRefs = countRefsFrom(params.finalResult, ['artifact_refs', 'artifactRefs', 'artifacts', 'output_refs', 'outputRefs']);
+  const evidenceCount = params.finalEvidence.length + evidenceRefsFromTasks + finalResultEvidenceRefs;
+  const artifactCount = params.artifacts.length + artifactRefsFromTasks + finalResultArtifactRefs;
+  const missingEvidence = looksComplete && evidenceCount === 0 && artifactCount === 0;
+  const handoffCount = params.tasks.filter((task) => (
+    task?.handoff || task?.handoff_summary || task?.completed_work_summary || task?.handoff_kind
+  )).length + (params.swarmProcessTraceItems || []).filter((item) => String(item.kind || '').toLowerCase() === 'handoff' || String(item.subsystem || '').toLowerCase() === 'handoffcore').length;
+
+  const blockers: string[] = [];
+  const warnings: string[] = [];
+  if (pendingApprovals) blockers.push(`${params.approvals.length} approval${params.approvals.length === 1 ? '' : 's'} pending`);
+  if (failedTasks) blockers.push(`${failedTasks} task${failedTasks === 1 ? '' : 's'} failed`);
+  if (blockedTasks) blockers.push(`${blockedTasks} task${blockedTasks === 1 ? '' : 's'} blocked or needs review/context/skill`);
+  if (implementationBlocked) blockers.push(`implementation state is ${params.implementationVisualState}`);
+  if (failedValidation) blockers.push(`validation status is ${validationStatus}`);
+  if (missingEvidence) blockers.push('completed state has no reported evidence or artifacts');
+
+  if (!params.activeSwarmId) warnings.push('no active swarm id');
+  if (params.tasks.length === 0) warnings.push('tasks not reported');
+  if (params.events.length === 0) warnings.push('timeline events not reported');
+  if (validationStatus === 'unknown') warnings.push('validation status not reported');
+  if (validationUnknownWhileComplete) warnings.push('completed state has no explicit validation result');
+  if (claimGuardStatus !== 'not reported' && claimGuardStatus !== 'verified') {
+    warnings.push(`claim guard status is ${claimGuardStatus}`);
+  }
+  if (claimGuardStatus === 'not reported' && looksComplete) warnings.push('claim guard not reported for completed-looking state');
+
+  const hasEnoughEvidence = evidenceCount > 0 || artifactCount > 0;
+  const canDeclareComplete = blockers.length === 0
+    && hasEnoughEvidence
+    && (!claimGuardStatus || claimGuardStatus === 'not reported' || claimGuardStatus === 'verified')
+    && !failedValidation
+    && !validationUnknownWhileComplete;
+
+  let auditStatus: SwarmFinalAuditStatus = 'unknown';
+  if (failedValidation || failedTasks || params.implementationVisualState === 'failed' || params.implementationVisualState === 'bridge_failed') auditStatus = 'failed';
+  else if (blockers.length > 0) auditStatus = 'blocked';
+  else if (canDeclareComplete) auditStatus = 'passed';
+  else if (warnings.length > 0 || !hasEnoughEvidence) auditStatus = looksComplete ? 'warning' : 'ready';
+  else auditStatus = 'ready';
+
+  const gateLabel = canDeclareComplete
+    ? 'Completion verified'
+    : blockers.length > 0
+      ? 'Completion blocked'
+      : 'Ready for final review';
+  const summary = canDeclareComplete
+    ? 'Final audit passed using reported state.'
+    : blockers.length > 0
+      ? `Completion blocked by ${blockers.length} real condition${blockers.length === 1 ? '' : 's'}.`
+      : 'Final audit is prepared, but completion is not verified yet.';
+
+  return {
+    auditStatus,
+    canDeclareComplete,
+    blockers,
+    warnings,
+    summary,
+    counts: {
+      tasks: params.tasks.length,
+      completedTasks,
+      failedTasks,
+      blockedTasks,
+      approvals: params.approvals.length,
+      artifacts: artifactCount,
+      evidence: evidenceCount,
+      events: params.events.length,
+      traceItems: params.swarmProcessTraceItems?.length || 0,
+    },
+    validationStatus,
+    claimGuardStatus,
+    missingEvidence,
+    handoffCount,
+    failedValidation,
+    pendingApprovals,
+    criticalBlockers: blockers.length > 0,
+    gateLabel,
+    disabledReason: params.activeSwarmId ? undefined : 'Final audit waits for a persisted Swarm id.',
+    integratorSummary: {
+      completed: params.tasks.length ? `${completedTasks}/${params.tasks.length} tasks reported completed.` : 'not available',
+      evidence: hasEnoughEvidence ? `${evidenceCount} evidence refs / ${artifactCount} artifact refs.` : 'not reported',
+      missing: warnings.length ? warnings.slice(0, 3).join('; ') : 'nothing reported missing',
+      blockers: blockers.length ? blockers.slice(0, 3).join('; ') : 'no blockers reported',
+      handoffValidation: `${handoffCount ? `${handoffCount} handoff${handoffCount === 1 ? '' : 's'}` : 'handoff not reported'} / validation: ${validationStatus}`,
+      reviewAction: canDeclareComplete ? 'User can review the final result and linked evidence.' : 'User should review blockers, warnings, evidence, and validation before accepting completion.',
+    },
+  };
+}
+
+function finalAuditStatusColor(status: SwarmFinalAuditStatus, c: any): string {
+  if (status === 'passed') return c.status.success;
+  if (status === 'failed') return c.status.error;
+  if (status === 'blocked' || status === 'warning') return c.status.warning;
+  if (status === 'ready') return c.status.info;
+  return c.text.tertiary;
+}
+
+function SwarmFinalAuditPanel({ model, compact = false }: { model: SwarmFinalAuditModel; compact?: boolean }) {
+  const c = useClaudeTokens();
+  const [open, setOpen] = useState(false);
+  const tone = finalAuditStatusColor(model.auditStatus, c);
+  const countChips = [
+    `tasks:${model.counts.completedTasks}/${model.counts.tasks}`,
+    `approvals:${model.counts.approvals}`,
+    `artifacts:${model.counts.artifacts}`,
+    `evidence:${model.counts.evidence}`,
+    `events:${model.counts.events}`,
+    `trace:${model.counts.traceItems}`,
+    `handoffs:${model.handoffCount}`,
+  ];
+  const rows = [
+    ['What was done', model.integratorSummary.completed],
+    ['Evidence', model.integratorSummary.evidence],
+    ['Missing', model.integratorSummary.missing],
+    ['Blocks completion', model.integratorSummary.blockers],
+    ['Handoff / validation', model.integratorSummary.handoffValidation],
+    ['User review', model.integratorSummary.reviewAction],
+  ];
+
+  return (
+    <Box sx={{ mb: compact ? 1 : 1.25, border: `1px solid ${tone}44`, borderRadius: 1.5, bgcolor: `${tone}0D`, overflow: 'hidden' }}>
+      <Box onClick={() => setOpen((value) => !value)} sx={{ display: 'flex', alignItems: 'center', gap: 0.65, px: 1, py: 0.65, cursor: 'pointer' }}>
+        <Chip size="small" label={humanizeStatus(model.auditStatus, 'unknown')} sx={{ height: 21, color: tone, bgcolor: `${tone}18`, border: `1px solid ${tone}55`, fontSize: '0.64rem', fontWeight: 800 }} />
+        <Typography sx={{ color: c.text.primary, fontSize: '0.74rem', fontWeight: 800, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          Final Audit / {model.gateLabel}
+        </Typography>
+        <Chip size="small" label={model.canDeclareComplete ? 'can declare complete' : 'cannot declare complete'} sx={{ height: 20, color: model.canDeclareComplete ? c.status.success : c.status.warning, bgcolor: c.bg.secondary, fontSize: '0.61rem' }} />
+        <ExpandMoreIcon sx={{ fontSize: 15, color: c.text.tertiary, transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 120ms ease' }} />
+      </Box>
+      <Box sx={{ px: 1, pb: open ? 0.35 : 0.8 }}>
+        <Typography sx={{ color: c.text.secondary, fontSize: '0.68rem', lineHeight: 1.35, overflowWrap: 'anywhere' }}>
+          {model.summary}{model.disabledReason ? ` ${model.disabledReason}` : ''}
+        </Typography>
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.4, mt: 0.6 }}>
+          {countChips.map((chip) => <Chip key={chip} size="small" label={chip} sx={{ height: 19, maxWidth: 170, fontSize: '0.6rem', color: c.text.tertiary, bgcolor: c.bg.secondary }} />)}
+        </Box>
+      </Box>
+      <Collapse in={open} timeout={160}>
+        <Box sx={{ px: 1, pb: 0.9, display: 'flex', flexDirection: 'column', gap: 0.65 }}>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.45 }}>
+            <Chip size="small" label={`validation:${model.validationStatus}`} sx={{ height: 20, fontSize: '0.61rem', color: model.failedValidation ? c.status.error : c.text.secondary, bgcolor: c.bg.secondary }} />
+            <Chip size="small" label={`claim_guard:${model.claimGuardStatus}`} sx={{ height: 20, fontSize: '0.61rem', color: model.claimGuardStatus === 'verified' ? c.status.success : c.text.secondary, bgcolor: c.bg.secondary }} />
+            {model.missingEvidence && <Chip size="small" label="missing evidence" sx={{ height: 20, fontSize: '0.61rem', color: c.status.warning, bgcolor: `${c.status.warning}12` }} />}
+          </Box>
+          {model.blockers.length > 0 && (
+            <Box>
+              <Typography sx={{ color: c.status.warning, fontSize: '0.62rem', fontWeight: 800, textTransform: 'uppercase', mb: 0.35 }}>Blockers</Typography>
+              {model.blockers.slice(0, 5).map((item) => <Typography key={item} sx={{ color: c.text.secondary, fontSize: '0.66rem', lineHeight: 1.35 }}>- {item}</Typography>)}
+              {model.blockers.length > 5 && <Typography sx={{ color: c.text.ghost, fontSize: '0.62rem' }}>+{model.blockers.length - 5} more</Typography>}
+            </Box>
+          )}
+          {model.warnings.length > 0 && (
+            <Box>
+              <Typography sx={{ color: c.text.ghost, fontSize: '0.62rem', fontWeight: 800, textTransform: 'uppercase', mb: 0.35 }}>Warnings</Typography>
+              {model.warnings.slice(0, 5).map((item) => <Typography key={item} sx={{ color: c.text.tertiary, fontSize: '0.66rem', lineHeight: 1.35 }}>- {item}</Typography>)}
+              {model.warnings.length > 5 && <Typography sx={{ color: c.text.ghost, fontSize: '0.62rem' }}>+{model.warnings.length - 5} more</Typography>}
+            </Box>
+          )}
+          <Box sx={{ display: 'grid', gap: 0.45 }}>
+            {rows.map(([label, value]) => (
+              <Box key={label} sx={{ display: 'grid', gridTemplateColumns: '106px minmax(0, 1fr)', gap: 0.8 }}>
+                <Typography sx={{ color: c.text.ghost, fontSize: '0.62rem', fontWeight: 800 }}>{label}</Typography>
+                <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', overflowWrap: 'anywhere' }}>{value}</Typography>
+              </Box>
+            ))}
+          </Box>
+        </Box>
+      </Collapse>
+    </Box>
+  );
+}
+
 function getImplementationStatus(swarm: any): string {
   return normalizeStatusValue(swarm?.implementation_state?.runner_status || swarm?.implementation?.status || swarm?.status);
 }
@@ -994,6 +1264,7 @@ function buildSwarmCardProcessTraceItems(params: {
   finalEvidence: any[];
   events: any[];
   finalResult: any;
+  finalAuditModel?: SwarmFinalAuditModel | null;
   chatMessageCount: number;
 }): ProcessTraceItem[] {
   const status: ProcessTraceItem['status'] = params.actionLoading
@@ -1131,7 +1402,49 @@ function buildSwarmCardProcessTraceItems(params: {
     });
   }
 
-  return items.slice(0, 4);
+  if (params.finalAuditModel && (params.activeSwarmId || params.finalAuditModel.counts.tasks || params.finalAuditModel.counts.events || params.finalAuditModel.counts.artifacts || params.finalAuditModel.counts.evidence || params.finalAuditModel.counts.approvals)) {
+    const audit = params.finalAuditModel;
+    const auditTraceStatus: ProcessTraceItem['status'] = audit.auditStatus === 'passed'
+      ? 'completed'
+      : audit.auditStatus === 'failed'
+        ? 'failed'
+        : audit.auditStatus === 'blocked'
+          ? 'blocked'
+          : audit.auditStatus === 'warning'
+            ? 'warning'
+            : 'planned';
+    items.push({
+      trace_id: `swarm-final-audit-${params.activeSwarmId || 'new'}`,
+      kind: 'review',
+      subsystem: 'ReviewCore',
+      title: audit.canDeclareComplete ? 'Final audit verified' : 'Final audit',
+      summary: audit.summary,
+      status: auditTraceStatus,
+      icon_id: 'ReviewCore',
+      badge: audit.gateLabel,
+      related_task_id: params.activeSwarmId || '',
+      evidence_refs: [],
+      artifact_refs: [],
+      details: {
+        can_declare_complete: audit.canDeclareComplete,
+        blockers: audit.blockers.slice(0, 5),
+        warnings: audit.warnings.slice(0, 5),
+        tasks: audit.counts.tasks,
+        completed_tasks: audit.counts.completedTasks,
+        failed_tasks: audit.counts.failedTasks,
+        blocked_tasks: audit.counts.blockedTasks,
+        approvals: audit.counts.approvals,
+        artifacts: audit.counts.artifacts,
+        evidence: audit.counts.evidence,
+        events: audit.counts.events,
+        handoff_count: audit.handoffCount,
+        validation_status: audit.validationStatus,
+        claim_guard_status: audit.claimGuardStatus,
+      },
+    });
+  }
+
+  return items.slice(0, 6);
 }
 
 function getImplementationVisualState(params: {
@@ -1245,6 +1558,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     events: false,
     artifacts: false,
     evidence: false,
+    finalAudit: true,
     finalResult: true,
   });
 
@@ -1472,6 +1786,34 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const chatMessages = hasLoadedActiveSwarm
     ? (swarmState.messages || []).filter((message: any) => getVisibleSwarmMessageText(getSwarmMessageText(message)))
     : [];
+  const finalAuditModel = useMemo(
+    () => buildSwarmFinalAuditModel({
+      tasks,
+      approvals,
+      artifacts,
+      finalEvidence,
+      events,
+      finalResult,
+      implementationStatus,
+      implementationVisualState,
+      activeSwarmId,
+      activeSwarmMode,
+      activeSwarmModel,
+    }),
+    [
+      tasks,
+      approvals,
+      artifacts,
+      finalEvidence,
+      events,
+      finalResult,
+      implementationStatus,
+      implementationVisualState,
+      activeSwarmId,
+      activeSwarmMode,
+      activeSwarmModel,
+    ],
+  );
   const swarmProcessTraceItems = useMemo(
     () => buildSwarmCardProcessTraceItems({
       activeSwarm,
@@ -1492,6 +1834,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       finalEvidence,
       events,
       finalResult,
+      finalAuditModel,
       chatMessageCount: chatMessages.length,
     }),
     [
@@ -1513,6 +1856,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       finalEvidence,
       events,
       finalResult,
+      finalAuditModel,
       chatMessages.length,
     ],
   );
@@ -3457,6 +3801,11 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               )}
             </Box>
           )))}
+
+          {renderPanelHeader('finalAudit', 'Final Audit')}
+          {openPanelSections.finalAudit && (
+            <SwarmFinalAuditPanel model={finalAuditModel} compact />
+          )}
 
           {renderPanelHeader('finalResult', 'Final result')}
           {openPanelSections.finalResult && (
