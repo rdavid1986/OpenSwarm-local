@@ -63,6 +63,17 @@ def normalize_process_trace_source_kind(source: Any) -> str:
     if data.get("audit_kind") == "swarm_final_audit":
         return "swarm_final_audit"
     if (
+        data.get("source_kind") == "project_rules_import"
+        or data.get("adapter_kind") == "rule_import_source_adapter"
+        or data.get("candidate_kind") == "rule_import_candidate"
+        or data.get("diagnostic_kind") == "rule_import_diagnostic_report"
+        or data.get("conflict_kind") == "rule_import_conflict_report"
+        or data.get("precedence_kind") == "rule_scope_precedence_decision"
+        or data.get("gate_kind") == "rule_import_injection_gate"
+        or data.get("import_kind") == "project_rules_import"
+    ):
+        return "project_rules_import"
+    if (
         data.get("source_kind") == "import_compatibility_runtime"
         or data.get("detection_kind") == "import_source_detection"
         or data.get("candidate_kind") == "import_candidate_envelope"
@@ -182,6 +193,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "context_packet"
     if explicit_source == "context_compaction":
         return "context_compaction"
+    if explicit_source == "project_rules_import":
+        return "project_rules_import"
     if explicit_source == "project_bootstrap_profile":
         return "project_bootstrap_profile"
     if explicit_source == "project_instructions_bootstrap":
@@ -785,6 +798,89 @@ def _adaptive_skill_item(data: dict[str, Any]) -> dict[str, Any]:
 
 
 
+
+
+
+def build_project_rules_import_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    contract_kind = _first_text(
+        data,
+        "adapter_kind",
+        "candidate_kind",
+        "diagnostic_kind",
+        "conflict_kind",
+        "precedence_kind",
+        "gate_kind",
+        "import_kind",
+        default="project_rules_import",
+    )
+    adapter = data.get("adapter") if isinstance(data.get("adapter"), dict) else {}
+    candidate = data.get("candidate") if isinstance(data.get("candidate"), dict) else {}
+    diagnostics = data.get("diagnostics") if isinstance(data.get("diagnostics"), dict) else {}
+    conflicts = data.get("conflicts") if isinstance(data.get("conflicts"), dict) else {}
+    precedence = data.get("precedence") if isinstance(data.get("precedence"), dict) else {}
+    gate = data.get("injection_gate") if isinstance(data.get("injection_gate"), dict) else {}
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+
+    status_value = data.get("status") or gate.get("status") or diagnostics.get("status") or conflicts.get("status") or "review_required"
+    blocked = status_value == "blocked" or diagnostics.get("status") == "blocked" or conflicts.get("status") == "blocked"
+    status = "blocked" if blocked else "warning" if required_actions or warnings or status_value in {"needs_review", "review_required"} else "completed"
+
+    kind = "config"
+    subsystem = "ConfigCore"
+    if contract_kind == "rule_import_diagnostic_report":
+        kind = "validation"
+        subsystem = "ValidationCore"
+    elif contract_kind == "rule_import_conflict_report":
+        kind = "review"
+        subsystem = "ReviewCore"
+    elif contract_kind == "rule_import_injection_gate":
+        kind = "review"
+        subsystem = "ReviewCore"
+    elif (data.get("candidate_type") or candidate.get("candidate_type")) == "CommandSpecCandidate":
+        kind = "action"
+        subsystem = "ActionCore"
+
+    return build_process_trace_item(
+        trace_id=data.get("candidate_id") or candidate.get("candidate_id") or data.get("source_hash") or adapter.get("source_hash") or contract_kind,
+        kind=kind,
+        subsystem=subsystem,
+        title="Project rules import",
+        summary="Project rule import candidate recorded without prompt injection, file writes, command execution, tools, MCP or memory writes.",
+        status=status,
+        evidence_refs=data.get("evidence_refs") if isinstance(data.get("evidence_refs"), list) else [],
+        details={
+            "source_kind": "project_rules_import",
+            "contract_kind": contract_kind,
+            "detected_format": data.get("detected_format") or candidate.get("detected_format") or adapter.get("detected_format"),
+            "candidate_type": data.get("candidate_type") or candidate.get("candidate_type"),
+            "candidate_id": data.get("candidate_id") or candidate.get("candidate_id"),
+            "source_scope": data.get("source_scope") or candidate.get("source_scope") or adapter.get("source_scope"),
+            "source_platform": data.get("source_platform") or candidate.get("source_platform") or adapter.get("source_platform"),
+            "source_uri": data.get("source_uri") or candidate.get("source_uri") or adapter.get("source_uri"),
+            "source_hash": data.get("source_hash") or candidate.get("source_hash") or adapter.get("source_hash"),
+            "precedence_rank": data.get("precedence_rank") or precedence.get("precedence_rank"),
+            "runtime_injection_allowed": data.get("runtime_injection_allowed", precedence.get("runtime_injection_allowed", False)),
+            "injection_allowed": data.get("injection_allowed", gate.get("injection_allowed", False)),
+            "approval_required": data.get("approval_required", gate.get("approval_required", True)),
+            "approved": data.get("approved", gate.get("approved", False)),
+            "diagnostics": diagnostics or None,
+            "conflicts": conflicts or None,
+            "precedence": precedence or None,
+            "injection_gate": gate or None,
+            "warnings": warnings,
+            "required_actions": required_actions,
+            "can_execute": False,
+            "can_write_files": False,
+            "can_mutate_prompt": False,
+            "can_activate_tools": False,
+            "can_activate_mcp": False,
+            "can_write_memory": False,
+            "contains_private_reasoning": False,
+        },
+        metadata={"source_kind": "project_rules_import", "contract_kind": contract_kind},
+    )
 
 
 def build_project_bootstrap_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
@@ -1874,6 +1970,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
             )
         else:
             item = _context_item(data)
+    elif source_kind == "project_rules_import":
+        item = build_project_rules_import_process_trace_item(data)
     elif source_kind == "project_bootstrap_profile":
         item = build_project_bootstrap_process_trace_item(data)
     elif source_kind == "skill_assignment_trace":
