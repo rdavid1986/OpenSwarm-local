@@ -34,6 +34,7 @@ EMPTY = "empty"
 MAX_TEXT = 600
 MAX_LIST_ITEMS = 12
 MAX_DICT_ITEMS = 64
+SENSITIVE_CONTEXT_MARKERS = ("api_key", "apikey", "authorization", "chain_of_thought", "cookie", "password", "private_key", "private_reasoning", "raw_prompt", "secret", "token")
 
 
 def _as_text(value: Any) -> str:
@@ -61,6 +62,24 @@ def normalize_state_context_value(value: Any) -> Any:
             normalized[str(key)[:120]] = normalize_state_context_value(value.get(key))
         return normalized
     return _as_text(value)[:MAX_TEXT]
+
+
+def _redact_orientation_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, raw in value.items():
+            key_text = str(key)[:120]
+            lowered = key_text.lower().replace("-", "_")
+            if any(marker in lowered for marker in SENSITIVE_CONTEXT_MARKERS):
+                redacted[key_text] = "[redacted]"
+            else:
+                redacted[key_text] = _redact_orientation_value(raw)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_orientation_value(item) for item in value[:MAX_LIST_ITEMS]]
+    if isinstance(value, str) and any(marker in value.lower().replace("-", "_") for marker in SENSITIVE_CONTEXT_MARKERS):
+        return "[redacted]"
+    return normalize_state_context_value(value)
 
 
 def _first_text(*values: Any) -> str | None:
@@ -158,6 +177,37 @@ def _project_memory_payload(
         "summary": raw_summary or summarize_project_memory_manifest(manifest),
         "refs": normalize_state_context_value(raw_refs or extract_project_memory_refs(manifest)),
         "manifest": normalize_state_context_value(manifest),
+    }
+
+
+def _project_orientation_payload(*, project_orientation: dict[str, Any] | None, available_context: dict[str, Any]) -> dict[str, Any]:
+    raw = (
+        project_orientation
+        if isinstance(project_orientation, dict)
+        else available_context.get("project_orientation")
+        if isinstance(available_context.get("project_orientation"), dict)
+        else available_context.get("project_orientation_summary")
+        if isinstance(available_context.get("project_orientation_summary"), dict)
+        else None
+    )
+    if not raw:
+        return {
+            "status": EMPTY,
+            "summary": "Project Orientation: empty",
+            "orientation": None,
+        }
+    safe = _redact_orientation_value(raw)
+    if not isinstance(safe, dict):
+        safe = {"value": safe}
+    project_type = _first_text(safe.get("project_type")) or UNKNOWN
+    pattern = _first_text(safe.get("selected_pattern")) or _first_text(safe.get("architecture_pattern")) or UNKNOWN
+    complexity = _first_text(safe.get("complexity")) or UNKNOWN
+    review = bool(safe.get("human_review_required", True) or safe.get("approval_required", True))
+    summary = f"Project Orientation: type={project_type}; complexity={complexity}; pattern={pattern}; review_required={review}"
+    return {
+        "status": "present",
+        "summary": summary,
+        "orientation": normalize_state_context_value(safe),
     }
 
 
@@ -472,6 +522,7 @@ def build_state_context_payload(
     mcp_evidence_bundle: dict[str, Any] | None = None,
     mcp_tool_definition_budget: dict[str, Any] | None = None,
     mcp_sandbox_policy: dict[str, Any] | None = None,
+    project_orientation: dict[str, Any] | None = None,
     available_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a normalized snapshot from caller-provided state only."""
@@ -514,6 +565,10 @@ def build_state_context_payload(
         mcp_evidence_bundle=mcp_evidence_bundle,
         mcp_tool_definition_budget=mcp_tool_definition_budget,
         mcp_sandbox_policy=mcp_sandbox_policy,
+        available_context=context,
+    )
+    resolved_project_orientation = _project_orientation_payload(
+        project_orientation=project_orientation,
         available_context=context,
     )
 
@@ -577,6 +632,9 @@ def build_state_context_payload(
         "mcp_evidence_bundle": resolved_mcp_context["evidence_bundle"],
         "mcp_required_user_actions": resolved_mcp_context["required_user_actions"],
         "mcp_required_user_action_count": resolved_mcp_context["required_user_action_count"],
+        "project_orientation_status": resolved_project_orientation["status"],
+        "project_orientation_summary": resolved_project_orientation["summary"],
+        "project_orientation": resolved_project_orientation["orientation"],
         "available_context_summary": _available_context_summary(context),
     }
     return normalize_state_context_value(payload)
@@ -619,6 +677,10 @@ def build_state_context_prompt(context: dict[str, Any]) -> str:
             f"- count: {_as_dict(normalized).get('pending_code_action_count') or 0}",
             f"- summary: {_as_dict(normalized).get('pending_code_action_summary') or 'Pending Code Actions: empty'}",
             "- actions: " + json.dumps(_as_dict(normalized).get("pending_code_actions") or [], ensure_ascii=False, sort_keys=True),
+            "Project Orientation:",
+            f"- status: {_as_dict(normalized).get('project_orientation_status') or EMPTY}",
+            f"- summary: {_as_dict(normalized).get('project_orientation_summary') or 'Project Orientation: empty'}",
+            "- orientation: " + json.dumps(_as_dict(normalized).get("project_orientation") or {}, ensure_ascii=False, sort_keys=True),
             "Eval Harness:",
             f"- status: {_as_dict(normalized).get('eval_harness_status') or EMPTY}",
             f"- summary: {_as_dict(normalized).get('eval_harness_summary') or 'Eval Harness: empty'}",

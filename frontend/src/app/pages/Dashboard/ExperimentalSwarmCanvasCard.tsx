@@ -968,6 +968,79 @@ function isTerminalImplementationState(status: string): boolean {
 }
 
 
+function asPlainRecord(value: any): Record<string, any> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function isProjectOrientationPayload(value: any): boolean {
+  const record = asPlainRecord(value);
+  const source = String(record.source_kind || record.details?.source_kind || record.metadata?.source_kind || '');
+  return source === 'project_orientation_multiagent'
+    || source.startsWith('project_orientation_')
+    || Boolean(record.orientation_kind || record.decision_kind || record.blueprint_kind || record.permission_kind || record.memory_kind || record.validation_kind || record.model_provider_kind);
+}
+
+function projectOrientationPayloadToTraceItem(value: any, index: number, activeSwarmId: string | null): ProcessTraceItem | null {
+  const record = asPlainRecord(value);
+  if (!isProjectOrientationPayload(record)) return null;
+  if (record.kind && record.details) return record as ProcessTraceItem;
+  const sourceKind = String(record.source_kind || 'project_orientation_multiagent');
+  const contractKind = String(record.orientation_kind || record.decision_kind || record.blueprint_kind || record.permission_kind || record.memory_kind || record.validation_kind || record.model_provider_kind || sourceKind);
+  const blockers = Array.isArray(record.blockers) ? record.blockers : [];
+  const requiredActions = Array.isArray(record.required_actions) ? record.required_actions : [];
+  const status: ProcessTraceItem['status'] = blockers.length > 0 ? 'blocked' : (requiredActions.length > 0 || record.human_review_required || record.approval_required ? 'warning' : 'completed');
+  const details = record.details && typeof record.details === 'object' ? record.details : record;
+  return {
+    trace_id: String(record.trace_id || `project-orientation-${activeSwarmId || 'new'}-${index}`),
+    kind: record.kind || 'review',
+    subsystem: record.subsystem || 'SwarmCore',
+    title: record.title || 'Project orientation',
+    summary: record.summary || 'Orientation summary is available for review before execution.',
+    status,
+    badge: 'review required',
+    details: {
+      ...details,
+      source_kind: sourceKind,
+      contract_kind: contractKind,
+      can_execute: false,
+    },
+    evidence_refs: Array.isArray(record.evidence_refs) ? record.evidence_refs : [],
+    artifact_refs: Array.isArray(record.artifact_refs) ? record.artifact_refs : [],
+  };
+}
+
+function collectProjectOrientationTraceItems(activeSwarm: any | null, finalResult: any, activeSwarmId: string | null): ProcessTraceItem[] {
+  const candidates: any[] = [];
+  const swarm = asPlainRecord(activeSwarm);
+  const final = asPlainRecord(finalResult);
+  [
+    swarm.project_orientation,
+    swarm.orientation,
+    swarm.project_orientation_summary,
+    final.project_orientation,
+    final.orientation,
+    final.project_orientation_summary,
+  ].forEach((item) => {
+    if (item) candidates.push(item);
+  });
+  [
+    swarm.project_orientation_contracts,
+    swarm.orientation_contracts,
+    swarm.project_orientation_trace_items,
+    swarm.process_trace_items,
+    final.project_orientation_contracts,
+    final.orientation_contracts,
+    final.project_orientation_trace_items,
+    final.process_trace_items,
+  ].forEach((items) => {
+    if (Array.isArray(items)) candidates.push(...items);
+  });
+  return candidates
+    .map((item, index) => projectOrientationPayloadToTraceItem(item, index, activeSwarmId))
+    .filter((item): item is ProcessTraceItem => Boolean(item))
+    .slice(0, 6);
+}
+
 function buildMiniAgentInspectorProcessTraceItems(task: any, idx: number): ProcessTraceItem[] {
   const taskId = renderText(task?.id || task?.task_id || task?.name, `task-${idx + 1}`);
   const miniagentId = renderText(task?.miniagent_id || task?.mini_agent_id || task?.miniagent || task?.agent_id || task?.agent, '');
@@ -1039,6 +1112,11 @@ function buildMiniAgentInspectorProcessTraceItems(task: any, idx: number): Proce
       },
     },
   ];
+
+  const orientationTraceItems = collectProjectOrientationTraceItems(params.activeSwarm, params.finalResult, params.activeSwarmId);
+  if (orientationTraceItems.length > 0) {
+    items.push(...orientationTraceItems);
+  }
 
   if (contextSummary) {
     items.push({
@@ -1509,7 +1587,7 @@ function buildSwarmCardProcessTraceItems(params: {
     });
   }
 
-  return items.slice(0, 6);
+  return items.slice(0, 8);
 }
 
 function getImplementationVisualState(params: {
@@ -1925,6 +2003,14 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       chatMessages.length,
     ],
   );
+  const orientationTraceItems = useMemo(
+    () => swarmProcessTraceItems.filter((item) => {
+      const source = String((item.details as any)?.source_kind || item.metadata?.source_kind || '');
+      return source === 'project_orientation_multiagent' || source.startsWith('project_orientation_');
+    }),
+    [swarmProcessTraceItems],
+  );
+  const [orientationReviewAction, setOrientationReviewAction] = useState<string | null>(null);
   const swarmTaskMonitorStatus: TaskMonitorStatus = approvals.length > 0
     ? 'waiting_approval'
     : swarmState.actionLoading
@@ -3624,6 +3710,107 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               }}
               compact
             />
+            {orientationTraceItems.length > 0 && (() => {
+              const firstOrientation = orientationTraceItems[0];
+              const orientationDetails = (firstOrientation.details || {}) as Record<string, any>;
+              const requiredActions = Array.isArray(orientationDetails.required_actions)
+                ? orientationDetails.required_actions.map((item) => String(item)).filter(Boolean)
+                : [];
+              const blockers = Array.isArray(orientationDetails.blockers)
+                ? orientationDetails.blockers.map((item) => String(item)).filter(Boolean)
+                : [];
+              const reviewRequired = orientationDetails.review_required === true
+                || orientationDetails.orientation_required === true
+                || orientationDetails.app_builder_gate === 'approval_required'
+                || firstOrientation.status === 'blocked'
+                || blockers.length > 0;
+              const approvalActions: Array<[string, string]> = [
+                ['confirm', 'Confirmar orientación'],
+                ['edit_scope', 'Editar alcance'],
+                ['reduce_autonomy', 'Reducir autonomía'],
+                ['change_model', 'Cambiar modelo'],
+                ['cancel', 'Cancelar'],
+              ];
+              const localActionLabel = approvalActions.find(([key]) => key === orientationReviewAction)?.[1] || orientationReviewAction;
+              return (
+                <Box
+                  sx={{
+                    border: `1px solid ${reviewRequired ? `${c.status.warning}66` : c.border.subtle}`,
+                    borderRadius: 1.35,
+                    bgcolor: reviewRequired ? `${c.status.warning}0D` : c.bg.page,
+                    p: 1,
+                  }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 0.75 }}>
+                    <Typography sx={{ color: c.text.primary, fontSize: '0.78rem', fontWeight: 800 }}>
+                      Project orientation
+                    </Typography>
+                    <Chip
+                      size="small"
+                      label={reviewRequired ? 'approval required' : 'reviewable'}
+                      sx={{
+                        height: 20,
+                        fontSize: '0.62rem',
+                        color: reviewRequired ? c.status.warning : c.status.info,
+                        bgcolor: reviewRequired ? `${c.status.warning}14` : `${c.status.info}12`,
+                        fontWeight: 700,
+                      }}
+                    />
+                  </Box>
+                  <Typography sx={{ color: c.text.muted, fontSize: '0.68rem', mt: 0.45, lineHeight: 1.4 }}>
+                    {firstOrientation.summary || 'Visible before execution; review or approve the orientation contract locally.'}
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.45, mt: 0.75 }}>
+                    {orientationDetails.project_type && <Chip size="small" label={`type:${orientationDetails.project_type}`} sx={{ height: 20, fontSize: '0.62rem' }} />}
+                    {orientationDetails.complexity && <Chip size="small" label={`complexity:${orientationDetails.complexity}`} sx={{ height: 20, fontSize: '0.62rem' }} />}
+                    {orientationDetails.selected_pattern && <Chip size="small" label={`pattern:${orientationDetails.selected_pattern}`} sx={{ height: 20, maxWidth: 170, fontSize: '0.62rem', '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' } }} />}
+                    {orientationDetails.mode && <Chip size="small" label={`mode:${orientationDetails.mode}`} sx={{ height: 20, fontSize: '0.62rem' }} />}
+                    {orientationDetails.can_execute === false && <Chip size="small" label="no execution" sx={{ height: 20, fontSize: '0.62rem', color: c.status.warning, bgcolor: `${c.status.warning}12` }} />}
+                    {orientationDetails.can_create_agents === false && <Chip size="small" label="no agent creation" sx={{ height: 20, fontSize: '0.62rem', color: c.status.warning, bgcolor: `${c.status.warning}12` }} />}
+                  </Box>
+                  {(blockers.length > 0 || requiredActions.length > 0) && (
+                    <Typography sx={{ color: reviewRequired ? c.status.warning : c.text.tertiary, fontSize: '0.66rem', mt: 0.7, lineHeight: 1.35 }}>
+                      {(blockers.length > 0 ? blockers : requiredActions).slice(0, 3).join(' · ')}
+                    </Typography>
+                  )}
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.85 }}>
+                    {approvalActions.map(([key, label]) => (
+                      <Button
+                        key={key}
+                        size="small"
+                        variant={orientationReviewAction === key ? 'contained' : 'outlined'}
+                        onClick={() => setOrientationReviewAction(key)}
+                        sx={{
+                          minHeight: 24,
+                          px: 0.8,
+                          py: 0.2,
+                          fontSize: '0.62rem',
+                          borderColor: c.border.subtle,
+                          color: orientationReviewAction === key ? c.bg.page : c.text.secondary,
+                        }}
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                  </Box>
+                  {localActionLabel && (
+                    <Typography sx={{ color: c.text.tertiary, fontSize: '0.64rem', mt: 0.65, lineHeight: 1.35 }}>
+                      Acción registrada localmente: {localActionLabel}. No ejecuta tools, terminal, proveedores ni crea agentes.
+                    </Typography>
+                  )}
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mt: 0.8 }}>
+                    {orientationTraceItems.slice(0, 3).map((item) => (
+                      <ProcessTraceDropdown
+                        key={item.trace_id || item.title}
+                        item={item}
+                        compact
+                        defaultExpanded={item.status === 'blocked' || item.status === 'warning'}
+                      />
+                    ))}
+                  </Box>
+                </Box>
+              );
+            })()}
           </Box>
 
           {renderPanelHeader('tasks', 'MiniAgents', tasks.length)}

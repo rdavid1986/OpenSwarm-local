@@ -4,6 +4,7 @@
     build_project_model_provider_plan,
     build_project_output_validation_plan,
     build_project_permission_map,
+    build_project_orientation_mode_integration,
     classify_project_orientation,
     select_project_architecture_pattern,
 )
@@ -122,3 +123,44 @@ def test_model_provider_plan_is_local_first_and_blocks_external_call():
     assert plan.can_execute is False
     assert plan.openrouter_allowed is True
     assert "require_external_provider_privacy_budget_approval" in plan.required_actions
+
+
+def test_mode_integration_blocks_large_app_builder_until_orientation_approved():
+    classification = classify_project_orientation(
+        project_type="app",
+        complexity="high",
+        required_outputs=["frontend", "backend", "tests"],
+    )
+    architecture = select_project_architecture_pattern(classification)
+
+    integration = build_project_orientation_mode_integration(
+        mode="app_builder",
+        classification=classification,
+        architecture=architecture,
+    )
+
+    assert integration.integration_kind == "project_orientation_mode_integration"
+    assert integration.orientation_required is True
+    assert integration.app_builder_gate == "approval_required"
+    assert "show_orientation_summary" in integration.required_actions
+    assert "block_large_app_builder_execution_until_orientation_approved" in integration.required_actions
+    assert integration.agent_card_receives_blueprint is True
+    assert integration.swarm_card_shows_process_trace is True
+    assert integration.can_create_agents is False
+    assert integration.can_start_app_builder_execution is False
+    assert integration.can_execute is False
+
+
+def test_mode_integration_skill_builder_decides_candidate_without_writes():
+    classification = classify_project_orientation(project_type="skill", complexity="medium")
+
+    integration = build_project_orientation_mode_integration(
+        mode="skill_builder",
+        classification=classification,
+    )
+
+    assert integration.skill_builder_decision == "create_or_update_skill_candidate"
+    assert "decide_create_import_document_or_clarify_skill" in integration.required_actions
+    assert integration.can_create_agents is False
+    assert integration.can_start_app_builder_execution is False
+    assert integration.can_execute is False

@@ -8,6 +8,8 @@ from backend.apps.swarms.system_prompt import build_mode_prompt, build_openswarm
 def test_app_builder_mode_prompt_mentions_reasoned_intake_and_output_evidence():
     prompt = build_mode_prompt("app_builder").lower()
 
+    assert "project orientation" in prompt
+    assert "approval gate" in prompt
     assert "intake razonado" in prompt
     assert "preguntas irrelevantes" in prompt
     assert "no digas que hay app creada" in prompt
@@ -18,6 +20,8 @@ def test_app_builder_mode_prompt_mentions_reasoned_intake_and_output_evidence():
 def test_debug_mode_prompt_requires_error_log_or_context_before_strong_diagnosis():
     prompt = build_mode_prompt("debug").lower()
 
+    assert "project orientation" in prompt
+    assert "herramientas permitidas" in prompt
     assert "error" in prompt
     assert "log" in prompt
     assert "contexto reproducible" in prompt
@@ -44,11 +48,27 @@ def test_unknown_mode_uses_safe_fallback_prompt():
     assert "guards autorizan o bloquean" in prompt
 
 
+def test_plan_and_skill_builder_prompts_use_project_orientation_without_execution():
+    plan_prompt = build_mode_prompt("plan").lower()
+    skill_prompt = build_mode_prompt("skill_builder").lower()
+
+    assert "project orientation" in plan_prompt
+    assert "single agent" in plan_prompt
+    assert "multiagent" in plan_prompt
+    assert "no ejecutes tareas" in plan_prompt
+    assert "project orientation" in skill_prompt
+    assert "crear skill" in skill_prompt
+    assert "importar skill" in skill_prompt
+    assert "no crees una skill real" in skill_prompt
+
+
 def test_master_prompt_composes_specific_mode_without_duplicating_contracts():
     prompt = build_openswarm_system_prompt(mode="swarm_card", task_kind="context_clarification").lower()
 
     assert "sos openswarm" in prompt
     assert "modo swarm_card" in prompt
+    assert "project orientation" in prompt
+    assert "revisable/aprobable" in prompt
     assert "pending actions y outputs" in prompt
     assert "contrato de salida para context_clarification" in prompt
     assert "el modelo razona, pero no inventa estado" in prompt

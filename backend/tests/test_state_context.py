@@ -110,6 +110,38 @@ def test_state_context_payload_accepts_project_memory_manifest_and_refs():
     assert payload["project_memory_manifest"]["outputs"] == [{"output_id": "output-1"}]
 
 
+def test_state_context_payload_accepts_project_orientation_without_secrets():
+    payload = build_state_context_payload(
+        mode="app_builder",
+        project_orientation={
+            "source_kind": "project_orientation_multiagent",
+            "project_type": "app",
+            "complexity": "high",
+            "selected_pattern": "parallel_specialists",
+            "human_review_required": True,
+            "can_execute": False,
+            "metadata": {
+                "api_key": "secret-value",
+                "chain_of_thought": "hidden",
+                "safe": "ok",
+            },
+        },
+    )
+
+    rendered = json.dumps(payload, ensure_ascii=False)
+
+    assert payload["project_orientation_status"] == "present"
+    assert "type=app" in payload["project_orientation_summary"]
+    assert "complexity=high" in payload["project_orientation_summary"]
+    assert "pattern=parallel_specialists" in payload["project_orientation_summary"]
+    assert payload["project_orientation"]["can_execute"] is False
+    assert payload["project_orientation"]["metadata"]["api_key"] == "[redacted]"
+    assert payload["project_orientation"]["metadata"]["chain_of_thought"] == "[redacted]"
+    assert payload["project_orientation"]["metadata"]["safe"] == "ok"
+    assert "secret-value" not in rendered
+    assert "hidden" not in rendered
+
+
 def test_state_context_prompt_includes_project_memory_when_present():
     payload = build_state_context_payload(
         project_memory_manifest={
@@ -125,6 +157,24 @@ def test_state_context_prompt_includes_project_memory_when_present():
     assert "status: present" in prompt
     assert "Project Memory Manifest summary" in prompt
     assert '"output_ids": ["output-1"]' in prompt
+
+
+def test_state_context_prompt_includes_project_orientation_section():
+    payload = build_state_context_payload(
+        project_orientation={
+            "project_type": "skill",
+            "complexity": "medium",
+            "selected_pattern": "single_agent",
+            "can_execute": False,
+        }
+    )
+
+    prompt = build_state_context_prompt(payload)
+
+    assert "Project Orientation:" in prompt
+    assert "status: present" in prompt
+    assert "Project Orientation: type=skill; complexity=medium; pattern=single_agent" in prompt
+    assert '"can_execute": false' in prompt
 
 
 def test_normalize_state_context_value_is_json_safe_and_bounded():

@@ -79,6 +79,7 @@ def build_mode_prompt(mode: str | None) -> str:
         "plan": "\n".join(
             [
                 "Modo plan: converti el objetivo del usuario en un plan claro, fases, riesgos y proximos pasos.",
+                "Usa project orientation si esta disponible para decidir single agent, DAG, workflow o multiagent sin inventar evidencia.",
                 "Pregunta solo lo necesario para evitar un plan inventado o demasiado amplio.",
                 "No afirmes implementacion, no crees archivos, no crees Outputs y no ejecutes tareas.",
                 "Separa recomendaciones de hechos verificados por el estado real.",
@@ -88,6 +89,7 @@ def build_mode_prompt(mode: str | None) -> str:
         "app_builder": "\n".join(
             [
                 "Modo app_builder: guia la creacion de app/web/desktop/mobile/game/skill segun creation_type y estado real.",
+                "Antes de iniciar trabajo grande, revisa project orientation: tipo, complejidad, arquitectura, permisos, evidencia y approval gate.",
                 "Usa intake razonado: pregunta lo minimo necesario y omiti preguntas irrelevantes cuando el estado/fallback lo permita.",
                 "No inicies implementacion si falta contexto minimo, provider health o pending action autorizada.",
                 "No digas que hay app creada, Output Bridge, Preview u Output si no existe output/evidence/metadata real.",
@@ -98,6 +100,7 @@ def build_mode_prompt(mode: str | None) -> str:
         "debug": "\n".join(
             [
                 "Modo debug: pedi error, log, stack trace, Output, archivo o contexto reproducible si falta el objetivo.",
+                "Usa project orientation para clasificar entorno, riesgos, logs requeridos y herramientas permitidas antes de proponer acciones.",
                 "Distingui diagnostico, hipotesis y cambio aplicado; no afirmes fix sin evidence.",
                 "No inventes archivos, lineas, commits, ejecuciones de tests ni resultados.",
                 "Si el estado no incluye evidence suficiente, explica que falta para diagnosticar fuerte.",
@@ -107,6 +110,7 @@ def build_mode_prompt(mode: str | None) -> str:
         "skill_builder": "\n".join(
             [
                 "Modo skill_builder: razona alcance, inputs, outputs, permisos, safety y criterios de validacion de la skill.",
+                "Usa project orientation para decidir si crear skill, importar skill, documentar comportamiento o pedir mas contexto.",
                 "No crees una skill real, archivos ni manifiestos si no hay flujo autorizado y evidence posterior.",
                 "Pedi aclaracion si falta tarea objetivo, entorno, permisos o comportamiento esperado.",
                 "No inventes capacidades de tools, plugins o MCP servers no presentes en el estado real.",
@@ -180,6 +184,7 @@ def build_openswarm_system_prompt(*, mode: str | None = None, task_kind: str | N
                 "Outputs y candidates: distingui Output estable, candidate/diff y preview_output_id; no mezcles dashboards ni source_swarm.",
                 "Artifacts/evidence: usalos como fuente de verdad para afirmar cambios; si faltan, explica la incertidumbre.",
                 "Provider/model health: si provider_health indica unavailable o model_missing, informalo claramente y no ocultes el bloqueo.",
+                "Project orientation: orienta antes de ejecutar; muestra resumen revisable/aprobable y respeta sus contratos sin inventar state/evidence.",
                 "Guards: nunca los reemplaces con razonamiento del modelo; si un guard bloquea, explica el motivo.",
                 "Code actions: si propones cambios de codigo, proponelos como contrato estructurado; no afirmes ejecucion sin diff, evidence y validation reales.",
                 "Cuando preguntar: pregunta solo si falta contexto necesario para evitar inventar o ejecutar mal.",

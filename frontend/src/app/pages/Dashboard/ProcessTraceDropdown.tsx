@@ -352,6 +352,37 @@ function buildShellDialectWarning(item: ProcessTraceItem): string | null {
   return compactTraceList(requiredActions, 3);
 }
 
+function isProjectOrientationTraceItem(item: ProcessTraceItem): boolean {
+  const details = item.details || {};
+  const metadata = item.metadata || {};
+  const source = getDetailValue(details, 'source_kind') || metadata.source_kind;
+  return source === 'project_orientation_multiagent'
+    || String(source || '').startsWith('project_orientation_')
+    || Boolean(getDetailValue(details, 'project_type', 'selected_pattern', 'orientation_required', 'app_builder_gate'));
+}
+
+function buildProjectOrientationBadgeLabel(item: ProcessTraceItem): string | null {
+  if (!isProjectOrientationTraceItem(item)) return null;
+  const details = item.details || {};
+  const contract = traceText(getDetailValue(details, 'contract_kind'), 'orientation').replace(/^project_orientation_/, '').replace(/_/g, ' ');
+  const projectType = traceText(getDetailValue(details, 'project_type'), '');
+  const complexity = traceText(getDetailValue(details, 'complexity', 'risk_level'), '');
+  const pattern = traceText(getDetailValue(details, 'selected_pattern'), '');
+  return ['orientation', contract, projectType, complexity, pattern].filter(Boolean).join(' · ');
+}
+
+function buildProjectOrientationWarning(item: ProcessTraceItem): string | null {
+  if (!isProjectOrientationTraceItem(item)) return null;
+  const details = item.details || {};
+  const reviewRequired = getDetailValue(details, 'human_review_required', 'approval_required', 'orientation_required');
+  const blockers = getDetailValue(details, 'blockers');
+  const actions = getDetailValue(details, 'required_actions');
+  if (reviewRequired === true || (Array.isArray(blockers) && blockers.length > 0)) {
+    return `Review required · ${compactTraceList(blockers || actions, 3)}`;
+  }
+  return compactTraceList(actions, 3);
+}
+
 
 function numericDetail(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -410,6 +441,34 @@ function buildSubsystemDetailRows(item: ProcessTraceItem, durationLabel: string 
   const isFileOutput = ['filecore', 'outputcore'].includes(subsystem) || ['file', 'diff', 'workspace', 'output', 'artifact'].includes(kind);
   const isMiniAgentOrHandoff = ['miniagentcore', 'handoffcore'].includes(subsystem) || ['miniagent', 'handoff'].includes(kind);
   const isModel = subsystem === 'modelcore' || kind === 'model' || kind === 'model_snapshot';
+  const isProjectOrientation = getDetailValue(details, 'source_kind') === 'project_orientation_multiagent'
+    || item.metadata?.source_kind === 'project_orientation_multiagent'
+    || String(getDetailValue(details, 'source_kind') || '').startsWith('project_orientation_')
+    || Boolean(getDetailValue(details, 'project_type', 'selected_pattern', 'orientation_required', 'app_builder_gate'));
+
+  if (isProjectOrientation) {
+    pushDetailRow(rows, 'Project type', getDetailValue(details, 'project_type'));
+    pushDetailRow(rows, 'Complexity', getDetailValue(details, 'complexity'));
+    pushDetailRow(rows, 'Pattern', getDetailValue(details, 'selected_pattern'));
+    pushDetailRow(rows, 'Single agent', getDetailValue(details, 'single_agent_ok'));
+    pushDetailRow(rows, 'Multiagent', getDetailValue(details, 'multiagent_required'));
+    pushDetailRow(rows, 'Workflow', getDetailValue(details, 'workflow_required'));
+    pushDetailRow(rows, 'Roles', getDetailValue(details, 'roles'), { list: true });
+    pushDetailRow(rows, 'Handoffs', getDetailValue(details, 'handoffs'), { list: true });
+    pushDetailRow(rows, 'Tools', getDetailValue(details, 'tools_required'), { list: true });
+    pushDetailRow(rows, 'MCP', getDetailValue(details, 'mcp_required'), { list: true });
+    pushDetailRow(rows, 'Terminal', getDetailValue(details, 'terminal_required'));
+    pushDetailRow(rows, 'PolicyMatrix', getDetailValue(details, 'policy_matrix_required'));
+    pushDetailRow(rows, 'Memory', getDetailValue(details, 'memory_tiers'), { list: true });
+    pushDetailRow(rows, 'Outputs', getDetailValue(details, 'expected_outputs'), { list: true });
+    pushDetailRow(rows, 'Evidence', getDetailValue(details, 'minimum_evidence'), { list: true });
+    pushDetailRow(rows, 'Model', getDetailValue(details, 'recommended_local_model'));
+    pushDetailRow(rows, 'Local first', getDetailValue(details, 'local_first'));
+    pushDetailRow(rows, 'Blockers', getDetailValue(details, 'blockers'), { list: true });
+    pushDetailRow(rows, 'Required', getDetailValue(details, 'required_actions'), { list: true });
+    pushDetailRow(rows, 'Can execute', getDetailValue(details, 'can_execute'));
+    return rows;
+  }
   const isShellDialect = getDetailValue(details, 'source_kind') === 'shell_dialect_runtime'
     || item.metadata?.source_kind === 'shell_dialect_runtime'
     || Boolean(getDetailValue(details, 'contract_kind', 'gate_kind', 'profile_kind', 'command_kind', 'translation_kind', 'preflight_kind', 'error_kind', 'retry_kind'));
@@ -921,6 +980,8 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
 
   const shellDialectBadge = useMemo(() => buildShellDialectBadgeLabel(item), [item]);
   const shellDialectWarning = useMemo(() => buildShellDialectWarning(item), [item]);
+  const projectOrientationBadge = useMemo(() => buildProjectOrientationBadgeLabel(item), [item]);
+  const projectOrientationWarning = useMemo(() => buildProjectOrientationWarning(item), [item]);
 
   const detailRows = useMemo(() => {
     const rows: Array<[string, unknown]> = buildSubsystemDetailRows(item, durationLabel);
@@ -969,18 +1030,19 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
     });
     if (durationLabel) raw.push(['duration', temporal.running ? `${durationLabel} running` : durationLabel]);
     if (shellDialectBadge) raw.push(['shell', shellDialectBadge]);
+    if (projectOrientationBadge) raw.push(['orientation', projectOrientationBadge]);
     if (temporal.freshnessLabel) raw.push(['freshness', temporal.freshnessLabel]);
     if (temporal.slow) raw.push(['slow', 'slow']);
     return raw
       .filter(([, value]) => value !== undefined && value !== null && value !== '')
       .map(([label, value]) => `${label}: ${traceText(value)}`)
       .slice(0, 7);
-  }, [item, status, temporal, durationLabel, shellDialectBadge]);
+  }, [item, status, temporal, durationLabel, shellDialectBadge, projectOrientationBadge]);
 
   const copyDetailsText = useMemo(() => {
     const detailText = detailRows.map(([label, value]) => `${label}: ${traceText(value, '')}`).join('\n');
-    return [title, summary, shellDialectWarning, detailText].filter(Boolean).join('\n');
-  }, [detailRows, summary, title, shellDialectWarning]);
+    return [title, summary, shellDialectWarning, projectOrientationWarning, detailText].filter(Boolean).join('\n');
+  }, [detailRows, summary, title, shellDialectWarning, projectOrientationWarning]);
 
   if (shouldHideTraceItem) {
     return null;
@@ -1087,6 +1149,19 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
               }}
             >
               {shellDialectWarning}
+            </Typography>
+          )}
+          {!compact && projectOrientationWarning && (
+            <Typography
+              noWrap
+              sx={{
+                color: c.status.warning,
+                fontSize: '0.68rem',
+                fontWeight: 700,
+                mt: 0.35,
+              }}
+            >
+              {projectOrientationWarning}
             </Typography>
           )}
         </Box>

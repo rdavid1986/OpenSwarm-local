@@ -271,6 +271,26 @@ class ProjectModelProviderPlan:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ProjectOrientationModeIntegration:
+    source_kind: str = "project_orientation_multiagent"
+    integration_kind: str = "project_orientation_mode_integration"
+    orientation_version: str = ORIENTATION_VERSION
+    mode: str = "unknown"
+    orientation_required: bool = True
+    app_builder_gate: str = "review_required"
+    plan_uses_architecture_pattern: bool = True
+    debug_risk_classification_required: bool = True
+    skill_builder_decision: str = "request_more_context"
+    agent_card_receives_blueprint: bool = True
+    swarm_card_shows_process_trace: bool = True
+    required_actions: list[str] = field(default_factory=list)
+    can_create_agents: bool = False
+    can_start_app_builder_execution: bool = False
+    can_execute: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 def classify_project_orientation(
     *,
     project_type: str = "unknown",
@@ -489,5 +509,51 @@ def build_project_model_provider_plan(
         local_first=True,
         can_call_external_provider=False,
         required_actions=_dedupe(actions),
+        metadata=_safe_metadata(metadata),
+    )
+
+
+def build_project_orientation_mode_integration(
+    *,
+    mode: str = "unknown",
+    classification: ProjectOrientationClassification | dict[str, Any] | None = None,
+    architecture: ProjectArchitecturePatternDecision | dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> ProjectOrientationModeIntegration:
+    mode_name = _text(mode, "unknown").lower().replace("-", "_").replace(" ", "_")
+    classification_data = dump_project_orientation(classification or {})
+    architecture_data = dump_project_orientation(architecture or {})
+    project_type = _text(classification_data.get("project_type"), "unknown")
+    complexity = _text(classification_data.get("complexity"), "unknown")
+    multiagent_required = bool(classification_data.get("multiagent_required"))
+    orientation_required = mode_name in {"app_builder", "plan", "debug", "skill_builder", "swarm_card", "agent_card"} or complexity in {"high", "critical"} or multiagent_required
+
+    required = ["show_orientation_summary", "require_human_review_before_execution"]
+    if mode_name == "app_builder" and (multiagent_required or complexity in {"high", "critical"}):
+        required.append("block_large_app_builder_execution_until_orientation_approved")
+    if mode_name == "plan":
+        required.append("use_orientation_architecture_pattern_for_plan")
+    if mode_name == "debug":
+        required.append("classify_debug_environment_risks_and_tools")
+    if mode_name == "skill_builder":
+        required.append("decide_create_import_document_or_clarify_skill")
+
+    skill_decision = "request_more_context"
+    if mode_name == "skill_builder":
+        if project_type == "skill":
+            skill_decision = "create_or_update_skill_candidate"
+        elif project_type in {"plugin", "mcp"}:
+            skill_decision = "document_or_request_more_context"
+        else:
+            skill_decision = "clarify_skill_scope"
+
+    return ProjectOrientationModeIntegration(
+        mode=mode_name,
+        orientation_required=orientation_required,
+        app_builder_gate="approval_required" if mode_name == "app_builder" and orientation_required else "not_applicable",
+        plan_uses_architecture_pattern=bool(architecture_data.get("selected_pattern")) or mode_name == "plan",
+        debug_risk_classification_required=mode_name == "debug",
+        skill_builder_decision=skill_decision,
+        required_actions=_dedupe(required),
         metadata=_safe_metadata(metadata),
     )

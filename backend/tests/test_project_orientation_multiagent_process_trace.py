@@ -5,6 +5,7 @@ from backend.apps.swarms.project_orientation_multiagent import (
     build_project_model_provider_plan,
     build_project_output_validation_plan,
     build_project_permission_map,
+    build_project_orientation_mode_integration,
     classify_project_orientation,
     select_project_architecture_pattern,
 )
@@ -99,4 +100,26 @@ def test_process_trace_model_provider_keeps_external_provider_blocked():
     assert item["details"]["local_first"] is True
     assert item["details"]["openrouter_allowed"] is True
     assert item["details"]["can_call_external_provider"] is False
+    assert item["details"]["can_execute"] is False
+
+
+def test_process_trace_recognizes_mode_integration_approval_gate():
+    classification = classify_project_orientation(project_type="app", complexity="high")
+    integration = build_project_orientation_mode_integration(
+        mode="app_builder",
+        classification=classification,
+        architecture=select_project_architecture_pattern(classification),
+    )
+
+    item = assert_orientation_trace(integration)
+
+    assert item["details"]["source_kind"] == "project_orientation_multiagent"
+    assert item["details"]["contract_kind"] == "project_orientation_mode_integration"
+    assert item["details"]["mode"] == "app_builder"
+    assert item["details"]["orientation_required"] is True
+    assert item["details"]["app_builder_gate"] == "approval_required"
+    assert item["details"]["agent_card_receives_blueprint"] is True
+    assert item["details"]["swarm_card_shows_process_trace"] is True
+    assert item["details"]["can_create_agents"] is False
+    assert item["details"]["can_start_app_builder_execution"] is False
     assert item["details"]["can_execute"] is False
