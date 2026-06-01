@@ -2,6 +2,7 @@ from backend.apps.swarms.shell_dialect_runtime import (
     build_shell_dialect_capability,
     build_shell_profile,
     build_shell_profile_trace_source,
+    build_structured_shell_command,
     detect_shell_profile_from_environment,
     dump_shell_dialect,
     infer_shell_id,
@@ -97,3 +98,60 @@ def test_shell_profile_trace_source_is_safe_and_non_executable():
     assert trace["can_execute"] is False
     assert trace["detection_executed_process"] is False
     assert "block_bash_and_operator" in trace["required_actions"]
+
+
+def test_structured_shell_command_contract_is_non_executable():
+    profile = build_shell_profile(shell_id="git_bash")
+    command = build_structured_shell_command(
+        intent="inspect",
+        command_name="git",
+        args=["status", "--short"],
+        working_directory="/workspace/OpenSwarm",
+        shell_profile=profile,
+    )
+
+    assert command.command_kind == "structured_shell_command"
+    assert command.intent == "inspect"
+    assert command.shell_id == "git_bash"
+    assert command.command_name == "git"
+    assert command.argv == ["git", "status", "--short"]
+    assert command.can_execute is False
+    assert command.execution_permission_granted is False
+    assert command.preflight_required is True
+    assert "do_not_execute_shell" in command.required_actions
+    assert "require_policy_matrix_approval" in command.required_actions
+
+
+def test_structured_shell_command_keeps_raw_command_blocked():
+    command = build_structured_shell_command(
+        intent="run",
+        raw_command="git status && npm test",
+        shell_id="powershell_5",
+    )
+
+    assert command.shell_id == "powershell_5"
+    assert command.argv == []
+    assert command.can_execute is False
+    assert command.risk_level == "high"
+    assert "provide_command_name" in command.required_actions
+    assert "parse_raw_command_before_execution" in command.required_actions
+    assert "select_shell_profile_before_execution" not in command.required_actions
+
+
+def test_structured_shell_command_redacts_environment_and_metadata():
+    command = build_structured_shell_command(
+        intent="inspect",
+        command_name="echo",
+        args=["token=secret-value", "safe"],
+        shell_id="git_bash",
+        environment={"OPENAI_API_KEY": "secret", "SAFE_ENV": "visible"},
+        metadata={"password": "secret", "safe": "visible"},
+    )
+    dumped = dump_shell_dialect(command)
+
+    assert dumped["argv"][1] == "[redacted]"
+    assert dumped["argv"][2] == "safe"
+    assert dumped["environment"]["OPENAI_API_KEY"] == "[redacted]"
+    assert dumped["environment"]["SAFE_ENV"] == "visible"
+    assert dumped["metadata"]["password"] == "[redacted]"
+    assert dumped["metadata"]["safe"] == "visible"

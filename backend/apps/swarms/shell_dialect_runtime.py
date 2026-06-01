@@ -80,6 +80,41 @@ class ShellProfile:
     detection_executed_process: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
+COMMAND_INTENTS = {
+    "inspect",
+    "modify",
+    "validate",
+    "test",
+    "build",
+    "install",
+    "run",
+    "commit",
+    "unknown",
+}
+
+
+@dataclass(frozen=True)
+class StructuredShellCommand:
+    command_kind: str = "structured_shell_command"
+    shell_runtime_version: str = SHELL_DIALECT_RUNTIME_VERSION
+    intent: str = "unknown"
+    shell_id: str = "unknown"
+    shell_family: str = "unknown"
+    command_name: str = ""
+    argv: list[str] = field(default_factory=list)
+    raw_command: str = ""
+    working_directory: str = ""
+    environment: dict[str, Any] = field(default_factory=dict)
+    risk_level: str = "unknown"
+    required_actions: list[str] = field(default_factory=list)
+    risk_notes: list[str] = field(default_factory=list)
+    can_execute: bool = False
+    execution_permission_granted: bool = False
+    translation_required: bool = True
+    preflight_required: bool = True
+    shell_profile: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
 
 def _text(value: Any, fallback: str = "", limit: int = 600) -> str:
     text = str(value or "").strip()
@@ -162,6 +197,99 @@ def normalize_shell_id(value: Any) -> str:
         "python_subprocess": "python_subprocess",
     }
     return aliases.get(text, text if text in SHELL_IDS else "unknown")
+
+
+def normalize_command_intent(value: Any) -> str:
+    intent = _text(value, "unknown").lower().replace(" ", "_").replace("-", "_")
+    return intent if intent in COMMAND_INTENTS else "unknown"
+
+
+def _safe_command_value(value: Any, *, limit: int = 320) -> str:
+    text = _text(value, limit=limit)
+    lowered = text.lower()
+    if any(token in lowered for token in SENSITIVE_KEYS):
+        return "[redacted]"
+    return text
+
+
+def _normalize_command_argv(command_name: Any, args: list[Any] | tuple[Any, ...] | None = None) -> list[str]:
+    argv: list[str] = []
+    name = _safe_command_value(command_name)
+    if name:
+        argv.append(name)
+    for item in _as_list(args):
+        value = _safe_command_value(item)
+        if value:
+            argv.append(value)
+    return argv[:120]
+
+
+def build_structured_shell_command(
+    *,
+    intent: str = "unknown",
+    command_name: str = "",
+    args: list[Any] | tuple[Any, ...] | None = None,
+    raw_command: str = "",
+    working_directory: str = "",
+    shell_profile: ShellProfile | dict[str, Any] | None = None,
+    shell_id: str = "unknown",
+    environment: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+    risk_level: str = "unknown",
+) -> StructuredShellCommand:
+    profile = shell_profile if shell_profile is not None else build_shell_profile(shell_id=shell_id)
+    profile_data = dump_shell_dialect(profile)
+    resolved_shell_id = normalize_shell_id(profile_data.get("shell_id") or shell_id)
+    shell_family = _text(profile_data.get("shell_family"), "unknown")
+    argv = _normalize_command_argv(command_name, args)
+    safe_raw = _safe_command_value(raw_command, limit=1200)
+
+    required = [
+        "do_not_execute_shell",
+        "require_structured_command_review",
+        "connect_dialect_preflight_guard_before_execution",
+        "require_policy_matrix_approval",
+    ]
+    notes = ["Structured command contract is declarative and must not execute commands."]
+
+    if not argv:
+        required.append("provide_command_name")
+        notes.append("Command name is missing.")
+    if safe_raw:
+        required.append("parse_raw_command_before_execution")
+        notes.append("Raw command string must be parsed into argv before execution.")
+    if resolved_shell_id == "unknown":
+        required.append("select_shell_profile_before_execution")
+        notes.append("Shell profile is unknown.")
+    if shell_family != "python":
+        required.append("translate_structured_command_for_shell")
+
+    requested_risk = _text(risk_level, "unknown").lower()
+    if requested_risk not in DIALECT_RISK_LEVELS:
+        requested_risk = "unknown"
+    resolved_risk = requested_risk
+    if resolved_risk == "unknown":
+        resolved_risk = "high" if not argv or safe_raw else "medium"
+
+    return StructuredShellCommand(
+        intent=normalize_command_intent(intent),
+        shell_id=resolved_shell_id,
+        shell_family=shell_family,
+        command_name=argv[0] if argv else "",
+        argv=argv,
+        raw_command=safe_raw,
+        working_directory=_safe_command_value(working_directory, limit=500),
+        environment=_safe_metadata(environment),
+        risk_level=resolved_risk,
+        required_actions=_dedupe(required),
+        risk_notes=_dedupe(notes),
+        can_execute=False,
+        execution_permission_granted=False,
+        translation_required=shell_family != "python",
+        preflight_required=True,
+        shell_profile=profile_data,
+        metadata=_safe_metadata(metadata),
+    )
 
 
 def _version_major(version: str) -> int | None:
