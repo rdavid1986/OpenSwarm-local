@@ -81,6 +81,15 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         or data.get("decision_kind") == "import_policy_bridge_decision"
     ):
         return "import_compatibility_runtime"
+    if (
+        data.get("source_kind") == "project_agent_manifest"
+        or data.get("manifest_kind") == "project_agent_manifest"
+        or data.get("entry_kind") == "project_agent_manifest_entry"
+        or data.get("route_kind") == "project_agent_skill_routing_table"
+        or data.get("capability_kind") == "project_agent_capability_matrix"
+        or data.get("drift_kind") == "project_agent_manifest_drift_report"
+    ):
+        return "project_agent_manifest"
     if data.get("report_kind") == "skill_import_preview_report" or data.get("source_kind") in {"skill_import_preview", "skill_import_candidate"}:
         return "skill_import_preview"
     if (
@@ -1467,6 +1476,62 @@ def build_project_orientation_process_trace_item(source: dict[str, Any]) -> dict
 
 
 
+def build_project_agent_manifest_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    contract_kind = _first_text(
+        data,
+        "manifest_kind",
+        "entry_kind",
+        "route_kind",
+        "capability_kind",
+        "drift_kind",
+        default="project_agent_manifest",
+    )
+    agents = data.get("agents") if isinstance(data.get("agents"), list) else []
+    routing = data.get("skill_routing_table") if isinstance(data.get("skill_routing_table"), dict) else {}
+    capability = data.get("capability_matrix") if isinstance(data.get("capability_matrix"), dict) else {}
+    drift = data.get("drift_report") if isinstance(data.get("drift_report"), dict) else {}
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+    drift_status = _first_text(drift, "drift_status", default="unknown")
+
+    status = "warning" if required_actions or warnings or drift_status in {"not_checked", "drift_detected"} else "completed"
+
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or contract_kind,
+        kind="config",
+        subsystem="SwarmCore",
+        title="Project agent manifest",
+        summary="Project agent manifest recorded without creating agents, activating tools, executing handoffs, or writing memory.",
+        status=status,
+        evidence_refs=data.get("evidence_refs") if isinstance(data.get("evidence_refs"), list) else [],
+        details={
+            "source_kind": "project_agent_manifest",
+            "contract_kind": contract_kind,
+            "manifest_version": data.get("manifest_version"),
+            "manifest_id": data.get("manifest_id"),
+            "source_uri": data.get("source_uri"),
+            "source_hash": data.get("source_hash"),
+            "source_author": data.get("source_author"),
+            "source_license": data.get("source_license"),
+            "agent_count": len(agents),
+            "agents": agents,
+            "skill_routing_table": routing,
+            "capability_matrix": capability,
+            "drift_report": drift,
+            "required_actions": required_actions,
+            "warnings": warnings,
+            "can_execute": False,
+            "can_create_agent": False,
+            "can_create_miniagent": False,
+            "can_activate_tools": False,
+            "can_write_memory": False,
+            "contains_private_reasoning": False,
+        },
+        metadata={"source_kind": "project_agent_manifest", "contract_kind": contract_kind},
+    )
+
+
 def build_import_compatibility_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
     data = source or {}
     contract_kind = _first_text(
@@ -1981,6 +2046,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
             item = _context_item(data)
     elif source_kind == "project_rules_import":
         item = build_project_rules_import_process_trace_item(data)
+    elif source_kind == "project_agent_manifest":
+        item = build_project_agent_manifest_process_trace_item(data)
     elif source_kind == "project_bootstrap_profile":
         item = build_project_bootstrap_process_trace_item(data)
     elif source_kind == "skill_assignment_trace":
