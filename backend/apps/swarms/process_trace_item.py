@@ -128,6 +128,8 @@ def _normalize_status(value: Any) -> str:
 
 def _is_sensitive_key(key: Any) -> bool:
     normalized = str(key or "").strip().lower().replace("-", "_")
+    if normalized in {"secrets_redacted", "secret_redacted"}:
+        return False
     return normalized in SENSITIVE_KEYS or any(marker in normalized for marker in SENSITIVE_MARKERS)
 
 

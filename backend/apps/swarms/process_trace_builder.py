@@ -101,6 +101,15 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "temporal_runtime"
     if data.get("runtime_kind") == "model_runtime_resolution" or data.get("source_kind") == "model_runtime":
         return "model_runtime"
+    if data.get("source_kind") in {
+        "external_provider_openrouter",
+        "openrouter_provider_config",
+        "openrouter_model_catalog",
+        "openrouter_routing_decision",
+        "openrouter_privacy_gate",
+        "openrouter_structured_output",
+    } or data.get("config_kind") == "openrouter_provider_config" or data.get("decision_kind") == "openrouter_routing_decision" or data.get("gate_kind") == "openrouter_privacy_gate":
+        return "external_provider_openrouter"
     if data.get("packet_kind") == "context_packet" or data.get("source_kind") == "context_packet":
         return "context_packet"
     if data.get("compaction_kind") == "context_compaction_runtime" or data.get("source_kind") == "context_compaction":
@@ -118,6 +127,15 @@ def normalize_process_trace_source_kind(source: Any) -> str:
     explicit_source = str(data.get("source_kind") or data.get("trace_source_kind") or data.get("producer_kind") or "").strip().lower()
     if explicit_source == "model_runtime":
         return "model_runtime"
+    if explicit_source in {
+        "external_provider_openrouter",
+        "openrouter_provider_config",
+        "openrouter_model_catalog",
+        "openrouter_routing_decision",
+        "openrouter_privacy_gate",
+        "openrouter_structured_output",
+    }:
+        return "external_provider_openrouter"
     if explicit_source == "temporal_runtime":
         return "temporal_runtime"
     if explicit_source == "temporal_user_time":
@@ -1033,6 +1051,95 @@ def build_model_runtime_process_trace_item(source: dict[str, Any]) -> dict[str, 
         metadata={"source_kind": "model_runtime"},
     )
 
+
+def build_openrouter_provider_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    source_kind = _first_text(data, "source_kind", default="external_provider_openrouter")
+    contract_kind = _first_text(
+        data,
+        "config_kind",
+        "snapshot_kind",
+        "entry_kind",
+        "decision_kind",
+        "gate_kind",
+        "structured_output_kind",
+        "report_kind",
+        default=source_kind,
+    )
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    blockers = data.get("blockers") if isinstance(data.get("blockers"), list) else data.get("blocked_reasons") if isinstance(data.get("blocked_reasons"), list) else []
+    gate_status = _first_text(data, "gate_status", "routing_status", "status")
+    blocked = gate_status == "blocked" or (bool(blockers) and gate_status != "needs_review") or data.get("enabled") is False and contract_kind == "openrouter_provider_config"
+    warning = gate_status in {"warning", "needs_review"} or (bool(required_actions) and gate_status != "completed")
+    status = "blocked" if blocked else "warning" if warning else "completed"
+    if source_kind == "openrouter_model_catalog" and data.get("entry_count", 1) == 0:
+        status = "warning"
+
+    subsystem = "ModelCore"
+    kind = "model"
+    if source_kind == "openrouter_provider_config":
+        subsystem = "ConfigCore"
+        kind = "config"
+    elif source_kind in {"openrouter_privacy_gate", "openrouter_structured_output"}:
+        subsystem = "ValidationCore"
+        kind = "validation"
+    elif source_kind == "openrouter_routing_decision":
+        subsystem = "ReviewCore"
+        kind = "review"
+
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or data.get("provider_id") or data.get("model_id") or contract_kind,
+        kind=kind,
+        subsystem=subsystem,
+        title="OpenRouter external provider contract",
+        summary="OpenRouter external provider metadata recorded without external calls, server tools, or model execution.",
+        status=status,
+        details={
+            "source_kind": source_kind,
+            "contract_kind": contract_kind,
+            "provider_id": data.get("provider_id") or "openrouter",
+            "enabled": data.get("enabled"),
+            "model_id": data.get("model_id"),
+            "selected_model_id": data.get("selected_model_id"),
+            "selected_provider": data.get("selected_provider"),
+            "routing_status": data.get("routing_status"),
+            "gate_status": data.get("gate_status"),
+            "response_format": data.get("response_format"),
+            "schema_name": data.get("schema_name"),
+            "schema_version": data.get("schema_version"),
+            "strict": data.get("strict"),
+            "supported_by_model": data.get("supported_by_model"),
+            "fallback_mode": data.get("fallback_mode"),
+            "entry_count": data.get("entry_count"),
+            "context_length": data.get("context_length"),
+            "supports_tool_calling": data.get("supports_tool_calling"),
+            "supports_structured_outputs": data.get("supports_structured_outputs"),
+            "supports_reasoning": data.get("supports_reasoning"),
+            "supports_vision": data.get("supports_vision"),
+            "supports_zdr": data.get("supports_zdr"),
+            "zdr_required": data.get("zdr_required", True),
+            "zdr_allowed": data.get("zdr_allowed"),
+            "redaction_applied": data.get("redaction_applied"),
+            "secrets_redacted": data.get("secrets_redacted", False),
+            "safe_payload_preview": data.get("safe_payload_preview") if isinstance(data.get("safe_payload_preview"), dict) else None,
+            "required_actions": required_actions,
+            "blockers": blockers,
+            "policy_notes": data.get("policy_notes") if isinstance(data.get("policy_notes"), list) else [],
+            "user_approval_required": data.get("user_approval_required", True),
+            "budget_required": data.get("budget_required", True),
+            "privacy_required": data.get("privacy_required", True),
+            "server_tools_disabled": data.get("server_tools_disabled", True),
+            "apply_patch_blocked": data.get("apply_patch_blocked", True),
+            "can_call_provider": False,
+            "can_execute": False,
+            "can_use_server_tools": False,
+            "external_call_performed": False,
+            "contains_private_reasoning": False,
+        },
+        metadata={"source_kind": "external_provider_openrouter", "contract_kind": contract_kind},
+    )
+
+
 def build_skill_import_process_trace_item(preview_report: dict[str, Any], policy: dict[str, Any] | None = None) -> dict[str, Any]:
     report = preview_report or {}
     policy_data = policy if isinstance(policy, dict) else {}
@@ -1457,6 +1564,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = build_skill_effectiveness_process_trace_item(data)
     elif source_kind == "model_runtime":
         item = build_model_runtime_process_trace_item(data)
+    elif source_kind == "external_provider_openrouter":
+        item = build_openrouter_provider_process_trace_item(data)
     elif source_kind == "temporal_runtime":
         item = build_temporal_runtime_process_trace_item(data)
     elif source_kind == "temporal_user_time":
