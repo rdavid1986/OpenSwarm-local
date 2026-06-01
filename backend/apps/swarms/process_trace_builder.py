@@ -133,6 +133,14 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "context_packet"
     if data.get("compaction_kind") == "context_compaction_runtime" or data.get("source_kind") == "context_compaction":
         return "context_compaction"
+    if (
+        data.get("source_kind") == "project_bootstrap_profile"
+        or data.get("profile_kind") == "project_stack_profile"
+        or data.get("command_kind") == "project_test_build_lint_contract"
+        or data.get("artifact_kind") == "project_artifact_store_mode_decision"
+        or data.get("bootstrap_kind") == "project_bootstrap_profile"
+    ):
+        return "project_bootstrap_profile"
     if data.get("bootstrap_kind") == "project_instructions_bootstrap" or data.get("source_kind") == "project_instructions_bootstrap":
         return "project_instructions_bootstrap"
     if data.get("loading_kind") == "skill_loading_runtime" or data.get("source_kind") == "skill_loading_runtime":
@@ -174,6 +182,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "context_packet"
     if explicit_source == "context_compaction":
         return "context_compaction"
+    if explicit_source == "project_bootstrap_profile":
+        return "project_bootstrap_profile"
     if explicit_source == "project_instructions_bootstrap":
         return "project_instructions_bootstrap"
     if explicit_source == "skill_loading_runtime":
@@ -774,6 +784,79 @@ def _adaptive_skill_item(data: dict[str, Any]) -> dict[str, Any]:
 
 
 
+
+
+
+def build_project_bootstrap_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    contract_kind = _first_text(
+        data,
+        "profile_kind",
+        "command_kind",
+        "artifact_kind",
+        "bootstrap_kind",
+        default="project_bootstrap_profile",
+    )
+    warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    status = "warning" if warnings or required_actions else "completed"
+
+    kind = "config"
+    subsystem = "ConfigCore"
+    if contract_kind == "project_test_build_lint_contract":
+        kind = "validation"
+        subsystem = "ValidationCore"
+    elif contract_kind == "project_artifact_store_mode_decision":
+        kind = "file"
+        subsystem = "OutputCore"
+    elif contract_kind == "project_bootstrap_profile":
+        kind = "review"
+        subsystem = "ReviewCore"
+
+    stack_profile = data.get("stack_profile") if isinstance(data.get("stack_profile"), dict) else {}
+    command_contract = data.get("command_contract") if isinstance(data.get("command_contract"), dict) else {}
+    artifact_decision = data.get("artifact_decision") if isinstance(data.get("artifact_decision"), dict) else {}
+
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or contract_kind,
+        kind=kind,
+        subsystem=subsystem,
+        title="Project bootstrap profile",
+        summary=data.get("summary") or "Project bootstrap profile recorded without executing commands or writing files.",
+        status=status,
+        evidence_refs=data.get("evidence_refs") if isinstance(data.get("evidence_refs"), list) else [],
+        details={
+            "source_kind": "project_bootstrap_profile",
+            "contract_kind": contract_kind,
+            "detected_stacks": data.get("detected_stacks") or stack_profile.get("detected_stacks") or [],
+            "frameworks": data.get("frameworks") or stack_profile.get("frameworks") or [],
+            "package_managers": data.get("package_managers") or stack_profile.get("package_managers") or [],
+            "workspace_roots": data.get("workspace_roots") or stack_profile.get("workspace_roots") or [],
+            "conventions": data.get("conventions") or stack_profile.get("conventions") or [],
+            "markers_seen": data.get("markers_seen") or stack_profile.get("markers_seen") or [],
+            "confidence": data.get("confidence") or stack_profile.get("confidence"),
+            "test_commands": data.get("test_commands") or command_contract.get("test_commands") or [],
+            "build_commands": data.get("build_commands") or command_contract.get("build_commands") or [],
+            "lint_commands": data.get("lint_commands") or command_contract.get("lint_commands") or [],
+            "package_manager": data.get("package_manager") or command_contract.get("package_manager"),
+            "commands_are_suggestions": data.get("commands_are_suggestions", command_contract.get("commands_are_suggestions", True)),
+            "artifact_mode": data.get("artifact_mode") or artifact_decision.get("artifact_mode"),
+            "output_workspace_required": data.get("output_workspace_required", artifact_decision.get("output_workspace_required", True)),
+            "preview_required": data.get("preview_required", artifact_decision.get("preview_required", True)),
+            "diff_required": data.get("diff_required", artifact_decision.get("diff_required", True)),
+            "rollback_required": data.get("rollback_required", artifact_decision.get("rollback_required", True)),
+            "evidence_required": data.get("evidence_required") or artifact_decision.get("evidence_required") or [],
+            "warnings": warnings,
+            "required_actions": required_actions,
+            "can_execute": False,
+            "can_write_files": False,
+            "can_run_tests": False,
+            "can_run_build": False,
+            "can_run_lint": False,
+            "contains_private_reasoning": False,
+        },
+        metadata={"source_kind": "project_bootstrap_profile", "contract_kind": contract_kind},
+    )
 
 
 def build_project_instructions_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
@@ -1791,6 +1874,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
             )
         else:
             item = _context_item(data)
+    elif source_kind == "project_bootstrap_profile":
+        item = build_project_bootstrap_process_trace_item(data)
     elif source_kind == "skill_assignment_trace":
         item = _skill_item(data)
     elif source_kind == "miniagent_handoff":
