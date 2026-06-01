@@ -102,6 +102,17 @@ def normalize_process_trace_source_kind(source: Any) -> str:
     if data.get("runtime_kind") == "model_runtime_resolution" or data.get("source_kind") == "model_runtime":
         return "model_runtime"
     if data.get("source_kind") in {
+        "project_orientation_multiagent",
+        "project_orientation_classification",
+        "project_orientation_architecture",
+        "project_orientation_agent_blueprint",
+        "project_orientation_permission_map",
+        "project_orientation_memory_context",
+        "project_orientation_output_validation",
+        "project_orientation_model_provider",
+    } or data.get("orientation_kind") == "project_orientation_classification":
+        return "project_orientation_multiagent"
+    if data.get("source_kind") in {
         "external_provider_openrouter",
         "openrouter_provider_config",
         "openrouter_model_catalog",
@@ -127,6 +138,17 @@ def normalize_process_trace_source_kind(source: Any) -> str:
     explicit_source = str(data.get("source_kind") or data.get("trace_source_kind") or data.get("producer_kind") or "").strip().lower()
     if explicit_source == "model_runtime":
         return "model_runtime"
+    if explicit_source in {
+        "project_orientation_multiagent",
+        "project_orientation_classification",
+        "project_orientation_architecture",
+        "project_orientation_agent_blueprint",
+        "project_orientation_permission_map",
+        "project_orientation_memory_context",
+        "project_orientation_output_validation",
+        "project_orientation_model_provider",
+    }:
+        return "project_orientation_multiagent"
     if explicit_source in {
         "external_provider_openrouter",
         "openrouter_provider_config",
@@ -1140,6 +1162,112 @@ def build_openrouter_provider_process_trace_item(source: dict[str, Any]) -> dict
     )
 
 
+def build_project_orientation_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    source_kind = _first_text(data, "source_kind", default="project_orientation_multiagent")
+    contract_kind = _first_text(
+        data,
+        "orientation_kind",
+        "decision_kind",
+        "blueprint_kind",
+        "permission_kind",
+        "memory_kind",
+        "validation_kind",
+        "model_provider_kind",
+        default=source_kind,
+    )
+    blockers = data.get("blockers") if isinstance(data.get("blockers"), list) else []
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    risk_level = _first_text(data, "risk_level", "sensitive_data_risk", default="unknown")
+    status = "blocked" if blockers or risk_level == "critical" else "warning" if required_actions or data.get("human_review_required") or data.get("approval_required") else "completed"
+
+    subsystem = "SwarmCore"
+    kind = "review"
+    if source_kind in {"project_orientation_classification", "project_orientation_permission_map"}:
+        subsystem = "ConfigCore"
+        kind = "config"
+    elif source_kind == "project_orientation_memory_context":
+        subsystem = "ContextCore"
+        kind = "context"
+    elif source_kind == "project_orientation_output_validation":
+        subsystem = "ValidationCore"
+        kind = "validation"
+    elif source_kind == "project_orientation_model_provider":
+        subsystem = "ModelCore"
+        kind = "model"
+    elif source_kind == "project_orientation_agent_blueprint":
+        subsystem = "SwarmCore"
+        kind = "miniagent"
+
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or contract_kind,
+        kind=kind,
+        subsystem=subsystem,
+        title="Project orientation multiagent contract",
+        summary="Project orientation metadata recorded without creating agents, executing tools, or mutating files.",
+        status=status,
+        evidence_refs=data.get("evidence_refs") if isinstance(data.get("evidence_refs"), list) else [],
+        details={
+            "source_kind": source_kind,
+            "contract_kind": contract_kind,
+            "project_type": data.get("project_type"),
+            "complexity": data.get("complexity"),
+            "uncertainty": data.get("uncertainty"),
+            "sensitive_data_risk": data.get("sensitive_data_risk"),
+            "selected_pattern": data.get("selected_pattern"),
+            "rejected_patterns": data.get("rejected_patterns") if isinstance(data.get("rejected_patterns"), list) else [],
+            "rationale_summary": data.get("rationale_summary"),
+            "risk_level": data.get("risk_level"),
+            "cost_level": data.get("cost_level"),
+            "roles": data.get("roles") if isinstance(data.get("roles"), list) else [],
+            "handoffs": data.get("handoffs") if isinstance(data.get("handoffs"), list) else [],
+            "tools_required": data.get("tools_required") if isinstance(data.get("tools_required"), list) else [],
+            "mcp_required": data.get("mcp_required") if isinstance(data.get("mcp_required"), list) else [],
+            "terminal_required": data.get("terminal_required", False),
+            "safeshell_required": data.get("safeshell_required", False),
+            "shell_dialect_required": data.get("shell_dialect_required", False),
+            "browser_required": data.get("browser_required", False),
+            "web_research_required": data.get("web_research_required", False),
+            "file_write_allowed": data.get("file_write_allowed", False),
+            "external_provider_allowed": data.get("external_provider_allowed", False),
+            "policy_matrix_required": data.get("policy_matrix_required", True),
+            "project_instructions_required": data.get("project_instructions_required"),
+            "relevant_docs": data.get("relevant_docs") if isinstance(data.get("relevant_docs"), list) else [],
+            "memory_tiers": data.get("memory_tiers") if isinstance(data.get("memory_tiers"), list) else [],
+            "context_budget": data.get("context_budget") if isinstance(data.get("context_budget"), dict) else None,
+            "freshness_policy": data.get("freshness_policy"),
+            "compaction_policy": data.get("compaction_policy"),
+            "allowed_memory_writes": data.get("allowed_memory_writes") if isinstance(data.get("allowed_memory_writes"), list) else [],
+            "blocked_memory_writes": data.get("blocked_memory_writes") if isinstance(data.get("blocked_memory_writes"), list) else [],
+            "expected_outputs": data.get("expected_outputs") if isinstance(data.get("expected_outputs"), list) else [],
+            "artifacts": data.get("artifacts") if isinstance(data.get("artifacts"), list) else [],
+            "tests_required": data.get("tests_required") if isinstance(data.get("tests_required"), list) else [],
+            "minimum_evidence": data.get("minimum_evidence") if isinstance(data.get("minimum_evidence"), list) else [],
+            "validation_strategy": data.get("validation_strategy") if isinstance(data.get("validation_strategy"), list) else [],
+            "rollback_required": data.get("rollback_required", False),
+            "diff_preview_required": data.get("diff_preview_required", True),
+            "completion_gate": data.get("completion_gate"),
+            "recommended_local_model": data.get("recommended_local_model"),
+            "model_by_agent": data.get("model_by_agent") if isinstance(data.get("model_by_agent"), dict) else {},
+            "context_window_required": data.get("context_window_required"),
+            "reasoning_level": data.get("reasoning_level"),
+            "external_fallback_allowed": data.get("external_fallback_allowed", False),
+            "openrouter_allowed": data.get("openrouter_allowed", False),
+            "local_first": data.get("local_first", True),
+            "blockers": blockers,
+            "required_actions": required_actions,
+            "human_review_required": data.get("human_review_required", True),
+            "approval_required": data.get("approval_required", True),
+            "can_mutate_memory": data.get("can_mutate_memory", False),
+            "can_write_files": data.get("can_write_files", False),
+            "can_call_external_provider": data.get("can_call_external_provider", False),
+            "can_execute": False,
+            "contains_private_reasoning": False,
+        },
+        metadata={"source_kind": "project_orientation_multiagent", "contract_kind": contract_kind},
+    )
+
+
 def build_skill_import_process_trace_item(preview_report: dict[str, Any], policy: dict[str, Any] | None = None) -> dict[str, Any]:
     report = preview_report or {}
     policy_data = policy if isinstance(policy, dict) else {}
@@ -1566,6 +1694,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = build_model_runtime_process_trace_item(data)
     elif source_kind == "external_provider_openrouter":
         item = build_openrouter_provider_process_trace_item(data)
+    elif source_kind == "project_orientation_multiagent":
+        item = build_project_orientation_process_trace_item(data)
     elif source_kind == "temporal_runtime":
         item = build_temporal_runtime_process_trace_item(data)
     elif source_kind == "temporal_user_time":
