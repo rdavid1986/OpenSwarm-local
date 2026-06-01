@@ -292,6 +292,14 @@ def _risk_flags_from_text(text: str, payload: dict[str, Any]) -> list[str]:
         risks.append("side_effects_declared")
     if payload.get("required_approvals") or payload.get("approval_policy") or "requires approval" in lowered:
         risks.append("approval_requirements_declared")
+    if payload.get("tools") or payload.get("agent_tools") or payload.get("allowed_tools"):
+        risks.append("agent_tools_declared")
+    if payload.get("handoffs") or payload.get("handoff_mapping") or "handoff" in lowered:
+        risks.append("handoffs_declared")
+    if payload.get("memory") or payload.get("memory_mapping") or "memory write" in lowered:
+        risks.append("memory_mapping_declared")
+    if payload.get("stop_conditions"):
+        risks.append("stop_conditions_declared")
     if "script" in lowered or "shell" in lowered or "bash" in lowered or "powershell" in lowered:
         risks.append("executable_hint_present")
     return list(dict.fromkeys(risks))
@@ -365,6 +373,125 @@ def _tool_import_surface(data: dict[str, Any], detected_format: str, risk_flags:
     })
 
 
+def _agent_import_surface(data: dict[str, Any], detected_format: str, risk_flags: list[str]) -> dict[str, Any]:
+    def list_of_dicts(value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        return [_safe(item) for item in value[:40] if isinstance(item, dict)]
+
+    agent_spec = _as_dict(data.get("agent_spec") or data.get("agent") or data.get("blueprint"))
+    raw_subagents = list_of_dicts(data.get("subagents") or data.get("agents"))
+    raw_handoffs = list_of_dicts(data.get("handoffs") or data.get("handoff_mapping"))
+    required_tools = _as_list(data.get("required_tools") or data.get("tools") or data.get("agent_tools") or data.get("allowed_tools"))
+    requested_memory = _as_list(data.get("memory") or data.get("memory_mapping"))
+    stop_conditions = _as_list(data.get("stop_conditions")) or [
+        "approval_required",
+        "missing_evidence",
+        "tool_activation_requested",
+        "memory_write_requested",
+        "handoff_execution_requested",
+    ]
+
+    is_agent = detected_format in {"agent", "subagent"}
+    agent_name = _text(data.get("name") or agent_spec.get("name"), fallback="Imported Agent Blueprint", limit=180)
+    agent_role = _text(agent_spec.get("role") or data.get("role"), fallback="ImportedAgent", limit=120)
+    instructions_preview = _text(data.get("instructions") or agent_spec.get("instructions") or data.get("content") or data.get("raw_text"), limit=1200)
+
+    subagent_blueprints: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_subagents):
+        subagent_blueprints.append({
+            "blueprint_kind": "subagent_blueprint_candidate",
+            "name": _text(item.get("name"), fallback=f"Imported Subagent {index + 1}", limit=160),
+            "role": _text(item.get("role"), fallback="SpecialistAgent", limit=120),
+            "goal": _text(item.get("goal") or item.get("description"), fallback="Pending review.", limit=400),
+            "tools_requested": _as_list(item.get("tools") or item.get("allowed_tools")),
+            "memory_access": "read_only",
+            "stop_conditions": _as_list(item.get("stop_conditions")) or stop_conditions,
+            "can_create_agent": False,
+            "can_activate_tools": False,
+            "can_execute_handoffs": False,
+            "can_write_memory": False,
+        })
+
+    if detected_format == "subagent" and not subagent_blueprints:
+        subagent_blueprints.append({
+            "blueprint_kind": "subagent_blueprint_candidate",
+            "name": agent_name,
+            "role": agent_role,
+            "goal": _text(data.get("description") or instructions_preview, fallback="Pending review.", limit=400),
+            "tools_requested": required_tools,
+            "memory_access": "read_only",
+            "stop_conditions": stop_conditions,
+            "can_create_agent": False,
+            "can_activate_tools": False,
+            "can_execute_handoffs": False,
+            "can_write_memory": False,
+        })
+
+    agent_blueprint = {
+        "blueprint_kind": "agent_spec_candidate",
+        "name": agent_name,
+        "role": agent_role,
+        "instructions_preview": instructions_preview,
+        "tools_requested": required_tools,
+        "memory_access": "read_only",
+        "subagent_count": len(subagent_blueprints),
+        "stop_conditions": stop_conditions,
+        "can_create_agent": False,
+        "can_activate_tools": False,
+        "can_execute_handoffs": False,
+        "can_write_memory": False,
+    }
+
+    handoff_mapping = {
+        "mapping_kind": "agent_import_handoff_mapping",
+        "handoffs": raw_handoffs,
+        "handoff_count": len(raw_handoffs),
+        "review_required": bool(raw_handoffs) or is_agent,
+        "can_execute_handoffs": False,
+        "private_context_transfer_allowed": False,
+    }
+    tool_mapping = {
+        "mapping_kind": "agent_import_tool_mapping",
+        "required_tools": required_tools,
+        "tool_count": len(required_tools),
+        "activation_enabled": False,
+        "can_activate_tools": False,
+        "policy_matrix_required": True,
+    }
+    memory_mapping = {
+        "mapping_kind": "agent_import_memory_mapping",
+        "requested_memory": requested_memory,
+        "memory_access": "read_only",
+        "can_write_memory": False,
+        "memory_write_gate_required": bool(requested_memory),
+    }
+    review_plan = {
+        "plan_kind": "agent_import_review_plan",
+        "policy_matrix_required": True,
+        "blueprint_review_required": is_agent,
+        "handoff_review_required": bool(raw_handoffs),
+        "tool_mapping_review_required": bool(required_tools),
+        "memory_mapping_review_required": bool(requested_memory),
+        "approval_required_before_materialization": True,
+        "can_create_agent": False,
+        "can_create_miniagent": False,
+        "can_execute_handoffs": False,
+        "can_activate_tools": False,
+        "can_write_memory": False,
+    }
+
+    return _safe({
+        "agent_blueprint": agent_blueprint,
+        "subagent_blueprints": subagent_blueprints,
+        "handoff_mapping": handoff_mapping,
+        "tool_mapping": tool_mapping,
+        "memory_mapping": memory_mapping,
+        "stop_conditions": stop_conditions,
+        "agent_review_plan": review_plan,
+    })
+
+
 def _detect_format(payload: dict[str, Any], files: list[dict[str, Any]], text: str) -> tuple[str, float, list[str]]:
     explicit = _text(payload.get("detected_format") or payload.get("source_format") or payload.get("format"), limit=200).lower().replace("-", "_")
     if explicit in IMPORT_FORMATS:
@@ -387,10 +514,10 @@ def _detect_format(payload: dict[str, Any], files: list[dict[str, Any]], text: s
         return "tool", 0.74, ["tool_schema_like"]
     if "openapi" in lowered or "swagger" in lowered or "api docs" in lowered:
         return "api_tool", 0.72, ["api_docs_like"]
-    if "agent spec" in lowered or '"agent"' in lowered or "handoff" in lowered:
-        return "agent", 0.68, ["agent_spec_like"]
-    if "subagent" in lowered or "specialist" in lowered:
-        return "subagent", 0.66, ["subagent_like"]
+    if "subagent" in lowered or "specialist" in lowered or "crewai" in lowered or "crew ai" in lowered or "agent team" in lowered:
+        return "subagent", 0.72, ["subagent_blueprint_like"]
+    if "agent spec" in lowered or '"agent"' in lowered or "handoff" in lowered or "google.adk" in lowered or "from google.adk" in lowered:
+        return "agent", 0.72, ["agent_spec_like"]
     if "slash command" in lowered or "opencode command" in lowered or "/init" in lowered:
         return "command", 0.66, ["command_like"]
     if "prompt" in lowered or "workflow" in lowered:
@@ -427,6 +554,9 @@ def detect_import_source(payload: dict[str, Any] | None = None, **kwargs: Any) -
         "schema", "tool_schema", "input_schema", "permissions", "required_permissions",
         "side_effects", "required_approvals", "approval_policy", "validation_plan",
         "evidence_contract", "api_docs", "openapi", "swagger", "mcp_config", "mcpServers", "mcp_servers",
+        "agent_spec", "agent", "blueprint", "agents", "subagents", "role", "instructions",
+        "tools", "agent_tools", "allowed_tools", "handoffs", "handoff_mapping", "memory", "memory_mapping",
+        "stop_conditions",
     }
     unknown_fields = sorted(str(key) for key in data.keys() if key not in known)[:80]
 
@@ -468,14 +598,17 @@ def normalize_import_candidate(payload: dict[str, Any] | None = None, *, detecti
     source_license = _text(data.get("source_license") or provenance_input.get("source_license") or provenance_input.get("license"), fallback="unknown", limit=120)
 
     risk_flags = list(dict.fromkeys(_as_list(detection_data.get("risk_flags")) + _as_list(data.get("risk_flags"))))
-    if detected_format in {"tool", "mcp_server", "api_tool", "command"}:
+    if detected_format in {"tool", "mcp_server", "api_tool", "command", "agent", "subagent"}:
         if not _as_dict(data.get("validation_plan")):
             risk_flags.append("missing_validation_plan")
         if not _as_dict(data.get("evidence_contract")):
             risk_flags.append("missing_evidence_contract")
+        if detected_format in {"agent", "subagent"} and not data.get("stop_conditions"):
+            risk_flags.append("missing_stop_conditions")
     risk_flags = list(dict.fromkeys(risk_flags))
     required_actions = list(dict.fromkeys(_as_list(detection_data.get("required_actions")) + _as_list(data.get("required_actions"))))
     surface = _tool_import_surface(data, detected_format, risk_flags)
+    agent_surface = _agent_import_surface(data, detected_format, risk_flags)
 
     provenance = _safe({
         **provenance_input,
@@ -501,11 +634,22 @@ def normalize_import_candidate(payload: dict[str, Any] | None = None, *, detecti
         "required_approvals": surface.get("required_approvals"),
         "tool_sandbox_plan": surface.get("tool_sandbox_plan"),
         "dry_run_validation_plan": surface.get("dry_run_validation_plan"),
+        "agent_blueprint": agent_surface.get("agent_blueprint"),
+        "subagent_blueprints": agent_surface.get("subagent_blueprints"),
+        "handoff_mapping": agent_surface.get("handoff_mapping"),
+        "tool_mapping": agent_surface.get("tool_mapping"),
+        "memory_mapping": agent_surface.get("memory_mapping"),
+        "stop_conditions": agent_surface.get("stop_conditions"),
+        "agent_review_plan": agent_surface.get("agent_review_plan"),
         "policy_matrix_required": True,
         "can_execute": False,
         "can_call_api": False,
         "can_activate_mcp": False,
         "can_modify_files": False,
+        "can_create_agent": False,
+        "can_create_miniagent": False,
+        "can_execute_handoffs": False,
+        "can_write_memory": False,
         "provenance": provenance,
     })
 
@@ -609,6 +753,18 @@ def build_import_compatibility_report(envelope: ImportCandidateEnvelope | dict[s
     if "missing_evidence_contract" in risk_flags:
         warnings.append("evidence_contract_missing")
         required_actions.append("define_tool_evidence_contract")
+    if "handoffs_declared" in risk_flags:
+        warnings.append("handoffs_need_review")
+        required_actions.append("review_agent_handoff_mapping")
+    if "agent_tools_declared" in risk_flags:
+        warnings.append("agent_tools_need_policy_review")
+        required_actions.append("review_agent_tool_mapping")
+    if "memory_mapping_declared" in risk_flags:
+        warnings.append("memory_mapping_needs_review")
+        required_actions.append("review_agent_memory_mapping")
+    if "missing_stop_conditions" in risk_flags:
+        warnings.append("agent_stop_conditions_missing")
+        required_actions.append("define_agent_stop_conditions")
     if "possible_secret_material" in risk_flags:
         blockers.append("possible_secret_material")
         required_actions.append("remove_or_redact_secret_material")
@@ -689,6 +845,10 @@ def evaluate_import_policy_bridge(
         required_actions.extend(["review_api_docs_tool_candidate", "confirm_no_api_calls_during_import", "define_api_tool_dry_run"])
     elif detected_format == "command":
         required_actions.extend(["review_command_sandbox_policy", "confirm_shell_dialect_preflight"])
+    elif detected_format == "agent":
+        required_actions.extend(["review_agent_spec_candidate", "review_agent_tool_memory_handoff_mapping", "confirm_no_agent_materialization"])
+    elif detected_format == "subagent":
+        required_actions.extend(["review_subagent_blueprint_candidate", "review_agent_tool_memory_handoff_mapping", "confirm_no_miniagent_materialization"])
 
     if normalized_type == "SkillSpecCandidate":
         skill_harness_required = True
