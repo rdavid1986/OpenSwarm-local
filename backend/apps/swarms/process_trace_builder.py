@@ -1,4 +1,4 @@
-﻿"""Build ProcessTraceItem objects from existing runtime contracts."""
+"""Build ProcessTraceItem objects from existing runtime contracts."""
 
 from __future__ import annotations
 
@@ -99,6 +99,11 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         or data.get("decision_kind") == "agent_mention_routing_decision"
     ):
         return "agent_mention_routing"
+    if (
+        data.get("source_kind") == "sdd_orchestrator_runtime"
+        or str(data.get("sdd_contract_kind") or "").startswith("sdd_")
+    ):
+        return "sdd_orchestrator_runtime"
     if data.get("report_kind") == "skill_import_preview_report" or data.get("source_kind") in {"skill_import_preview", "skill_import_candidate"}:
         return "skill_import_preview"
     if (
@@ -1485,6 +1490,77 @@ def build_project_orientation_process_trace_item(source: dict[str, Any]) -> dict
 
 
 
+def build_sdd_orchestrator_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    contract_kind = _first_text(data, "sdd_contract_kind", default="sdd_orchestrator_contract")
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    blockers = data.get("blockers") if isinstance(data.get("blockers"), list) else []
+    decision = _first_text(data, "decision", default="")
+    approval_required = bool(data.get("approval_required"))
+    warning = bool(required_actions or approval_required or decision in {"requires_approval", "needs_review"})
+    status = "blocked" if blockers or decision == "blocked" else "warning" if warning else "completed"
+    title_by_kind = {
+        "sdd_role_manifest": "SDD role manifest",
+        "sdd_explorer_context": "SDD explorer context",
+        "sdd_proposal": "SDD proposal",
+        "sdd_spec_contract": "SDD spec contract",
+        "sdd_design_contract": "SDD design contract",
+        "sdd_task_dag_contract": "SDD task DAG",
+        "sdd_policy_review_contract": "SDD policy review",
+        "sdd_test_strategy_contract": "SDD test strategy",
+    }
+
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or contract_kind,
+        kind="planning",
+        subsystem="SwarmCore",
+        title=title_by_kind.get(contract_kind, "SDD orchestrator contract"),
+        summary="SDD contract recorded without executing, writing files, creating agents, activating tools, or writing memory.",
+        status=status,
+        evidence_refs=data.get("evidence_refs") if isinstance(data.get("evidence_refs"), list) else [],
+        details={
+            "source_kind": "sdd_orchestrator_runtime",
+            "contract_kind": contract_kind,
+            "sdd_version": data.get("sdd_version"),
+            "role_order": data.get("role_order") if isinstance(data.get("role_order"), list) else [],
+            "roles": data.get("roles") if isinstance(data.get("roles"), list) else [],
+            "files_considered": data.get("files_considered") if isinstance(data.get("files_considered"), list) else [],
+            "excluded_files": data.get("excluded_files") if isinstance(data.get("excluded_files"), list) else [],
+            "symbols_considered": data.get("symbols_considered") if isinstance(data.get("symbols_considered"), list) else [],
+            "architecture_refs": data.get("architecture_refs") if isinstance(data.get("architecture_refs"), list) else [],
+            "current_behavior_summary": data.get("current_behavior_summary"),
+            "proposed_change": data.get("proposed_change"),
+            "scope": data.get("scope") if isinstance(data.get("scope"), list) else [],
+            "requirements": data.get("requirements") if isinstance(data.get("requirements"), list) else [],
+            "acceptance_criteria": data.get("acceptance_criteria") if isinstance(data.get("acceptance_criteria"), list) else [],
+            "spec_hash": data.get("spec_hash"),
+            "affected_subsystems": data.get("affected_subsystems") if isinstance(data.get("affected_subsystems"), list) else [],
+            "new_contracts": data.get("new_contracts") if isinstance(data.get("new_contracts"), list) else [],
+            "task_nodes": data.get("task_nodes") if isinstance(data.get("task_nodes"), list) else [],
+            "dependencies": data.get("dependencies") if isinstance(data.get("dependencies"), list) else [],
+            "risk_level": data.get("risk_level"),
+            "policy_matrix_refs": data.get("policy_matrix_refs") if isinstance(data.get("policy_matrix_refs"), list) else [],
+            "blocked_actions": data.get("blocked_actions") if isinstance(data.get("blocked_actions"), list) else [],
+            "test_strategy": data.get("test_strategy"),
+            "test_list": data.get("test_list") if isinstance(data.get("test_list"), list) else [],
+            "regression_scope": data.get("regression_scope") if isinstance(data.get("regression_scope"), list) else [],
+            "required_actions": required_actions,
+            "blockers": blockers,
+            "approval_required": approval_required,
+            "policy_matrix_required": data.get("policy_matrix_required", True),
+            "can_execute": False,
+            "can_write_files": False,
+            "can_create_agent": False,
+            "can_create_miniagent": False,
+            "can_activate_tools": False,
+            "can_execute_handoffs": False,
+            "can_write_memory": False,
+            "contains_private_reasoning": False,
+        },
+        metadata={"source_kind": "sdd_orchestrator_runtime", "contract_kind": contract_kind},
+    )
+
+
 def build_agent_mention_routing_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
     data = source or {}
     contract_kind = _first_text(
@@ -2119,6 +2195,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
             item = _context_item(data)
     elif source_kind == "project_rules_import":
         item = build_project_rules_import_process_trace_item(data)
+    elif source_kind == "sdd_orchestrator_runtime":
+        item = build_sdd_orchestrator_process_trace_item(data)
     elif source_kind == "agent_mention_routing":
         item = build_agent_mention_routing_process_trace_item(data)
     elif source_kind == "project_agent_manifest":
