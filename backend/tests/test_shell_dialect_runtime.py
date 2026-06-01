@@ -3,9 +3,13 @@ from backend.apps.swarms.shell_dialect_runtime import (
     build_shell_profile,
     build_shell_profile_trace_source,
     build_structured_shell_command,
+    classify_shell_dialect_error,
+    decide_shell_dialect_retry,
     detect_shell_profile_from_environment,
     dump_shell_dialect,
     infer_shell_id,
+    preflight_shell_dialect_command,
+    translate_structured_shell_command,
 )
 
 
@@ -155,3 +159,187 @@ def test_structured_shell_command_redacts_environment_and_metadata():
     assert dumped["environment"]["SAFE_ENV"] == "visible"
     assert dumped["metadata"]["password"] == "[redacted]"
     assert dumped["metadata"]["safe"] == "visible"
+
+
+def test_shell_dialect_translation_is_declarative_and_non_executable():
+    profile = build_shell_profile(shell_id="git_bash")
+    command = build_structured_shell_command(
+        intent="inspect",
+        command_name="git",
+        args=["status", "--short"],
+        shell_profile=profile,
+    )
+
+    translation = translate_structured_shell_command(command, target_shell_id="powershell_7")
+
+    assert translation.translation_kind == "shell_dialect_translation"
+    assert translation.source_shell_id == "git_bash"
+    assert translation.target_shell_id == "powershell_7"
+    assert translation.source_argv == ["git", "status", "--short"]
+    assert translation.translated_argv == ["git", "status", "--short"]
+    assert translation.can_execute is False
+    assert translation.execution_permission_granted is False
+    assert translation.translation_executed_process is False
+    assert translation.preflight_required is True
+    assert "require_policy_matrix_approval" in translation.required_actions
+    assert "quote_for_powershell_before_execution" in translation.required_actions
+
+
+def test_shell_dialect_translation_blocks_raw_command_strings():
+    command = build_structured_shell_command(
+        intent="run",
+        raw_command="git status && npm test",
+        shell_id="git_bash",
+    )
+
+    translation = translate_structured_shell_command(command, target_shell_id="powershell_5")
+
+    assert translation.translation_status == "blocked"
+    assert translation.can_execute is False
+    assert translation.raw_command == "git status && npm test"
+    assert "parse_raw_command_before_translation" in translation.required_actions
+    assert "block_bash_and_operator" in translation.required_actions
+
+
+def test_shell_dialect_translation_to_python_keeps_structured_argv():
+    command = build_structured_shell_command(
+        intent="validate",
+        command_name="python",
+        args=["-m", "py_compile", "backend/apps/swarms/shell_dialect_runtime.py"],
+        shell_id="git_bash",
+    )
+
+    translation = translate_structured_shell_command(command, target_shell_id="python_subprocess")
+
+    assert translation.target_shell_id == "python_subprocess"
+    assert translation.target_shell_family == "python"
+    assert translation.translated_argv == [
+        "python",
+        "-m",
+        "py_compile",
+        "backend/apps/swarms/shell_dialect_runtime.py",
+    ]
+    assert "keep_as_structured_argv" in translation.required_actions
+    assert translation.can_execute is False
+
+
+def test_shell_dialect_translation_redacts_metadata_and_environment():
+    command = build_structured_shell_command(
+        intent="inspect",
+        command_name="echo",
+        args=["safe"],
+        shell_id="git_bash",
+        environment={"TOKEN": "secret", "SAFE_ENV": "visible"},
+    )
+
+    translation = translate_structured_shell_command(
+        command,
+        target_shell_id="cmd",
+        metadata={"api_key": "secret", "safe": "visible"},
+    )
+    dumped = dump_shell_dialect(translation)
+
+    assert dumped["environment"]["TOKEN"] == "[redacted]"
+    assert dumped["environment"]["SAFE_ENV"] == "visible"
+    assert dumped["metadata"]["api_key"] == "[redacted]"
+    assert dumped["metadata"]["safe"] == "visible"
+    assert "quote_for_cmd_before_execution" in translation.required_actions
+
+
+def test_preflight_blocks_powershell_5_and_operator_without_policy_approval():
+    command = build_structured_shell_command(
+        intent="test",
+        command_name="npm",
+        args=["test", "&&", "npm", "run", "lint"],
+        shell_id="powershell_5",
+    )
+
+    preflight = preflight_shell_dialect_command(command)
+
+    assert preflight.preflight_kind == "shell_dialect_preflight"
+    assert preflight.preflight_status == "blocked"
+    assert preflight.can_execute is False
+    assert preflight.execution_permission_granted is False
+    assert "powershell_5_invalid_and_operator" in preflight.diagnostics
+    assert "policy_matrix_approval_missing" in preflight.diagnostics
+    assert "block_bash_and_operator_for_powershell_5" in preflight.required_actions
+
+
+def test_preflight_accepts_translation_and_blocks_raw_redirection():
+    command = build_structured_shell_command(
+        intent="inspect",
+        command_name="cat",
+        args=["file.txt", ">", "out.txt"],
+        shell_id="git_bash",
+    )
+    translation = translate_structured_shell_command(command, target_shell_id="cmd")
+
+    preflight = preflight_shell_dialect_command(translation, policy_matrix_approved=True)
+
+    assert preflight.target_shell_id == "cmd"
+    assert preflight.preflight_status == "blocked"
+    assert "raw_shell_pipe_or_redirection" in preflight.diagnostics
+    assert preflight.can_execute is False
+
+
+def test_preflight_can_pass_as_contract_but_still_cannot_execute():
+    command = build_structured_shell_command(
+        intent="inspect",
+        command_name="git",
+        args=["status", "--short"],
+        shell_id="git_bash",
+    )
+
+    preflight = preflight_shell_dialect_command(command, policy_matrix_approved=True)
+
+    assert preflight.preflight_status == "passed"
+    assert preflight.can_execute is False
+    assert preflight.execution_permission_granted is False
+    assert "policy_matrix_approval_missing" not in preflight.diagnostics
+
+
+def test_classify_shell_dialect_error_redacts_secret_and_detects_powershell_and_operator():
+    classified = classify_shell_dialect_error(
+        "The token secret && is not a valid statement separator in this version.",
+        shell_id="powershell_5",
+        shell_family="powershell",
+    )
+
+    assert classified.classification == "powershell_invalid_and_operator"
+    assert classified.target_shell_id == "powershell_5"
+    assert classified.can_execute is False
+    assert classified.sanitized_error == "[redacted]"
+    assert "translate_bash_and_operator_for_powershell" in classified.required_actions
+
+
+def test_classify_shell_dialect_error_categories():
+    assert classify_shell_dialect_error("git: command not found").classification == "command_not_found"
+    assert classify_shell_dialect_error("Cannot find path C:\\missing").classification == "path_not_found"
+    assert classify_shell_dialect_error("Access is denied").classification == "permission_denied"
+    assert classify_shell_dialect_error("running scripts is disabled by ExecutionPolicy").classification == "execution_policy_blocked"
+    assert classify_shell_dialect_error("unexpected token quote").classification == "quoting_or_parsing_error"
+    assert classify_shell_dialect_error("process timed out").classification == "timeout"
+    assert classify_shell_dialect_error("unmapped failure").classification == "unknown"
+
+
+def test_retry_policy_never_retries_automatically():
+    classified = classify_shell_dialect_error("git: command not found")
+
+    decision = decide_shell_dialect_retry(classified)
+
+    assert decision.retry_kind == "shell_dialect_retry_decision"
+    assert decision.retry_status == "needs_human_review"
+    assert decision.should_retry is False
+    assert decision.can_execute is False
+    assert "do_not_retry_automatically" in decision.next_required_actions
+
+
+def test_retry_policy_blocks_blocked_preflight():
+    command = build_structured_shell_command(raw_command="git status && npm test", shell_id="powershell_5")
+    preflight = preflight_shell_dialect_command(command)
+
+    decision = decide_shell_dialect_retry(preflight)
+
+    assert decision.retry_status == "blocked"
+    assert decision.should_retry is False
+    assert "resolve_preflight_blockers" in decision.next_required_actions

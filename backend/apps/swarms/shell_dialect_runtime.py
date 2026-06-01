@@ -116,6 +116,85 @@ class StructuredShellCommand:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ShellDialectTranslation:
+    translation_kind: str = "shell_dialect_translation"
+    shell_runtime_version: str = SHELL_DIALECT_RUNTIME_VERSION
+    source_shell_id: str = "unknown"
+    source_shell_family: str = "unknown"
+    target_shell_id: str = "unknown"
+    target_shell_family: str = "unknown"
+    intent: str = "unknown"
+    command_name: str = ""
+    source_argv: list[str] = field(default_factory=list)
+    translated_argv: list[str] = field(default_factory=list)
+    raw_command: str = ""
+    working_directory: str = ""
+    environment: dict[str, Any] = field(default_factory=dict)
+    translation_status: str = "blocked"
+    translation_required: bool = True
+    translation_executed_process: bool = False
+    can_execute: bool = False
+    execution_permission_granted: bool = False
+    preflight_required: bool = True
+    risk_level: str = "unknown"
+    required_actions: list[str] = field(default_factory=list)
+    risk_notes: list[str] = field(default_factory=list)
+    source_command: dict[str, Any] = field(default_factory=dict)
+    target_profile: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ShellDialectPreflightResult:
+    preflight_kind: str = "shell_dialect_preflight"
+    shell_runtime_version: str = SHELL_DIALECT_RUNTIME_VERSION
+    preflight_status: str = "blocked"
+    target_shell_id: str = "unknown"
+    target_shell_family: str = "unknown"
+    command_name: str = ""
+    argv: list[str] = field(default_factory=list)
+    raw_command: str = ""
+    can_execute: bool = False
+    execution_permission_granted: bool = False
+    required_actions: list[str] = field(default_factory=list)
+    risk_notes: list[str] = field(default_factory=list)
+    diagnostics: list[str] = field(default_factory=list)
+    risk_level: str = "unknown"
+    source: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ShellDialectErrorClassification:
+    error_kind: str = "shell_dialect_error_classification"
+    shell_runtime_version: str = SHELL_DIALECT_RUNTIME_VERSION
+    classification: str = "unknown"
+    target_shell_id: str = "unknown"
+    target_shell_family: str = "unknown"
+    sanitized_error: str = ""
+    can_execute: bool = False
+    required_actions: list[str] = field(default_factory=list)
+    risk_notes: list[str] = field(default_factory=list)
+    diagnostics: list[str] = field(default_factory=list)
+    risk_level: str = "unknown"
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ShellDialectRetryDecision:
+    retry_kind: str = "shell_dialect_retry_decision"
+    shell_runtime_version: str = SHELL_DIALECT_RUNTIME_VERSION
+    retry_status: str = "blocked"
+    should_retry: bool = False
+    next_required_actions: list[str] = field(default_factory=list)
+    reason: str = ""
+    risk_level: str = "unknown"
+    can_execute: bool = False
+    source: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 def _text(value: Any, fallback: str = "", limit: int = 600) -> str:
     text = str(value or "").strip()
     if not text:
@@ -288,6 +367,374 @@ def build_structured_shell_command(
         translation_required=shell_family != "python",
         preflight_required=True,
         shell_profile=profile_data,
+        metadata=_safe_metadata(metadata),
+    )
+
+
+
+def _coerce_structured_shell_command(value: StructuredShellCommand | dict[str, Any]) -> dict[str, Any]:
+    data = dump_shell_dialect(value)
+    if not data:
+        return dump_shell_dialect(build_structured_shell_command())
+    if data.get("command_kind") != "structured_shell_command":
+        return dump_shell_dialect(
+            build_structured_shell_command(
+                intent=data.get("intent", "unknown"),
+                command_name=data.get("command_name", ""),
+                args=_as_list(data.get("argv"))[1:] if _as_list(data.get("argv")) else [],
+                raw_command=data.get("raw_command", ""),
+                working_directory=data.get("working_directory", ""),
+                shell_id=data.get("shell_id", "unknown"),
+                environment=data.get("environment") if isinstance(data.get("environment"), dict) else {},
+                metadata=data.get("metadata") if isinstance(data.get("metadata"), dict) else {},
+                risk_level=data.get("risk_level", "unknown"),
+            )
+        )
+    return data
+
+
+def _coerce_shell_profile(value: ShellProfile | dict[str, Any] | None, *, shell_id: str = "unknown") -> dict[str, Any]:
+    if value is None:
+        return dump_shell_dialect(build_shell_profile(shell_id=shell_id))
+    data = dump_shell_dialect(value)
+    if data.get("profile_kind") != "shell_profile":
+        return dump_shell_dialect(build_shell_profile(shell_id=data.get("shell_id") or shell_id))
+    return data
+
+
+def _translation_status_for(required_actions: list[str]) -> str:
+    blocking = {
+        "provide_command_name",
+        "parse_raw_command_before_translation",
+        "select_target_shell_profile_before_translation",
+        "select_shell_profile_before_execution",
+    }
+    if any(action in blocking for action in required_actions):
+        return "blocked"
+    return "translated"
+
+
+def translate_structured_shell_command(
+    command: StructuredShellCommand | dict[str, Any],
+    *,
+    target_profile: ShellProfile | dict[str, Any] | None = None,
+    target_shell_id: str = "unknown",
+    metadata: dict[str, Any] | None = None,
+) -> ShellDialectTranslation:
+    source = _coerce_structured_shell_command(command)
+    target = _coerce_shell_profile(target_profile, shell_id=target_shell_id or source.get("shell_id", "unknown"))
+
+    source_shell_id = normalize_shell_id(source.get("shell_id"))
+    target_shell_id_resolved = normalize_shell_id(target.get("shell_id"))
+    source_family = _text(source.get("shell_family"), "unknown")
+    target_family = _text(target.get("shell_family"), "unknown")
+    source_argv = [_safe_command_value(item) for item in _as_list(source.get("argv")) if _safe_command_value(item)]
+    raw_command = _safe_command_value(source.get("raw_command"), limit=1200)
+
+    required = [
+        "do_not_execute_shell",
+        "require_translation_review",
+        "connect_dialect_preflight_guard_before_execution",
+        "require_policy_matrix_approval",
+    ]
+    notes = ["Shell dialect translation is declarative and must not execute commands."]
+    translated_argv = list(source_argv)
+
+    if not source_argv:
+        required.append("provide_command_name")
+        notes.append("Source argv is empty.")
+    if raw_command:
+        required.append("parse_raw_command_before_translation")
+        notes.append("Raw command strings cannot be translated as executable shell strings.")
+    if target_shell_id_resolved == "unknown":
+        required.append("select_target_shell_profile_before_translation")
+        notes.append("Target shell profile is unknown.")
+    if source_shell_id == "unknown":
+        required.append("select_shell_profile_before_execution")
+        notes.append("Source shell profile is unknown.")
+
+    if source_family != target_family and target_family != "python":
+        required.append("translate_between_shell_families")
+        notes.append(f"Source family {source_family} differs from target family {target_family}.")
+
+    if target_shell_id_resolved == "powershell_5":
+        required.append("block_bash_and_operator")
+        notes.append("PowerShell 5.1 requires syntax guard before accepting Bash-style operators.")
+
+    if target_family == "powershell":
+        translated_argv = [_safe_command_value(item) for item in source_argv]
+        required.append("quote_for_powershell_before_execution")
+    elif target_family == "cmd":
+        translated_argv = [_safe_command_value(item) for item in source_argv]
+        required.append("quote_for_cmd_before_execution")
+    elif target_family == "posix":
+        translated_argv = [_safe_command_value(item) for item in source_argv]
+        required.append("quote_for_posix_before_execution")
+    elif target_family == "python":
+        translated_argv = [_safe_command_value(item) for item in source_argv]
+        required.append("keep_as_structured_argv")
+    else:
+        required.append("select_supported_target_shell_family")
+
+    translation_required = source_shell_id != target_shell_id_resolved or source.get("translation_required") is True
+    risk = _text(source.get("risk_level"), "unknown").lower()
+    if risk not in DIALECT_RISK_LEVELS:
+        risk = "unknown"
+    if risk == "unknown":
+        risk = "high" if any(action in required for action in ("provide_command_name", "parse_raw_command_before_translation")) else "medium"
+
+    required = _dedupe(required)
+    return ShellDialectTranslation(
+        source_shell_id=source_shell_id,
+        source_shell_family=source_family,
+        target_shell_id=target_shell_id_resolved,
+        target_shell_family=target_family,
+        intent=normalize_command_intent(source.get("intent")),
+        command_name=_safe_command_value(source.get("command_name")),
+        source_argv=source_argv,
+        translated_argv=translated_argv,
+        raw_command=raw_command,
+        working_directory=_safe_command_value(source.get("working_directory"), limit=500),
+        environment=_safe_metadata(source.get("environment") if isinstance(source.get("environment"), dict) else {}),
+        translation_status=_translation_status_for(required),
+        translation_required=translation_required,
+        translation_executed_process=False,
+        can_execute=False,
+        execution_permission_granted=False,
+        preflight_required=True,
+        risk_level=risk,
+        required_actions=required,
+        risk_notes=_dedupe(notes + _as_list(source.get("risk_notes")) + _as_list(target.get("risk_notes"))),
+        source_command=source,
+        target_profile=target,
+        metadata=_safe_metadata(metadata),
+    )
+
+
+def _source_for_preflight(value: StructuredShellCommand | ShellDialectTranslation | dict[str, Any]) -> dict[str, Any]:
+    data = dump_shell_dialect(value)
+    if data.get("translation_kind") == "shell_dialect_translation":
+        return data
+    if data.get("command_kind") == "structured_shell_command":
+        return data
+    if data.get("preflight_kind") == "shell_dialect_preflight":
+        return data
+    return _coerce_structured_shell_command(data)
+
+
+def _preflight_shell_parts(data: dict[str, Any]) -> tuple[str, str, list[str], str, str]:
+    if data.get("translation_kind") == "shell_dialect_translation":
+        shell_id = normalize_shell_id(data.get("target_shell_id"))
+        shell_family = _text(data.get("target_shell_family"), "unknown")
+        argv = [_safe_command_value(item) for item in _as_list(data.get("translated_argv")) if _safe_command_value(item)]
+    else:
+        shell_id = normalize_shell_id(data.get("target_shell_id") or data.get("shell_id"))
+        shell_family = _text(data.get("target_shell_family") or data.get("shell_family"), "unknown")
+        argv = [_safe_command_value(item) for item in _as_list(data.get("argv")) if _safe_command_value(item)]
+    command_name = _safe_command_value(data.get("command_name") or (argv[0] if argv else ""))
+    raw_command = _safe_command_value(data.get("raw_command"), limit=1200)
+    return shell_id, shell_family, argv, command_name, raw_command
+
+
+def _contains_shell_operator(argv: list[str], operators: tuple[str, ...]) -> bool:
+    return any(any(operator in arg for operator in operators) for arg in argv)
+
+
+def preflight_shell_dialect_command(
+    command: StructuredShellCommand | ShellDialectTranslation | dict[str, Any],
+    *,
+    policy_matrix_approved: bool = False,
+    metadata: dict[str, Any] | None = None,
+) -> ShellDialectPreflightResult:
+    source = _source_for_preflight(command)
+    target_shell_id, target_shell_family, argv, command_name, raw_command = _preflight_shell_parts(source)
+    policy_approved = bool(
+        policy_matrix_approved
+        or source.get("policy_matrix_approved")
+        or source.get("execution_permission_granted")
+        or (isinstance(source.get("metadata"), dict) and source["metadata"].get("policy_matrix_approved") is True)
+    )
+
+    required: list[str] = ["do_not_execute_shell", "require_policy_matrix_approval"]
+    notes: list[str] = ["Shell dialect preflight is declarative and must not execute commands."]
+    diagnostics: list[str] = []
+
+    if target_shell_id == "unknown" or target_shell_family == "unknown":
+        required.append("select_supported_shell_profile_before_execution")
+        diagnostics.append("unknown_shell")
+        notes.append("Target shell is unknown.")
+    if not argv:
+        required.append("provide_structured_argv_before_execution")
+        diagnostics.append("empty_argv")
+        notes.append("Structured argv is empty.")
+    if raw_command:
+        required.append("parse_raw_command_before_execution")
+        diagnostics.append("raw_command_present")
+        notes.append("Raw command strings are blocked until parsed into argv.")
+
+    if target_shell_id == "powershell_5" and _contains_shell_operator(argv, ("&&",)):
+        required.append("block_bash_and_operator_for_powershell_5")
+        diagnostics.append("powershell_5_invalid_and_operator")
+        notes.append("PowerShell 5.1 does not support Bash-style &&.")
+    if target_shell_id == "cmd" and _contains_shell_operator(argv, (";",)):
+        required.append("review_cmd_semicolon_shell_syntax")
+        diagnostics.append("cmd_semicolon_requires_review")
+        notes.append("Semicolon in cmd argv may indicate unsafe raw shell syntax.")
+    if _contains_shell_operator(argv, ("|", ">", "<", "2>", "1>")):
+        required.append("parse_shell_pipes_or_redirections_before_execution")
+        diagnostics.append("raw_shell_pipe_or_redirection")
+        notes.append("Pipes and redirections must not be passed as raw shell syntax.")
+    if not policy_approved:
+        required.append("obtain_policy_matrix_approval_before_execution")
+        diagnostics.append("policy_matrix_approval_missing")
+        notes.append("PolicyMatrix approval is required before any execution boundary.")
+
+    inherited_actions = _as_list(source.get("required_actions"))
+    inherited_notes = _as_list(source.get("risk_notes"))
+    inherited_risk = _text(source.get("risk_level"), "unknown").lower()
+    if inherited_risk not in DIALECT_RISK_LEVELS:
+        inherited_risk = "unknown"
+
+    blocking_diagnostics = {
+        "unknown_shell",
+        "empty_argv",
+        "raw_command_present",
+        "powershell_5_invalid_and_operator",
+        "raw_shell_pipe_or_redirection",
+        "policy_matrix_approval_missing",
+    }
+    if any(item in blocking_diagnostics for item in diagnostics):
+        status = "blocked"
+    elif diagnostics:
+        status = "warning"
+    else:
+        status = "passed"
+
+    risk = "high" if status == "blocked" else "medium" if status == "warning" else inherited_risk
+    if risk == "unknown":
+        risk = "low"
+
+    return ShellDialectPreflightResult(
+        preflight_status=status,
+        target_shell_id=target_shell_id,
+        target_shell_family=target_shell_family,
+        command_name=command_name,
+        argv=argv,
+        raw_command=raw_command,
+        can_execute=False,
+        execution_permission_granted=False,
+        required_actions=_dedupe(required + inherited_actions),
+        risk_notes=_dedupe(notes + inherited_notes),
+        diagnostics=_dedupe(diagnostics),
+        risk_level=risk,
+        source=source,
+        metadata=_safe_metadata(metadata),
+    )
+
+
+def classify_shell_dialect_error(
+    error: str | dict[str, Any] | Exception,
+    *,
+    shell_id: str = "unknown",
+    shell_family: str = "unknown",
+    metadata: dict[str, Any] | None = None,
+) -> ShellDialectErrorClassification:
+    if isinstance(error, dict):
+        raw_error_text = _text(error.get("error") or error.get("stderr") or error.get("message"), limit=1600)
+        error_text = _safe_command_value(raw_error_text, limit=1600)
+        shell_id = error.get("shell_id", shell_id)
+        shell_family = error.get("shell_family", shell_family)
+    else:
+        raw_error_text = _text(error, limit=1600)
+        error_text = _safe_command_value(raw_error_text, limit=1600)
+    target_shell_id = normalize_shell_id(shell_id)
+    target_shell_family = _text(shell_family, "unknown")
+    lowered = raw_error_text.lower()
+
+    classification = "unknown"
+    diagnostics: list[str] = []
+    required = ["do_not_execute_shell", "review_shell_dialect_error"]
+    notes = ["Shell dialect error classification is side-effect-free."]
+
+    if "&&" in raw_error_text and ("not a valid statement separator" in lowered or "invalid end of line" in lowered):
+        classification = "powershell_invalid_and_operator"
+        required.append("translate_bash_and_operator_for_powershell")
+    elif "not recognized" in lowered or "command not found" in lowered or "is not recognized as" in lowered:
+        classification = "command_not_found"
+        required.append("verify_command_availability")
+    elif "no such file or directory" in lowered or "path not found" in lowered or "cannot find path" in lowered:
+        classification = "path_not_found"
+        required.append("verify_path_for_target_shell")
+    elif "permission denied" in lowered or "access is denied" in lowered:
+        classification = "permission_denied"
+        required.append("review_permissions_before_retry")
+    elif "executionpolicy" in lowered or "running scripts is disabled" in lowered:
+        classification = "execution_policy_blocked"
+        required.append("review_execution_policy")
+    elif "parse" in lowered or "quot" in lowered or "unexpected token" in lowered or "unterminated" in lowered:
+        classification = "quoting_or_parsing_error"
+        required.append("review_shell_quoting")
+    elif "timeout" in lowered or "timed out" in lowered:
+        classification = "timeout"
+        required.append("review_timeout_before_retry")
+
+    diagnostics.append(classification)
+    risk = "high" if classification in {"permission_denied", "execution_policy_blocked", "timeout", "unknown"} else "medium"
+    return ShellDialectErrorClassification(
+        classification=classification,
+        target_shell_id=target_shell_id,
+        target_shell_family=target_shell_family,
+        sanitized_error=error_text,
+        can_execute=False,
+        required_actions=_dedupe(required),
+        risk_notes=_dedupe(notes),
+        diagnostics=_dedupe(diagnostics),
+        risk_level=risk,
+        metadata=_safe_metadata(metadata),
+    )
+
+
+def decide_shell_dialect_retry(
+    source: ShellDialectPreflightResult | ShellDialectErrorClassification | dict[str, Any],
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> ShellDialectRetryDecision:
+    data = dump_shell_dialect(source)
+    classification = _text(data.get("classification"), "unknown")
+    preflight_status = _text(data.get("preflight_status"), "")
+    required = ["do_not_execute_shell", "do_not_retry_automatically", "require_human_review_before_retry"]
+    reason = "Retry requires human review because shell dialect contracts never execute automatically."
+    retry_status = "needs_human_review"
+    risk = _text(data.get("risk_level"), "unknown").lower()
+
+    if preflight_status == "blocked":
+        retry_status = "blocked"
+        reason = "Preflight is blocked; retry is not allowed without resolving required actions."
+        required.append("resolve_preflight_blockers")
+    elif classification in {"permission_denied", "execution_policy_blocked", "timeout", "unknown"}:
+        retry_status = "blocked"
+        reason = f"Retry blocked for {classification}."
+        required.append("escalate_shell_error_before_retry")
+    elif classification in {"command_not_found", "path_not_found", "quoting_or_parsing_error", "powershell_invalid_and_operator"}:
+        retry_status = "needs_human_review"
+        reason = f"Retry may be planned only after human review for {classification}."
+        required.append("prepare_corrected_structured_command")
+    elif preflight_status == "passed":
+        retry_status = "allowed"
+        reason = "Retry planning is allowed, but execution remains disabled until an external executor obtains approval."
+        required.append("obtain_policy_matrix_approval_before_execution")
+
+    if risk not in DIALECT_RISK_LEVELS:
+        risk = "medium" if retry_status == "needs_human_review" else "high" if retry_status == "blocked" else "low"
+
+    return ShellDialectRetryDecision(
+        retry_status=retry_status,
+        should_retry=False,
+        next_required_actions=_dedupe(required + _as_list(data.get("required_actions"))),
+        reason=reason,
+        risk_level=risk,
+        can_execute=False,
+        source=data,
         metadata=_safe_metadata(metadata),
     )
 

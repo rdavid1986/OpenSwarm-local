@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from backend.apps.runtime_timing import RuntimeTimerRecord, dump_runtime_timer
@@ -20,6 +21,8 @@ from backend.apps.swarms.miniagent_skill_adaptive import build_adaptive_skill_tr
 
 
 def redact_process_trace_source(source: Any) -> Any:
+    if is_dataclass(source):
+        return _safe(asdict(source))
     if isinstance(source, RuntimeTimerRecord):
         return _safe(dump_runtime_timer(source))
     return _safe(deepcopy(source))
@@ -76,7 +79,16 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "skill_rollback_plan"
     if data.get("summary_kind") == "skill_effectiveness_summary" or data.get("record_kind") == "skill_effectiveness_metric_record" or data.get("source_kind") == "skill_effectiveness_metrics":
         return "skill_effectiveness_metrics"
-    if data.get("source_kind") == "shell_dialect_runtime" or data.get("trace_source_kind") == "shell_dialect_runtime" or data.get("profile_kind") == "shell_profile":
+    if (
+        data.get("source_kind") == "shell_dialect_runtime"
+        or data.get("trace_source_kind") == "shell_dialect_runtime"
+        or data.get("profile_kind") == "shell_profile"
+        or data.get("command_kind") == "structured_shell_command"
+        or data.get("translation_kind") == "shell_dialect_translation"
+        or data.get("preflight_kind") == "shell_dialect_preflight"
+        or data.get("error_kind") == "shell_dialect_error_classification"
+        or data.get("retry_kind") == "shell_dialect_retry_decision"
+    ):
         return "shell_dialect_runtime"
     if data.get("source_kind") == "opencode_command" or data.get("trace_source_kind") == "opencode_command" or data.get("audit_kind") == "opencode_command_audit":
         return "opencode_command"
@@ -1236,32 +1248,89 @@ def build_skill_effectiveness_process_trace_item(source: dict[str, Any]) -> dict
 
 def build_shell_dialect_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
     data = source or {}
+    contract_kind = (
+        data.get("profile_kind")
+        or data.get("command_kind")
+        or data.get("translation_kind")
+        or data.get("preflight_kind")
+        or data.get("error_kind")
+        or data.get("retry_kind")
+        or "shell_dialect_runtime"
+    )
     capability = data.get("capability") if isinstance(data.get("capability"), dict) else {}
-    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else capability.get("required_actions") if isinstance(capability.get("required_actions"), list) else []
+    required_actions = (
+        data.get("required_actions")
+        if isinstance(data.get("required_actions"), list)
+        else data.get("next_required_actions")
+        if isinstance(data.get("next_required_actions"), list)
+        else capability.get("required_actions")
+        if isinstance(capability.get("required_actions"), list)
+        else []
+    )
     risk = _first_text(data, "risk_level", default="unknown")
-    shell_id = _first_text(data, "shell_id", default="unknown")
+    shell_id = _first_text(data, "shell_id", "target_shell_id", "source_shell_id", default="unknown")
     shell_name = _first_text(data, "shell_name", default="Unknown")
-    shell_family = _first_text(data, "shell_family", default="unknown")
-    blocked = shell_id == "unknown" or risk in {"critical", "high"}
-    status = "blocked" if blocked else "warning" if required_actions or risk in {"medium", "high"} else "completed"
+    shell_family = _first_text(data, "shell_family", "target_shell_family", "source_shell_family", default="unknown")
+    explicit_status = _first_text(data, "preflight_status", "translation_status", "retry_status")
+    blocked = shell_id == "unknown" or risk in {"critical", "high"} or explicit_status == "blocked"
+    status = (
+        "blocked"
+        if blocked
+        else "completed"
+        if explicit_status in {"passed", "translated", "allowed"}
+        else "warning"
+        if required_actions or risk in {"medium", "high"} or explicit_status in {"warning", "needs_human_review"}
+        else "completed"
+    )
     supports_and = capability.get("supports_and_operator")
-    summary = f"Shell profile detected: {shell_name} ({shell_id}); execution disabled."
+    command_name = _first_text(data, "command_name", default=(data.get("argv") or data.get("translated_argv") or [""])[0] if isinstance(data.get("argv") or data.get("translated_argv"), list) and (data.get("argv") or data.get("translated_argv")) else "")
+    summary = f"Shell dialect contract recorded: {contract_kind}; execution disabled."
+    if contract_kind == "shell_profile":
+        summary = f"Shell profile detected: {shell_name} ({shell_id}); execution disabled."
+    elif contract_kind == "structured_shell_command":
+        summary = f"Structured shell command recorded for {command_name or 'unknown command'}; execution disabled."
+    elif contract_kind == "shell_dialect_translation":
+        summary = f"Shell dialect translation recorded for {command_name or 'unknown command'}; execution disabled."
+    elif contract_kind == "shell_dialect_preflight":
+        summary = f"Shell dialect preflight {explicit_status or 'recorded'} for {command_name or 'unknown command'}; execution disabled."
+    elif contract_kind == "shell_dialect_error_classification":
+        summary = f"Shell dialect error classified as {data.get('classification') or 'unknown'}; execution disabled."
+    elif contract_kind == "shell_dialect_retry_decision":
+        summary = f"Shell dialect retry decision {explicit_status or 'recorded'}; automatic retry disabled."
     if shell_id == "powershell_5" and supports_and is False:
         summary = "Shell profile detected: Windows PowerShell 5.1; Bash-style && must be blocked before execution."
     return build_process_trace_item(
-        trace_id=data.get("trace_id") or f"shell-profile:{shell_id}",
-        kind="config",
-        subsystem="ConfigCore",
-        title=f"Shell profile: {shell_name}",
+        trace_id=data.get("trace_id") or f"shell-dialect:{contract_kind}:{shell_id}:{command_name or data.get('classification') or 'contract'}",
+        kind="config" if contract_kind == "shell_profile" else "validation" if contract_kind in {"shell_dialect_preflight", "shell_dialect_error_classification"} else "action",
+        subsystem="ConfigCore" if contract_kind == "shell_profile" else "ValidationCore" if contract_kind in {"shell_dialect_preflight", "shell_dialect_error_classification"} else "ActionCore",
+        title=f"Shell dialect: {contract_kind}",
         summary=summary,
         status=status,
         details={
             "source_kind": "shell_dialect_runtime",
-            "shell_profile_core": True,
-            "profile_kind": data.get("profile_kind", "shell_profile"),
+            "shell_profile_core": contract_kind == "shell_profile",
+            "contract_kind": contract_kind,
+            "profile_kind": data.get("profile_kind"),
+            "command_kind": data.get("command_kind"),
+            "translation_kind": data.get("translation_kind"),
+            "preflight_kind": data.get("preflight_kind"),
+            "error_kind": data.get("error_kind"),
+            "retry_kind": data.get("retry_kind"),
             "shell_id": shell_id,
             "shell_name": shell_name,
             "shell_family": shell_family,
+            "target_shell_id": data.get("target_shell_id"),
+            "target_shell_family": data.get("target_shell_family"),
+            "command_name": command_name,
+            "argv": data.get("argv") if isinstance(data.get("argv"), list) else None,
+            "translated_argv": data.get("translated_argv") if isinstance(data.get("translated_argv"), list) else None,
+            "raw_command_present": bool(data.get("raw_command")),
+            "preflight_status": data.get("preflight_status"),
+            "translation_status": data.get("translation_status"),
+            "retry_status": data.get("retry_status"),
+            "classification": data.get("classification"),
+            "sanitized_error": data.get("sanitized_error"),
+            "diagnostics": data.get("diagnostics") if isinstance(data.get("diagnostics"), list) else [],
             "shell_version": data.get("shell_version") or "",
             "platform_system": data.get("platform_system") or "unknown",
             "platform_release": data.get("platform_release") or "unknown",
@@ -1273,9 +1342,12 @@ def build_shell_dialect_process_trace_item(source: dict[str, Any]) -> dict[str, 
             "risk_notes": data.get("risk_notes") if isinstance(data.get("risk_notes"), list) else [],
             "can_execute": False,
             "detection_executed_process": False,
+            "translation_executed_process": False,
+            "execution_permission_granted": False,
+            "should_retry": False,
             "contains_private_reasoning": False,
         },
-        metadata={"source_kind": "shell_dialect_runtime", "shell_profile_core": True},
+        metadata={"source_kind": "shell_dialect_runtime", "shell_profile_core": contract_kind == "shell_profile", "contract_kind": contract_kind},
     )
 
 
