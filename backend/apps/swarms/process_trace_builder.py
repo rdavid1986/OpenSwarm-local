@@ -62,6 +62,14 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "miniagent_skill_adaptive"
     if data.get("audit_kind") == "swarm_final_audit":
         return "swarm_final_audit"
+    if (
+        data.get("source_kind") == "import_compatibility_runtime"
+        or data.get("detection_kind") == "import_source_detection"
+        or data.get("candidate_kind") == "import_candidate_envelope"
+        or data.get("score_kind") == "import_compatibility_score"
+        or data.get("decision_kind") == "import_policy_bridge_decision"
+    ):
+        return "import_compatibility_runtime"
     if data.get("report_kind") == "skill_import_preview_report" or data.get("source_kind") in {"skill_import_preview", "skill_import_candidate"}:
         return "skill_import_preview"
     if (
@@ -1279,6 +1287,106 @@ def build_project_orientation_process_trace_item(source: dict[str, Any]) -> dict
     )
 
 
+
+def build_import_compatibility_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    contract_kind = _first_text(
+        data,
+        "detection_kind",
+        "candidate_kind",
+        "score_kind",
+        "decision_kind",
+        default="import_compatibility_runtime",
+    )
+    detected_format = _first_text(data, "detected_format", default="unknown")
+    candidate_type = _first_text(data, "normalized_type", default="unknown")
+    decision = _first_text(data, "decision", default="not_decided")
+    compatibility_level = _first_text(data, "compatibility_level", default="unknown")
+    risk_level = _first_text(data, "risk_level", default="unknown")
+    blockers = data.get("blockers") if isinstance(data.get("blockers"), list) else []
+    risk_flags = data.get("risk_flags") if isinstance(data.get("risk_flags"), list) else []
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    provenance = data.get("provenance") if isinstance(data.get("provenance"), dict) else {}
+
+    blocked = bool(blockers) or decision == "blocked" or compatibility_level == "blocked"
+    needs_review = bool(required_actions) or decision in {"needs_review", "unsupported"} or compatibility_level in {"needs_review", "unsupported"}
+    status = "blocked" if blocked else "warning" if needs_review else "completed"
+
+    kind = "review"
+    subsystem = "ReviewCore"
+    if contract_kind == "import_source_detection":
+        kind = "config"
+        subsystem = "ConfigCore"
+    elif contract_kind == "import_compatibility_score":
+        kind = "validation"
+        subsystem = "ValidationCore"
+    elif contract_kind == "import_policy_bridge_decision":
+        kind = "review"
+        subsystem = "ReviewCore"
+    elif candidate_type == "SkillSpecCandidate":
+        kind = "skill"
+        subsystem = "SkillCore"
+    elif candidate_type in {"ToolSpecCandidate", "CommandSpecCandidate", "MCPServerCandidate", "ApiToolCandidate"}:
+        kind = "tool"
+        subsystem = "ActionCore"
+    elif candidate_type in {"AgentSpecCandidate", "SubagentBlueprintCandidate"}:
+        kind = "miniagent"
+        subsystem = "SwarmCore"
+    elif candidate_type == "ProjectInstructionCandidate":
+        kind = "config"
+        subsystem = "ConfigCore"
+    elif candidate_type == "MemorySignalCandidate":
+        kind = "context"
+        subsystem = "ContextCore"
+
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or contract_kind,
+        kind=kind,
+        subsystem=subsystem,
+        title="Import compatibility runtime contract",
+        summary="Import compatibility metadata recorded without installing, executing, activating MCP, creating agents, or writing memory.",
+        status=status,
+        evidence_refs=data.get("evidence_refs") if isinstance(data.get("evidence_refs"), list) else [],
+        details={
+            "source_kind": "import_compatibility_runtime",
+            "contract_kind": contract_kind,
+            "detected_format": detected_format,
+            "candidate_type": candidate_type,
+            "source_uri": data.get("source_uri") or provenance.get("source_uri"),
+            "source_hash": data.get("source_hash") or provenance.get("source_hash"),
+            "source_author": data.get("source_author") or provenance.get("source_author"),
+            "source_license": data.get("source_license") or provenance.get("source_license"),
+            "provenance": provenance,
+            "confidence": data.get("confidence"),
+            "overall_score": data.get("overall_score"),
+            "compatibility_level": compatibility_level,
+            "decision": decision,
+            "risk_level": risk_level,
+            "risk_flags": risk_flags,
+            "blockers": blockers,
+            "required_actions": required_actions,
+            "files_seen": data.get("files_seen") if isinstance(data.get("files_seen"), list) else [],
+            "entrypoints": data.get("entrypoints") if isinstance(data.get("entrypoints"), list) else [],
+            "unknown_fields": data.get("unknown_fields") if isinstance(data.get("unknown_fields"), list) else [],
+            "policy_matrix_required": data.get("policy_matrix_required", True),
+            "skill_harness_required": data.get("skill_harness_required", False),
+            "shell_dialect_required": data.get("shell_dialect_required", False),
+            "safeshell_required": data.get("safeshell_required", False),
+            "secret_visibility_required": data.get("secret_visibility_required", True),
+            "mcp_activation_guard_required": data.get("mcp_activation_guard_required", False),
+            "external_provider_gate_required": data.get("external_provider_gate_required", False),
+            "memory_write_gate_required": data.get("memory_write_gate_required", False),
+            "can_execute": False,
+            "can_install": False,
+            "can_activate_mcp": False,
+            "can_create_agent": False,
+            "can_write_memory": False,
+            "contains_private_reasoning": False,
+        },
+        metadata={"source_kind": "import_compatibility_runtime", "contract_kind": contract_kind},
+    )
+
+
 def build_skill_import_process_trace_item(preview_report: dict[str, Any], policy: dict[str, Any] | None = None) -> dict[str, Any]:
     report = preview_report or {}
     policy_data = policy if isinstance(policy, dict) else {}
@@ -1691,6 +1799,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = _adaptive_skill_item(data)
     elif source_kind == "swarm_final_audit":
         item = _audit_item(data)
+    elif source_kind == "import_compatibility_runtime":
+        item = build_import_compatibility_process_trace_item(data)
     elif source_kind == "skill_import_preview":
         item = build_skill_import_process_trace_item(data, policy=data.get("policy") if isinstance(data.get("policy"), dict) else None)
     elif source_kind == "skill_harness":
