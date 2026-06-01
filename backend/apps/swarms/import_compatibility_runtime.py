@@ -214,6 +214,10 @@ def _as_list(value: Any, *, limit: int = 80) -> list[str]:
     return result
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def _safe(value: Any) -> Any:
     if isinstance(value, dict):
         safe: dict[str, Any] = {}
@@ -282,9 +286,83 @@ def _risk_flags_from_text(text: str, payload: dict[str, Any]) -> list[str]:
         risks.append("required_tools_declared")
     if payload.get("required_mcp_servers") or "mcpserver" in lowered or "mcp server" in lowered:
         risks.append("required_mcp_servers_declared")
+    if payload.get("tool_schema") or payload.get("input_schema") or payload.get("schema") or "inputschema" in lowered:
+        risks.append("tool_schema_declared")
+    if payload.get("side_effects") or "side effect" in lowered or "side-effect" in lowered:
+        risks.append("side_effects_declared")
+    if payload.get("required_approvals") or payload.get("approval_policy") or "requires approval" in lowered:
+        risks.append("approval_requirements_declared")
     if "script" in lowered or "shell" in lowered or "bash" in lowered or "powershell" in lowered:
         risks.append("executable_hint_present")
     return list(dict.fromkeys(risks))
+
+
+def _tool_import_surface(data: dict[str, Any], detected_format: str, risk_flags: list[str]) -> dict[str, Any]:
+    tool_schema = _as_dict(data.get("tool_schema") or data.get("input_schema") or data.get("schema"))
+    mcp_config = _as_dict(data.get("mcp_config") or data.get("mcpServers") or data.get("mcp_servers"))
+    api_docs = _text(data.get("api_docs") or data.get("openapi") or data.get("swagger"), limit=2000)
+    side_effects = _as_list(data.get("side_effects"))
+    required_approvals = _as_list(data.get("required_approvals"))
+
+    if detected_format in {"tool", "mcp_server", "api_tool", "command"} and not required_approvals:
+        required_approvals = ["human_review_before_activation", "policy_matrix_review"]
+
+    if detected_format in {"tool", "api_tool"} and not side_effects:
+        side_effects = ["unknown_side_effects"]
+
+    shell_required = detected_format in {"tool", "command"} or "executable_hint_present" in risk_flags
+    mcp_required = detected_format == "mcp_server" or "required_mcp_servers_declared" in risk_flags
+    api_required = detected_format == "api_tool"
+
+    sandbox_plan = {
+        "plan_kind": "tool_import_sandbox_plan",
+        "policy_matrix_required": True,
+        "dry_run_required": True,
+        "validation_required": True,
+        "shell_dialect_required": shell_required,
+        "safeshell_required": shell_required,
+        "mcp_activation_guard_required": mcp_required,
+        "external_provider_gate_required": api_required,
+        "secret_visibility_required": True,
+        "can_execute": False,
+        "can_call_api": False,
+        "can_activate_mcp": False,
+        "can_modify_files": False,
+        "execution_blocked": True,
+        "api_call_blocked": True,
+        "mcp_activation_blocked": True,
+        "file_modification_blocked": True,
+    }
+    dry_run_plan = {
+        "plan_kind": "tool_import_dry_run_validation_plan",
+        "schema_validation_required": detected_format in {"tool", "api_tool"},
+        "permission_review_required": True,
+        "side_effect_review_required": bool(side_effects),
+        "approval_review_required": True,
+        "api_call_blocked": True,
+        "mcp_activation_blocked": True,
+        "execution_blocked": True,
+    }
+
+    return _safe({
+        "tool_schema": tool_schema,
+        "mcp_config_candidate": {
+            "config": mcp_config,
+            "activation_enabled": False,
+            "can_activate_mcp": False,
+            "review_required": detected_format == "mcp_server",
+        },
+        "api_tool_candidate": {
+            "api_docs_preview": api_docs,
+            "can_call_api": False,
+            "external_provider_gate_required": api_required,
+            "review_required": api_required,
+        },
+        "side_effects": side_effects,
+        "required_approvals": required_approvals,
+        "tool_sandbox_plan": sandbox_plan,
+        "dry_run_validation_plan": dry_run_plan,
+    })
 
 
 def _detect_format(payload: dict[str, Any], files: list[dict[str, Any]], text: str) -> tuple[str, float, list[str]]:
@@ -305,6 +383,8 @@ def _detect_format(payload: dict[str, Any], files: list[dict[str, Any]], text: s
         return "project_instruction", 0.74, ["editor_rule"]
     if "mcpservers" in lowered or "mcp server" in lowered or '"mcp"' in lowered or "required_mcp_servers" in lowered:
         return "mcp_server", 0.78, ["mcp_config_like"]
+    if "tool_schema" in lowered or "inputschema" in lowered or '"parameters"' in lowered and '"type"' in lowered:
+        return "tool", 0.74, ["tool_schema_like"]
     if "openapi" in lowered or "swagger" in lowered or "api docs" in lowered:
         return "api_tool", 0.72, ["api_docs_like"]
     if "agent spec" in lowered or '"agent"' in lowered or "handoff" in lowered:
@@ -344,6 +424,9 @@ def detect_import_source(payload: dict[str, Any] | None = None, **kwargs: Any) -
         "files", "raw_text", "content", "description", "source_format", "detected_format", "format",
         "source_uri", "source_url", "source_hash", "source_author", "source_license",
         "required_tools", "required_mcp_servers", "metadata", "provenance", "name",
+        "schema", "tool_schema", "input_schema", "permissions", "required_permissions",
+        "side_effects", "required_approvals", "approval_policy", "validation_plan",
+        "evidence_contract", "api_docs", "openapi", "swagger", "mcp_config", "mcpServers", "mcp_servers",
     }
     unknown_fields = sorted(str(key) for key in data.keys() if key not in known)[:80]
 
@@ -385,7 +468,14 @@ def normalize_import_candidate(payload: dict[str, Any] | None = None, *, detecti
     source_license = _text(data.get("source_license") or provenance_input.get("source_license") or provenance_input.get("license"), fallback="unknown", limit=120)
 
     risk_flags = list(dict.fromkeys(_as_list(detection_data.get("risk_flags")) + _as_list(data.get("risk_flags"))))
+    if detected_format in {"tool", "mcp_server", "api_tool", "command"}:
+        if not _as_dict(data.get("validation_plan")):
+            risk_flags.append("missing_validation_plan")
+        if not _as_dict(data.get("evidence_contract")):
+            risk_flags.append("missing_evidence_contract")
+    risk_flags = list(dict.fromkeys(risk_flags))
     required_actions = list(dict.fromkeys(_as_list(detection_data.get("required_actions")) + _as_list(data.get("required_actions"))))
+    surface = _tool_import_surface(data, detected_format, risk_flags)
 
     provenance = _safe({
         **provenance_input,
@@ -404,6 +494,18 @@ def normalize_import_candidate(payload: dict[str, Any] | None = None, *, detecti
         "summary": _text(data.get("description") or data.get("summary"), fallback="External import candidate pending review.", limit=500),
         "required_tools": _as_list(data.get("required_tools")),
         "required_mcp_servers": _as_list(data.get("required_mcp_servers")),
+        "tool_schema": surface.get("tool_schema"),
+        "mcp_config_candidate": surface.get("mcp_config_candidate"),
+        "api_tool_candidate": surface.get("api_tool_candidate"),
+        "side_effects": surface.get("side_effects"),
+        "required_approvals": surface.get("required_approvals"),
+        "tool_sandbox_plan": surface.get("tool_sandbox_plan"),
+        "dry_run_validation_plan": surface.get("dry_run_validation_plan"),
+        "policy_matrix_required": True,
+        "can_execute": False,
+        "can_call_api": False,
+        "can_activate_mcp": False,
+        "can_modify_files": False,
         "provenance": provenance,
     })
 
@@ -495,6 +597,18 @@ def build_import_compatibility_report(envelope: ImportCandidateEnvelope | dict[s
     if "required_mcp_servers_declared" in risk_flags:
         warnings.append("required_mcp_servers_need_policy_review")
         required_actions.append("review_required_mcp_servers_policy")
+    if "side_effects_declared" in risk_flags:
+        warnings.append("side_effects_need_review")
+        required_actions.append("review_tool_side_effects")
+    if "approval_requirements_declared" in risk_flags:
+        warnings.append("approval_requirements_need_review")
+        required_actions.append("review_tool_approval_requirements")
+    if "missing_validation_plan" in risk_flags:
+        warnings.append("validation_plan_missing")
+        required_actions.append("define_tool_validation_plan")
+    if "missing_evidence_contract" in risk_flags:
+        warnings.append("evidence_contract_missing")
+        required_actions.append("define_tool_evidence_contract")
     if "possible_secret_material" in risk_flags:
         blockers.append("possible_secret_material")
         required_actions.append("remove_or_redact_secret_material")
@@ -566,6 +680,15 @@ def evaluate_import_policy_bridge(
         decision = "needs_review"
         risk_level = "medium"
         required_actions.append("request_import_review")
+
+    if detected_format == "tool":
+        required_actions.extend(["review_tool_schema_compatibility", "define_tool_sandbox_dry_run"])
+    elif detected_format == "mcp_server":
+        required_actions.extend(["review_mcp_server_config_candidate", "confirm_mcp_activation_remains_disabled"])
+    elif detected_format == "api_tool":
+        required_actions.extend(["review_api_docs_tool_candidate", "confirm_no_api_calls_during_import", "define_api_tool_dry_run"])
+    elif detected_format == "command":
+        required_actions.extend(["review_command_sandbox_policy", "confirm_shell_dialect_preflight"])
 
     if normalized_type == "SkillSpecCandidate":
         skill_harness_required = True
