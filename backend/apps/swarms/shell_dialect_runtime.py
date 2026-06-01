@@ -195,6 +195,31 @@ class ShellDialectRetryDecision:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ShellDialectAgentTerminalGate:
+    gate_kind: str = "shell_dialect_agent_terminal_gate"
+    shell_runtime_version: str = SHELL_DIALECT_RUNTIME_VERSION
+    gate_status: str = "blocked"
+    can_execute: bool = False
+    required_actions: list[str] = field(default_factory=list)
+    risk_notes: list[str] = field(default_factory=list)
+    shell_id: str = "unknown"
+    target_shell_id: str = "unknown"
+    preflight_status: str = "blocked"
+    policy_approval_status: str = "missing"
+    safeshell_connected: bool = False
+    process_trace_ready: bool = False
+    structured_command_ready: bool = False
+    translation_ready: bool = False
+    risk_level: str = "unknown"
+    diagnostics: list[str] = field(default_factory=list)
+    shell_profile: dict[str, Any] = field(default_factory=dict)
+    structured_command: dict[str, Any] = field(default_factory=dict)
+    translation: dict[str, Any] = field(default_factory=dict)
+    preflight: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 def _text(value: Any, fallback: str = "", limit: int = 600) -> str:
     text = str(value or "").strip()
     if not text:
@@ -735,6 +760,97 @@ def decide_shell_dialect_retry(
         risk_level=risk,
         can_execute=False,
         source=data,
+        metadata=_safe_metadata(metadata),
+    )
+
+
+def build_agent_terminal_shell_gate(
+    *,
+    shell_profile: ShellProfile | dict[str, Any] | None = None,
+    structured_command: StructuredShellCommand | dict[str, Any] | None = None,
+    translation: ShellDialectTranslation | dict[str, Any] | None = None,
+    preflight: ShellDialectPreflightResult | dict[str, Any] | None = None,
+    policy_approval_status: str = "missing",
+    safeshell_connected: bool = False,
+    process_trace_ready: bool = False,
+    metadata: dict[str, Any] | None = None,
+) -> ShellDialectAgentTerminalGate:
+    profile_data = dump_shell_dialect(shell_profile) if shell_profile is not None else {}
+    command_data = dump_shell_dialect(structured_command) if structured_command is not None else {}
+    translation_data = dump_shell_dialect(translation) if translation is not None else {}
+    preflight_data = dump_shell_dialect(preflight) if preflight is not None else {}
+
+    shell_id = normalize_shell_id(profile_data.get("shell_id") or command_data.get("shell_id") or translation_data.get("source_shell_id"))
+    target_shell_id = normalize_shell_id(
+        preflight_data.get("target_shell_id")
+        or translation_data.get("target_shell_id")
+        or command_data.get("target_shell_id")
+        or command_data.get("shell_id")
+    )
+    preflight_status = _text(preflight_data.get("preflight_status"), "missing").lower()
+    policy_status = _text(policy_approval_status, "missing").lower().replace(" ", "_")
+    structured_ready = command_data.get("command_kind") == "structured_shell_command" and bool(_as_list(command_data.get("argv")))
+    translation_ready = translation_data.get("translation_kind") == "shell_dialect_translation" and translation_data.get("translation_status") == "translated"
+    preflight_ready = preflight_status in {"passed", "warning"}
+    policy_ready = policy_status in {"approved", "granted", "allowed"}
+
+    required = ["do_not_execute_shell", "keep_agent_terminal_disabled", "do_not_unblock_opencode_commands_parity_14"]
+    notes = ["Agent Terminal integration gate is declarative and does not execute commands."]
+    diagnostics: list[str] = []
+
+    if shell_id == "unknown":
+        required.append("provide_valid_shell_profile")
+        diagnostics.append("missing_shell_profile")
+    if not structured_ready:
+        required.append("provide_structured_shell_command")
+        diagnostics.append("missing_structured_command")
+    if not translation_ready:
+        required.append("provide_shell_dialect_translation")
+        diagnostics.append("missing_shell_dialect_translation")
+    if not preflight_ready:
+        required.append("pass_shell_dialect_preflight")
+        diagnostics.append("preflight_not_ready")
+    if not policy_ready:
+        required.append("obtain_policy_matrix_approval")
+        diagnostics.append("policy_matrix_approval_missing")
+    if not safeshell_connected:
+        required.append("connect_safeshell_runtime")
+        diagnostics.append("safeshell_not_connected")
+    if not process_trace_ready:
+        required.append("attach_process_trace_evidence")
+        diagnostics.append("process_trace_not_ready")
+
+    gate_ready = (
+        shell_id != "unknown"
+        and structured_ready
+        and translation_ready
+        and preflight_ready
+        and policy_ready
+        and safeshell_connected
+        and process_trace_ready
+    )
+    gate_status = "ready" if gate_ready else "needs_review" if preflight_ready and policy_ready else "blocked"
+    risk = "low" if gate_ready else "medium" if gate_status == "needs_review" else "high"
+
+    return ShellDialectAgentTerminalGate(
+        gate_status=gate_status,
+        can_execute=False,
+        required_actions=_dedupe(required),
+        risk_notes=_dedupe(notes + _as_list(preflight_data.get("risk_notes")) + _as_list(translation_data.get("risk_notes"))),
+        shell_id=shell_id,
+        target_shell_id=target_shell_id,
+        preflight_status=preflight_status,
+        policy_approval_status=policy_status,
+        safeshell_connected=bool(safeshell_connected),
+        process_trace_ready=bool(process_trace_ready),
+        structured_command_ready=bool(structured_ready),
+        translation_ready=bool(translation_ready),
+        risk_level=risk,
+        diagnostics=_dedupe(diagnostics),
+        shell_profile=profile_data,
+        structured_command=command_data,
+        translation=translation_data,
+        preflight=preflight_data,
         metadata=_safe_metadata(metadata),
     )
 

@@ -88,6 +88,7 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         or data.get("preflight_kind") == "shell_dialect_preflight"
         or data.get("error_kind") == "shell_dialect_error_classification"
         or data.get("retry_kind") == "shell_dialect_retry_decision"
+        or data.get("gate_kind") == "shell_dialect_agent_terminal_gate"
     ):
         return "shell_dialect_runtime"
     if data.get("source_kind") == "opencode_command" or data.get("trace_source_kind") == "opencode_command" or data.get("audit_kind") == "opencode_command_audit":
@@ -1255,6 +1256,7 @@ def build_shell_dialect_process_trace_item(source: dict[str, Any]) -> dict[str, 
         or data.get("preflight_kind")
         or data.get("error_kind")
         or data.get("retry_kind")
+        or data.get("gate_kind")
         or "shell_dialect_runtime"
     )
     capability = data.get("capability") if isinstance(data.get("capability"), dict) else {}
@@ -1271,7 +1273,7 @@ def build_shell_dialect_process_trace_item(source: dict[str, Any]) -> dict[str, 
     shell_id = _first_text(data, "shell_id", "target_shell_id", "source_shell_id", default="unknown")
     shell_name = _first_text(data, "shell_name", default="Unknown")
     shell_family = _first_text(data, "shell_family", "target_shell_family", "source_shell_family", default="unknown")
-    explicit_status = _first_text(data, "preflight_status", "translation_status", "retry_status")
+    explicit_status = _first_text(data, "gate_status", "preflight_status", "translation_status", "retry_status")
     blocked = shell_id == "unknown" or risk in {"critical", "high"} or explicit_status == "blocked"
     status = (
         "blocked"
@@ -1297,6 +1299,8 @@ def build_shell_dialect_process_trace_item(source: dict[str, Any]) -> dict[str, 
         summary = f"Shell dialect error classified as {data.get('classification') or 'unknown'}; execution disabled."
     elif contract_kind == "shell_dialect_retry_decision":
         summary = f"Shell dialect retry decision {explicit_status or 'recorded'}; automatic retry disabled."
+    elif contract_kind == "shell_dialect_agent_terminal_gate":
+        summary = f"Agent Terminal shell gate {explicit_status or 'recorded'}; execution disabled."
     if shell_id == "powershell_5" and supports_and is False:
         summary = "Shell profile detected: Windows PowerShell 5.1; Bash-style && must be blocked before execution."
     return build_process_trace_item(
@@ -1316,6 +1320,7 @@ def build_shell_dialect_process_trace_item(source: dict[str, Any]) -> dict[str, 
             "preflight_kind": data.get("preflight_kind"),
             "error_kind": data.get("error_kind"),
             "retry_kind": data.get("retry_kind"),
+            "gate_kind": data.get("gate_kind"),
             "shell_id": shell_id,
             "shell_name": shell_name,
             "shell_family": shell_family,
@@ -1328,9 +1333,15 @@ def build_shell_dialect_process_trace_item(source: dict[str, Any]) -> dict[str, 
             "preflight_status": data.get("preflight_status"),
             "translation_status": data.get("translation_status"),
             "retry_status": data.get("retry_status"),
+            "gate_status": data.get("gate_status"),
             "classification": data.get("classification"),
             "sanitized_error": data.get("sanitized_error"),
             "diagnostics": data.get("diagnostics") if isinstance(data.get("diagnostics"), list) else [],
+            "policy_approval_status": data.get("policy_approval_status"),
+            "safeshell_connected": data.get("safeshell_connected"),
+            "process_trace_ready": data.get("process_trace_ready"),
+            "structured_command_ready": data.get("structured_command_ready"),
+            "translation_ready": data.get("translation_ready"),
             "shell_version": data.get("shell_version") or "",
             "platform_system": data.get("platform_system") or "unknown",
             "platform_release": data.get("platform_release") or "unknown",

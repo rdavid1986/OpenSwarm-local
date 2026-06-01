@@ -1,5 +1,6 @@
 from backend.apps.swarms.shell_dialect_runtime import (
     build_shell_dialect_capability,
+    build_agent_terminal_shell_gate,
     build_shell_profile,
     build_shell_profile_trace_source,
     build_structured_shell_command,
@@ -343,3 +344,70 @@ def test_retry_policy_blocks_blocked_preflight():
     assert decision.retry_status == "blocked"
     assert decision.should_retry is False
     assert "resolve_preflight_blockers" in decision.next_required_actions
+
+
+def test_agent_terminal_gate_blocks_without_policy_safeshell_and_trace():
+    profile = build_shell_profile(shell_id="powershell_5")
+    command = build_structured_shell_command(
+        intent="test",
+        command_name="npm",
+        args=["test"],
+        shell_profile=profile,
+    )
+    translation = translate_structured_shell_command(command, target_shell_id="powershell_5")
+    preflight = preflight_shell_dialect_command(translation, policy_matrix_approved=True)
+
+    gate = build_agent_terminal_shell_gate(
+        shell_profile=profile,
+        structured_command=command,
+        translation=translation,
+        preflight=preflight,
+        policy_approval_status="missing",
+        safeshell_connected=False,
+        process_trace_ready=False,
+    )
+
+    assert gate.gate_kind == "shell_dialect_agent_terminal_gate"
+    assert gate.gate_status == "blocked"
+    assert gate.can_execute is False
+    assert gate.shell_id == "powershell_5"
+    assert gate.target_shell_id == "powershell_5"
+    assert gate.preflight_status == "passed"
+    assert gate.policy_approval_status == "missing"
+    assert gate.safeshell_connected is False
+    assert gate.process_trace_ready is False
+    assert "connect_safeshell_runtime" in gate.required_actions
+    assert "obtain_policy_matrix_approval" in gate.required_actions
+    assert "attach_process_trace_evidence" in gate.required_actions
+
+
+def test_agent_terminal_gate_ready_contract_still_cannot_execute():
+    profile = build_shell_profile(shell_id="git_bash")
+    command = build_structured_shell_command(
+        intent="inspect",
+        command_name="git",
+        args=["status", "--short"],
+        shell_profile=profile,
+    )
+    translation = translate_structured_shell_command(command, target_shell_id="git_bash")
+    preflight = preflight_shell_dialect_command(translation, policy_matrix_approved=True)
+
+    gate = build_agent_terminal_shell_gate(
+        shell_profile=profile,
+        structured_command=command,
+        translation=translation,
+        preflight=preflight,
+        policy_approval_status="approved",
+        safeshell_connected=True,
+        process_trace_ready=True,
+    )
+
+    assert gate.gate_status == "ready"
+    assert gate.can_execute is False
+    assert gate.structured_command_ready is True
+    assert gate.translation_ready is True
+    assert gate.required_actions[:3] == [
+        "do_not_execute_shell",
+        "keep_agent_terminal_disabled",
+        "do_not_unblock_opencode_commands_parity_14",
+    ]

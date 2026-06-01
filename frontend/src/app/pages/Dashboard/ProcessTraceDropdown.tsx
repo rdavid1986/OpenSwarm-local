@@ -319,6 +319,40 @@ function pushDetailRow(rows: Array<[string, unknown]>, label: string, value: unk
 }
 
 
+function isShellDialectTraceItem(item: ProcessTraceItem): boolean {
+  const details = item.details || {};
+  const metadata = item.metadata || {};
+  return getDetailValue(details, 'source_kind') === 'shell_dialect_runtime'
+    || metadata.source_kind === 'shell_dialect_runtime'
+    || Boolean(getDetailValue(details, 'contract_kind', 'profile_kind', 'command_kind', 'translation_kind', 'preflight_kind', 'error_kind', 'retry_kind', 'gate_kind'));
+}
+
+function buildShellDialectBadgeLabel(item: ProcessTraceItem): string | null {
+  if (!isShellDialectTraceItem(item)) return null;
+  const details = item.details || {};
+  const contract = traceText(getDetailValue(details, 'contract_kind', 'gate_kind', 'preflight_kind', 'translation_kind', 'retry_kind', 'error_kind', 'command_kind', 'profile_kind'), '').replace(/^shell_dialect_/, '').replace(/_/g, ' ');
+  const shell = traceText(getDetailValue(details, 'target_shell_id', 'shell_id'), '');
+  const risk = traceText(getDetailValue(details, 'risk_level'), '');
+  const status = traceText(getDetailValue(details, 'gate_status', 'preflight_status', 'translation_status', 'retry_status', 'classification'), '');
+  return ['shell', contract, shell, risk, status].filter(Boolean).join(' · ');
+}
+
+function buildShellDialectWarning(item: ProcessTraceItem): string | null {
+  if (!isShellDialectTraceItem(item)) return null;
+  const details = item.details || {};
+  const requiredActions = getDetailValue(details, 'required_actions');
+  const canExecute = getDetailValue(details, 'can_execute');
+  const permission = getDetailValue(details, 'execution_permission_granted');
+  const shouldRetry = getDetailValue(details, 'should_retry');
+  const risk = traceText(getDetailValue(details, 'risk_level'), 'unknown');
+
+  if (canExecute === false || permission === false || shouldRetry === false) {
+    return `Execution disabled · risk ${risk} · ${compactTraceList(requiredActions, 3)}`;
+  }
+  return compactTraceList(requiredActions, 3);
+}
+
+
 function numericDetail(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value.trim()) {
@@ -376,6 +410,32 @@ function buildSubsystemDetailRows(item: ProcessTraceItem, durationLabel: string 
   const isFileOutput = ['filecore', 'outputcore'].includes(subsystem) || ['file', 'diff', 'workspace', 'output', 'artifact'].includes(kind);
   const isMiniAgentOrHandoff = ['miniagentcore', 'handoffcore'].includes(subsystem) || ['miniagent', 'handoff'].includes(kind);
   const isModel = subsystem === 'modelcore' || kind === 'model' || kind === 'model_snapshot';
+  const isShellDialect = getDetailValue(details, 'source_kind') === 'shell_dialect_runtime'
+    || item.metadata?.source_kind === 'shell_dialect_runtime'
+    || Boolean(getDetailValue(details, 'contract_kind', 'gate_kind', 'profile_kind', 'command_kind', 'translation_kind', 'preflight_kind', 'error_kind', 'retry_kind'));
+
+  if (isShellDialect) {
+    pushDetailRow(rows, 'Contract', getDetailValue(details, 'contract_kind', 'gate_kind', 'profile_kind', 'command_kind', 'translation_kind', 'preflight_kind', 'error_kind', 'retry_kind'));
+    pushDetailRow(rows, 'Shell', getDetailValue(details, 'shell_id'));
+    pushDetailRow(rows, 'Target', getDetailValue(details, 'target_shell_id'));
+    pushDetailRow(rows, 'Family', getDetailValue(details, 'target_shell_family', 'shell_family'));
+    pushDetailRow(rows, 'Command', getDetailValue(details, 'command_name'));
+    pushDetailRow(rows, 'Gate', getDetailValue(details, 'gate_status'));
+    pushDetailRow(rows, 'Translation', getDetailValue(details, 'translation_status'));
+    pushDetailRow(rows, 'Preflight', getDetailValue(details, 'preflight_status'));
+    pushDetailRow(rows, 'Retry', getDetailValue(details, 'retry_status'));
+    pushDetailRow(rows, 'Classification', getDetailValue(details, 'classification'));
+    pushDetailRow(rows, 'Risk', getDetailValue(details, 'risk_level'));
+    pushDetailRow(rows, 'Required', getDetailValue(details, 'required_actions'), { list: true });
+    pushDetailRow(rows, 'Diagnostics', getDetailValue(details, 'diagnostics'), { list: true });
+    pushDetailRow(rows, 'Can execute', getDetailValue(details, 'can_execute'));
+    pushDetailRow(rows, 'Permission', getDetailValue(details, 'execution_permission_granted'));
+    pushDetailRow(rows, 'Should retry', getDetailValue(details, 'should_retry'));
+    pushDetailRow(rows, 'Policy', getDetailValue(details, 'policy_approval_status'));
+    pushDetailRow(rows, 'SafeShell', getDetailValue(details, 'safeshell_connected'));
+    pushDetailRow(rows, 'Trace ready', getDetailValue(details, 'process_trace_ready'));
+    return rows;
+  }
 
   if (isToolOrAction) {
     pushDetailRow(rows, 'Tool', getDetailValue(details, 'tool_name', 'tool'));
@@ -858,6 +918,10 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
     return c.text.tertiary;
   }, [c, status]);
 
+
+  const shellDialectBadge = useMemo(() => buildShellDialectBadgeLabel(item), [item]);
+  const shellDialectWarning = useMemo(() => buildShellDialectWarning(item), [item]);
+
   const detailRows = useMemo(() => {
     const rows: Array<[string, unknown]> = buildSubsystemDetailRows(item, durationLabel);
     const showInternalRefs = item.metadata?.show_internal_refs === true;
@@ -904,18 +968,19 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
       else if (typeof value === 'number' && value > 0) raw.push([label, value]);
     });
     if (durationLabel) raw.push(['duration', temporal.running ? `${durationLabel} running` : durationLabel]);
+    if (shellDialectBadge) raw.push(['shell', shellDialectBadge]);
     if (temporal.freshnessLabel) raw.push(['freshness', temporal.freshnessLabel]);
     if (temporal.slow) raw.push(['slow', 'slow']);
     return raw
       .filter(([, value]) => value !== undefined && value !== null && value !== '')
       .map(([label, value]) => `${label}: ${traceText(value)}`)
       .slice(0, 7);
-  }, [item, status, temporal, durationLabel]);
+  }, [item, status, temporal, durationLabel, shellDialectBadge]);
 
   const copyDetailsText = useMemo(() => {
     const detailText = detailRows.map(([label, value]) => `${label}: ${traceText(value, '')}`).join('\n');
-    return [title, summary, detailText].filter(Boolean).join('\n');
-  }, [detailRows, summary, title]);
+    return [title, summary, shellDialectWarning, detailText].filter(Boolean).join('\n');
+  }, [detailRows, summary, title, shellDialectWarning]);
 
   if (shouldHideTraceItem) {
     return null;
@@ -1010,6 +1075,19 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.35, mt: 0.45 }}>
               {metadataChips.map((chip) => <TraceChip key={chip} label={chip} />)}
             </Box>
+          )}
+          {!compact && shellDialectWarning && (
+            <Typography
+              noWrap
+              sx={{
+                color: c.status.warning,
+                fontSize: '0.68rem',
+                fontWeight: 700,
+                mt: 0.35,
+              }}
+            >
+              {shellDialectWarning}
+            </Typography>
           )}
         </Box>
 

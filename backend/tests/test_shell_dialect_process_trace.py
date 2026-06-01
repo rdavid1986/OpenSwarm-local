@@ -1,6 +1,7 @@
 from backend.apps.swarms.process_trace_builder import build_process_trace_item_from_source, normalize_process_trace_source_kind
 from backend.apps.swarms.shell_dialect_runtime import (
     build_shell_profile,
+    build_agent_terminal_shell_gate,
     build_shell_profile_trace_source,
     build_structured_shell_command,
     classify_shell_dialect_error,
@@ -118,3 +119,36 @@ def test_process_trace_does_not_leak_shell_error_secret():
     assert "secret" not in rendered
     assert item["details"]["sanitized_error"] == "[redacted]"
     assert item["details"]["classification"] == "command_not_found"
+
+
+def test_process_trace_recognizes_agent_terminal_gate_as_blocked_shell_dialect():
+    profile = build_shell_profile(shell_id="git_bash")
+    command = build_structured_shell_command(
+        intent="inspect",
+        command_name="git",
+        args=["status", "--short"],
+        shell_profile=profile,
+    )
+    translation = translate_structured_shell_command(command, target_shell_id="git_bash")
+    preflight = preflight_shell_dialect_command(translation, policy_matrix_approved=True)
+    gate = build_agent_terminal_shell_gate(
+        shell_profile=profile,
+        structured_command=command,
+        translation=translation,
+        preflight=preflight,
+        policy_approval_status="missing",
+        safeshell_connected=False,
+        process_trace_ready=False,
+    )
+
+    assert normalize_process_trace_source_kind(gate) == "shell_dialect_runtime"
+
+    item = build_process_trace_item_from_source(gate)
+
+    assert item["status"] == "blocked"
+    assert item["details"]["contract_kind"] == "shell_dialect_agent_terminal_gate"
+    assert item["details"]["gate_status"] == "blocked"
+    assert item["details"]["can_execute"] is False
+    assert item["details"]["safeshell_connected"] is False
+    assert item["details"]["process_trace_ready"] is False
+    assert item["evidence_refs"] == []
