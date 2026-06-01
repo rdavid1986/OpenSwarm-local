@@ -76,6 +76,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "skill_rollback_plan"
     if data.get("summary_kind") == "skill_effectiveness_summary" or data.get("record_kind") == "skill_effectiveness_metric_record" or data.get("source_kind") == "skill_effectiveness_metrics":
         return "skill_effectiveness_metrics"
+    if data.get("source_kind") == "shell_dialect_runtime" or data.get("trace_source_kind") == "shell_dialect_runtime" or data.get("profile_kind") == "shell_profile":
+        return "shell_dialect_runtime"
     if data.get("source_kind") == "opencode_command" or data.get("trace_source_kind") == "opencode_command" or data.get("audit_kind") == "opencode_command_audit":
         return "opencode_command"
     if data.get("metric_kind") == "miniagent_task_runtime_metric":
@@ -119,6 +121,8 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "lsp_diagnostic_feedback"
     if explicit_source == "policy_matrix_runtime":
         return "policy_matrix_runtime"
+    if explicit_source == "shell_dialect_runtime":
+        return "shell_dialect_runtime"
     if explicit_source == "opencode_command":
         return "opencode_command"
     if explicit_source in {"tool_trace", "tool_call", "tool_result", "tool_error"}:
@@ -1230,6 +1234,51 @@ def build_skill_effectiveness_process_trace_item(source: dict[str, Any]) -> dict
 
 
 
+def build_shell_dialect_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    capability = data.get("capability") if isinstance(data.get("capability"), dict) else {}
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else capability.get("required_actions") if isinstance(capability.get("required_actions"), list) else []
+    risk = _first_text(data, "risk_level", default="unknown")
+    shell_id = _first_text(data, "shell_id", default="unknown")
+    shell_name = _first_text(data, "shell_name", default="Unknown")
+    shell_family = _first_text(data, "shell_family", default="unknown")
+    blocked = shell_id == "unknown" or risk in {"critical", "high"}
+    status = "blocked" if blocked else "warning" if required_actions or risk in {"medium", "high"} else "completed"
+    supports_and = capability.get("supports_and_operator")
+    summary = f"Shell profile detected: {shell_name} ({shell_id}); execution disabled."
+    if shell_id == "powershell_5" and supports_and is False:
+        summary = "Shell profile detected: Windows PowerShell 5.1; Bash-style && must be blocked before execution."
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or f"shell-profile:{shell_id}",
+        kind="config",
+        subsystem="ConfigCore",
+        title=f"Shell profile: {shell_name}",
+        summary=summary,
+        status=status,
+        details={
+            "source_kind": "shell_dialect_runtime",
+            "shell_profile_core": True,
+            "profile_kind": data.get("profile_kind", "shell_profile"),
+            "shell_id": shell_id,
+            "shell_name": shell_name,
+            "shell_family": shell_family,
+            "shell_version": data.get("shell_version") or "",
+            "platform_system": data.get("platform_system") or "unknown",
+            "platform_release": data.get("platform_release") or "unknown",
+            "source": data.get("source") or "unknown",
+            "confidence": data.get("confidence") or "low",
+            "capability": capability or None,
+            "risk_level": risk,
+            "required_actions": required_actions,
+            "risk_notes": data.get("risk_notes") if isinstance(data.get("risk_notes"), list) else [],
+            "can_execute": False,
+            "detection_executed_process": False,
+            "contains_private_reasoning": False,
+        },
+        metadata={"source_kind": "shell_dialect_runtime", "shell_profile_core": True},
+    )
+
+
 def build_opencode_command_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
     data = source or {}
     audit = data.get("audit") if isinstance(data.get("audit"), dict) else data if data.get("audit_kind") == "opencode_command_audit" else {}
@@ -1288,6 +1337,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = process_trace_item_from_timeline_event(data)
     elif source_kind == "humanized_reasoning_summary":
         item = _reasoning_summary_item(data)
+    elif source_kind == "shell_dialect_runtime":
+        item = build_shell_dialect_process_trace_item(data)
     elif source_kind == "agent_worklog":
         item = _worklog_item(data)
     elif source_kind == "context_retrieval":
