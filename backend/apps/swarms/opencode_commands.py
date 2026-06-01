@@ -13,6 +13,15 @@ from pathlib import Path
 import re
 from typing import Any
 
+from backend.apps.swarms.shell_dialect_runtime import (
+    build_agent_terminal_shell_gate,
+    build_shell_profile,
+    build_structured_shell_command,
+    dump_shell_dialect,
+    preflight_shell_dialect_command,
+    translate_structured_shell_command,
+)
+
 MAX_TEXT = 1200
 MAX_BODY = 4000
 MAX_REFS = 80
@@ -303,6 +312,31 @@ class CommandPreviewReport:
     tools_called: bool = False
     files_read: bool = False
     shell_executed: bool = False
+    mcp_activated: bool = False
+
+
+@dataclass
+class OpenCodeShellDialectBridge:
+    bridge_kind: str = "opencode_shell_dialect_bridge"
+    source_kind: str = "opencode_command"
+    command_name: str = ""
+    command_family: str = "unknown"
+    shell_id: str = "unknown"
+    target_shell_id: str = "unknown"
+    preview_report: dict[str, Any] = field(default_factory=dict)
+    shell_profile: dict[str, Any] = field(default_factory=dict)
+    structured_command: dict[str, Any] = field(default_factory=dict)
+    shell_translation: dict[str, Any] = field(default_factory=dict)
+    shell_preflight: dict[str, Any] = field(default_factory=dict)
+    agent_terminal_gate: dict[str, Any] = field(default_factory=dict)
+    bridge_status: str = "blocked"
+    risk_level: str = "unknown"
+    required_actions: list[str] = field(default_factory=list)
+    can_execute: bool = False
+    dry_run_only: bool = True
+    shell_executed: bool = False
+    tools_called: bool = False
+    files_read: bool = False
     mcp_activated: bool = False
 
 
@@ -932,6 +966,91 @@ def build_command_preview_report(command_text: str, *, workspace_root: str | Pat
         mcp_activated=False,
     )
 
+def build_opencode_shell_dialect_bridge(
+    command_text: str,
+    *,
+    shell_id: str = "unknown",
+    target_shell_id: str = "unknown",
+    terminal_kind: str = "unknown",
+    policy_matrix_approved: bool = False,
+    safeshell_connected: bool = False,
+    process_trace_ready: bool = True,
+    workspace_root: str | Path | None = None,
+) -> OpenCodeShellDialectBridge:
+    preview = build_command_preview_report(
+        command_text,
+        workspace_root=workspace_root,
+        terminal_kind=terminal_kind,
+    )
+    preview_data = dump_opencode_command(preview)
+    target_shell = target_shell_id or shell_id or "unknown"
+    shell_profile = build_shell_profile(shell_id=target_shell)
+    command = build_structured_shell_command(
+        intent="run" if preview.command_family == "terminal" else "inspect",
+        command_name=preview.command_name,
+        args=[preview.command_family],
+        raw_command=command_text if preview.command_family == "terminal" else "",
+        shell_profile=shell_profile,
+        metadata={
+            "source_kind": "opencode_command",
+            "command_family": preview.command_family,
+            "dry_run_only": True,
+        },
+        risk_level=preview.risk_level,
+    )
+    translation = translate_structured_shell_command(command, target_profile=shell_profile)
+    preflight = preflight_shell_dialect_command(
+        translation,
+        policy_matrix_approved=policy_matrix_approved,
+    )
+    gate = build_agent_terminal_shell_gate(
+        shell_profile=shell_profile,
+        structured_command=command,
+        translation=translation,
+        preflight=preflight,
+        policy_approval_status="approved" if policy_matrix_approved else "missing",
+        safeshell_connected=safeshell_connected,
+        process_trace_ready=process_trace_ready,
+    )
+
+    preflight_data = dump_shell_dialect(preflight)
+    gate_data = dump_shell_dialect(gate)
+    required = _dedupe(
+        preview.required_actions
+        + _as_list(preflight_data.get("required_actions"))
+        + _as_list(gate_data.get("required_actions"))
+        + [
+            "keep_opencode_command_execution_disabled",
+            "review_shell_dialect_bridge_before_execution",
+        ]
+    )
+    bridge_status = "blocked"
+    if gate_data.get("gate_status") == "ready" and preflight_data.get("preflight_status") in {"passed", "warning"}:
+        bridge_status = "needs_review"
+
+    return OpenCodeShellDialectBridge(
+        command_name=preview.command_name,
+        command_family=preview.command_family,
+        shell_id=shell_id or "unknown",
+        target_shell_id=target_shell,
+        preview_report=preview_data,
+        shell_profile=dump_shell_dialect(shell_profile),
+        structured_command=dump_shell_dialect(command),
+        shell_translation=dump_shell_dialect(translation),
+        shell_preflight=preflight_data,
+        agent_terminal_gate=gate_data,
+        bridge_status=bridge_status,
+        risk_level=preview.risk_level,
+        required_actions=required,
+        can_execute=False,
+        dry_run_only=True,
+        shell_executed=False,
+        tools_called=False,
+        files_read=False,
+        mcp_activated=False,
+    )
+
+
 def build_opencode_command_trace_source(
     *,
     command_name: str,
@@ -941,17 +1060,19 @@ def build_opencode_command_trace_source(
     safe_equivalent: SafeCommandEquivalent | dict[str, Any] | None = None,
     terminal_boundary: TerminalBoundaryDecision | dict[str, Any] | None = None,
     preview_report: CommandPreviewReport | dict[str, Any] | None = None,
+    shell_dialect_bridge: OpenCodeShellDialectBridge | dict[str, Any] | None = None,
     required_actions: list[Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     name = _normalize_command_name(command_name)
     preview_data = dump_opencode_command(preview_report or {})
+    bridge_data = dump_opencode_command(shell_dialect_bridge or {})
     safe_data = dump_opencode_command(safe_equivalent or preview_data.get("safe_equivalent") or build_safe_command_equivalent(name))
     terminal_data = dump_opencode_command(terminal_boundary or preview_data.get("terminal_boundary") or {})
     family = command_family_for_command(name) or safe_data.get("command_family") or preview_data.get("command_family") or "unknown"
     audit_data = dump_opencode_command(audit or _audit(command_name=name, command_origin=origin, command_family=family, risk_level=preview_data.get("risk_level") or safe_data.get("risk_level") or "unknown", safe_equivalent=safe_data.get("safe_equivalent_id")))
     routing_data = dump_opencode_command(routing or route_command(name))
-    required = _dedupe(_as_list(required_actions) + _as_list(audit_data.get("required_actions")) + _as_list(routing_data.get("required_actions")) + _as_list(safe_data.get("required_actions")) + _as_list(preview_data.get("required_actions")))
+    required = _dedupe(_as_list(required_actions) + _as_list(audit_data.get("required_actions")) + _as_list(routing_data.get("required_actions")) + _as_list(safe_data.get("required_actions")) + _as_list(preview_data.get("required_actions")) + _as_list(bridge_data.get("required_actions")))
     risk = _normalize_risk(preview_data.get("risk_level") or audit_data.get("risk_level") or "unknown")
     source = OpenCodeCommandTraceSource(
         command_name=name,
@@ -961,7 +1082,7 @@ def build_opencode_command_trace_source(
         risk_level=risk,
         safe_equivalent=safe_data,
         terminal_boundary=terminal_data,
-        preview_report=preview_data,
+        preview_report={**preview_data, "shell_dialect_bridge": bridge_data or None},
         routing=routing_data,
         required_actions=required,
         audit=audit_data,

@@ -10,6 +10,7 @@ from backend.apps.swarms.opencode_commands import (
     build_user_terminal_request,
     build_terminal_risk_decision,
     build_opencode_command_trace_source,
+    build_opencode_shell_dialect_bridge,
     detect_file_references,
     expand_command_arguments,
     expand_file_references,
@@ -218,3 +219,43 @@ def test_preview_report_is_dry_run_only_and_safe(tmp_path: Path):
     assert report.safe_equivalent["safe_equivalent_id"] == "terminal_boundary_request"
     assert report.terminal_boundary["agent_controlled"] is True
     assert report.shell_interpolation_decision["detected_patterns"]
+
+
+def test_opencode_shell_dialect_bridge_keeps_execution_disabled():
+    bridge = build_opencode_shell_dialect_bridge(
+        "/terminal git status && npm test",
+        shell_id="powershell_5",
+        target_shell_id="powershell_5",
+        terminal_kind="agent_terminal",
+    )
+
+    assert bridge.bridge_kind == "opencode_shell_dialect_bridge"
+    assert bridge.source_kind == "opencode_command"
+    assert bridge.command_name == "/terminal"
+    assert bridge.can_execute is False
+    assert bridge.dry_run_only is True
+    assert bridge.shell_executed is False
+    assert bridge.tools_called is False
+    assert bridge.files_read is False
+    assert bridge.mcp_activated is False
+    assert bridge.agent_terminal_gate["can_execute"] is False
+    assert "keep_opencode_command_execution_disabled" in bridge.required_actions
+
+
+def test_opencode_trace_source_can_include_shell_dialect_bridge():
+    bridge = build_opencode_shell_dialect_bridge(
+        "/terminal git status",
+        shell_id="git_bash",
+        target_shell_id="git_bash",
+        terminal_kind="agent_terminal",
+        policy_matrix_approved=True,
+        safeshell_connected=True,
+    )
+    source = build_opencode_command_trace_source(command_name="/terminal", shell_dialect_bridge=bridge)
+
+    assert source["source_kind"] == "opencode_command"
+    assert source["can_execute"] is False
+    assert source["dry_run_only"] is True
+    assert "shell_dialect_bridge" in source["preview_report"]
+    assert source["preview_report"]["shell_dialect_bridge"]["can_execute"] is False
+    assert "keep_opencode_command_execution_disabled" in source["required_actions"]
