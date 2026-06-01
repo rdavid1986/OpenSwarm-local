@@ -90,6 +90,15 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         or data.get("drift_kind") == "project_agent_manifest_drift_report"
     ):
         return "project_agent_manifest"
+    if (
+        data.get("source_kind") == "agent_mention_routing"
+        or data.get("mention_kind") == "agent_mention_parse_result"
+        or data.get("resolver_kind") == "agent_mention_resolver_result"
+        or data.get("route_kind") == "agent_direct_route_candidate"
+        or data.get("guard_kind") == "agent_mention_loop_guard"
+        or data.get("decision_kind") == "agent_mention_routing_decision"
+    ):
+        return "agent_mention_routing"
     if data.get("report_kind") == "skill_import_preview_report" or data.get("source_kind") in {"skill_import_preview", "skill_import_candidate"}:
         return "skill_import_preview"
     if (
@@ -1476,6 +1485,70 @@ def build_project_orientation_process_trace_item(source: dict[str, Any]) -> dict
 
 
 
+def build_agent_mention_routing_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    contract_kind = _first_text(
+        data,
+        "mention_kind",
+        "resolver_kind",
+        "route_kind",
+        "guard_kind",
+        "decision_kind",
+        default="agent_mention_routing",
+    )
+    decision = _first_text(data, "decision", "route_status", default="needs_review")
+    blockers = data.get("blockers") if isinstance(data.get("blockers"), list) else []
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    unresolved = data.get("unresolved_mentions") if isinstance(data.get("unresolved_mentions"), list) else []
+    resolved_agents = data.get("resolved_agents") if isinstance(data.get("resolved_agents"), list) else []
+    route_candidate = data.get("route_candidate") if isinstance(data.get("route_candidate"), dict) else {}
+    loop_guard = data.get("loop_guard") if isinstance(data.get("loop_guard"), dict) else {}
+
+    status = "blocked" if blockers or unresolved or decision == "blocked" else "warning" if required_actions or decision in {"needs_review", "ambiguous", "unresolved"} else "completed"
+
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or contract_kind,
+        kind="routing",
+        subsystem="SwarmCore",
+        title="Agent mention routing",
+        summary="Agent mention routing resolved against ProjectAgentManifest without creating agents, executing handoffs, activating tools, or writing memory.",
+        status=status,
+        evidence_refs=data.get("evidence_refs") if isinstance(data.get("evidence_refs"), list) else [],
+        details={
+            "source_kind": "agent_mention_routing",
+            "contract_kind": contract_kind,
+            "routing_version": data.get("routing_version"),
+            "mentions": data.get("mentions") if isinstance(data.get("mentions"), list) else [],
+            "normalized_mentions": data.get("normalized_mentions") if isinstance(data.get("normalized_mentions"), list) else [],
+            "requested_mentions": data.get("requested_mentions") if isinstance(data.get("requested_mentions"), list) else [],
+            "resolved_agents": resolved_agents,
+            "unresolved_mentions": unresolved,
+            "target_agent_id": data.get("target_agent_id") or route_candidate.get("target_agent_id"),
+            "target_alias": data.get("target_alias") or route_candidate.get("target_alias"),
+            "target_role": data.get("target_role") or route_candidate.get("target_role"),
+            "decision": decision,
+            "route_candidate": route_candidate,
+            "loop_guard": loop_guard,
+            "blockers": blockers,
+            "required_actions": required_actions,
+            "process_trace_required": data.get("process_trace_required", True),
+            "policy_matrix_required": data.get("policy_matrix_required", True),
+            "context_packets_required": data.get("context_packets_required", True),
+            "handoff_required": data.get("handoff_required", True),
+            "evidence_required": data.get("evidence_required", True),
+            "approval_required": data.get("approval_required", True),
+            "can_execute": False,
+            "can_create_agent": False,
+            "can_create_miniagent": False,
+            "can_execute_handoffs": False,
+            "can_activate_tools": False,
+            "can_write_memory": False,
+            "contains_private_reasoning": False,
+        },
+        metadata={"source_kind": "agent_mention_routing", "contract_kind": contract_kind},
+    )
+
+
 def build_project_agent_manifest_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
     data = source or {}
     contract_kind = _first_text(
@@ -2046,6 +2119,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
             item = _context_item(data)
     elif source_kind == "project_rules_import":
         item = build_project_rules_import_process_trace_item(data)
+    elif source_kind == "agent_mention_routing":
+        item = build_agent_mention_routing_process_trace_item(data)
     elif source_kind == "project_agent_manifest":
         item = build_project_agent_manifest_process_trace_item(data)
     elif source_kind == "project_bootstrap_profile":
