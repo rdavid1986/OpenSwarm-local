@@ -71,6 +71,8 @@ class SkillSpec(BaseModel):
     evidence_contract: dict[str, Any] = Field(default_factory=dict)
     compatibility: dict[str, Any] = Field(default_factory=dict)
     risks: list[str] = Field(default_factory=list)
+    shared_assets: list[dict[str, Any]] = Field(default_factory=list)
+    source_files: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SkillSpecCandidate(BaseModel):
@@ -94,6 +96,32 @@ class SkillSpecCandidate(BaseModel):
     research_evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class SkillSetCandidate(BaseModel):
+    """Reviewable candidate wrapper for a set of imported skills.
+
+    A SkillSetCandidate is inert. It does not install skills, approve
+    permissions, activate tools/MCP, execute scripts, or write source files.
+    """
+
+    candidate_id: str = Field(default_factory=lambda: uuid4().hex)
+    candidate_kind: Literal["SkillSetCandidate"] = "SkillSetCandidate"
+    name: str = "Imported Skill Set Candidate"
+    description: str = ""
+    skills: list[SkillSpec] = Field(default_factory=list)
+    shared_assets: list[dict[str, Any]] = Field(default_factory=list)
+    source_files: list[dict[str, Any]] = Field(default_factory=list)
+    source: str = "unknown"
+    source_ref: str = ""
+    source_license: str = "unknown"
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    status: SkillCandidateStatus = "candidate"
+    validation_errors: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    policy_refs: list[str] = Field(default_factory=list)
+    install_approved: bool = False
+
+
 class SkillImportPreviewRequest(BaseModel):
     source_format: str = "unknown"
     source_platform: str = "unknown"
@@ -107,6 +135,8 @@ class SkillImportPreviewRequest(BaseModel):
     content: str = ""
     raw_text: str = ""
     files: list[dict[str, Any]] = Field(default_factory=list)
+    skill_set_manifest: Optional[dict[str, Any]] = None
+    shared_assets: list[dict[str, Any]] = Field(default_factory=list)
     required_tools: list[str] = Field(default_factory=list)
     required_mcp_servers: list[str] = Field(default_factory=list)
     provenance: dict[str, Any] = Field(default_factory=dict)

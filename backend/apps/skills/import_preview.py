@@ -110,6 +110,8 @@ def build_skill_import_preview_report(input: dict[str, Any]) -> dict[str, Any]:
         "preview_diff": _content_diff(existing_content, preview_content),
         "risk_report": risk_report,
         "prepared_ingestion_guard": prepared_ingestion_guard,
+        "skill_set_summary": normalized.get("skill_set_summary") if isinstance(normalized.get("skill_set_summary"), dict) else contract.get("skill_set_summary"),
+        "shared_assets": _as_list(normalized.get("shared_assets") or contract.get("shared_assets")),
         "unsupported_features": _as_list(normalized.get("unsupported_features")),
         "conversion_warnings": _as_list(normalized.get("conversion_warnings")),
         "required_tools": _as_list(contract.get("required_tools") or spec.get("required_tools")),

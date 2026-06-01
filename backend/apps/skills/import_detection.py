@@ -62,7 +62,17 @@ def detect_skill_import_source_format(input: dict[str, Any]) -> dict[str, Any]:
     if source_url.endswith(".zip"):
         return _result("zip", 0.75, ["source_url:.zip"])
 
-    if _has_file(files, lambda p, c: "manifest" in p and "skill_pack" in c):
+    skill_md_paths = [
+        _norm(file.get("path") or file.get("name"))
+        for file in files
+        if isinstance(file, dict) and _norm(file.get("path") or file.get("name")).endswith("skill.md")
+    ]
+    if len(skill_md_paths) > 1:
+        return _result("skill_set", 0.9, ["multiple SKILL.md files"], warnings=["Skill set preview only; no bulk install."])
+    if "google adk" in text or "from google.adk" in text or "google.adk" in text or "adk agent" in text:
+        return _result("adk_agent_framework", 0.72, ["google adk agent framework signal"], warnings=["Google ADK material is treated as agent/tool framework input, not direct skill install."])
+
+    if _has_file(files, lambda p, c: "manifest" in p and ("skill_pack" in c or "skill_set" in c)):
         return _result("skill_pack", 0.9, ["manifest:skill_pack"])
     if "\"spec_version\"" in text and "openswarm.skill.v1" in text:
         return _result("openswarm_skillspec", 0.95, ["spec_version:openswarm.skill.v1"])

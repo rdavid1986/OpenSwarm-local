@@ -78,6 +78,69 @@ def _prepared_content_from_files(data: dict[str, Any]) -> str:
     return ""
 
 
+def _prepared_skill_files(data: dict[str, Any]) -> list[dict[str, Any]]:
+    files = data.get("files")
+    if not isinstance(files, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for file in files:
+        if not isinstance(file, dict):
+            continue
+        path = str(file.get("path") or file.get("name") or "").replace("\\", "/").strip()
+        if path.lower().endswith("skill.md"):
+            result.append({
+                "path": path,
+                "name": path.rsplit("/", 1)[-1] if path else "SKILL.md",
+                "size_bytes": int(file.get("size_bytes") or len(str(file.get("content") or "").encode("utf-8", errors="ignore"))),
+                "role": str(file.get("role") or "skill_definition"),
+            })
+    return result
+
+
+def _prepared_shared_assets_from_files(data: dict[str, Any]) -> list[dict[str, Any]]:
+    supplied = data.get("shared_assets")
+    if isinstance(supplied, list):
+        return [item for item in supplied if isinstance(item, dict)]
+    files = data.get("files")
+    if not isinstance(files, list):
+        return []
+    assets: list[dict[str, Any]] = []
+    for file in files:
+        if not isinstance(file, dict):
+            continue
+        path = str(file.get("path") or file.get("name") or "").replace("\\", "/").strip()
+        lowered = path.lower()
+        if not path or lowered.endswith("skill.md"):
+            continue
+        if lowered.endswith((".md", ".markdown", ".txt", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".csv", ".xml", ".svg")):
+            assets.append({
+                "path": path,
+                "name": path.rsplit("/", 1)[-1],
+                "size_bytes": int(file.get("size_bytes") or len(str(file.get("content") or "").encode("utf-8", errors="ignore"))),
+                "role": str(file.get("role") or "shared_asset"),
+                "preview_only": True,
+            })
+    return assets
+
+
+def _skill_set_summary_from_files(data: dict[str, Any]) -> dict[str, Any]:
+    manifest = data.get("skill_set_manifest") if isinstance(data.get("skill_set_manifest"), dict) else {}
+    skill_files = _prepared_skill_files(data)
+    shared_assets = _prepared_shared_assets_from_files(data)
+    explicit_name = str(manifest.get("name") or data.get("name") or "").strip()
+    return {
+        "summary_kind": "skill_set_import_summary",
+        "name": explicit_name or "Imported Skill Set Preview",
+        "skill_count": len(skill_files) or int(manifest.get("skill_count") or 0),
+        "shared_asset_count": len(shared_assets),
+        "skill_files": skill_files,
+        "shared_assets": shared_assets,
+        "preview_only": True,
+        "can_bulk_install": False,
+        "can_execute_assets": False,
+    }
+
+
 def _normalize_prepared_legacy_or_skillspec_input(data: dict[str, Any]) -> dict[str, Any]:
     source_format = str(data.get("source_format") or "unknown")
     metadata = _legacy_metadata(data)
@@ -153,6 +216,12 @@ def normalize_external_skill_to_skillspec_preview(input: dict[str, Any]) -> dict
 
     risks, conversion_warnings = _detect_risks(content)
     unsupported_features = _as_list(data.get("unsupported_features"))
+    shared_assets = _prepared_shared_assets_from_files(data)
+    skill_set_summary = _skill_set_summary_from_files(data)
+    if shared_assets:
+        conversion_warnings.append("Shared assets are preserved as inert preview metadata only.")
+    if int(skill_set_summary.get("skill_count") or 0) > 1:
+        unsupported_features.append("multi_skill_set_candidate_creation_requires_review")
     prepared_ingestion_guard = data.get("prepared_ingestion_guard") if isinstance(data.get("prepared_ingestion_guard"), dict) else {}
     ingestion_status = str(prepared_ingestion_guard.get("status") or "not_applicable")
     if ingestion_status == "blocked":
@@ -191,6 +260,8 @@ def normalize_external_skill_to_skillspec_preview(input: dict[str, Any]) -> dict
         required_tools=required_tools,
         required_mcp_servers=required_mcp_servers,
         risks=risks,
+        shared_assets=shared_assets,
+        source_files=skill_set_summary.get("skill_files", []),
     )
 
     compatibility_score = 0.7 if content and source_format != "unknown" else 0.35 if content else 0.0
@@ -213,6 +284,8 @@ def normalize_external_skill_to_skillspec_preview(input: dict[str, Any]) -> dict
         original_files=prepared_ingestion_guard.get("accepted_files") if isinstance(prepared_ingestion_guard.get("accepted_files"), list) else _as_list(data.get("original_files")),
         normalized_files=[{"path": "SkillSpec.preview.json", "role": "preview"}],
     )
+    contract["skill_set_summary"] = skill_set_summary
+    contract["shared_assets"] = shared_assets
     if prepared_ingestion_guard:
         contract["prepared_ingestion_guard"] = prepared_ingestion_guard
 
@@ -224,6 +297,8 @@ def normalize_external_skill_to_skillspec_preview(input: dict[str, Any]) -> dict
         "unsupported_features": unsupported_features,
         "risks": risks,
         "prepared_ingestion_guard": prepared_ingestion_guard,
+        "skill_set_summary": skill_set_summary,
+        "shared_assets": shared_assets,
         "can_create_candidate": False,
         "can_install_skill": False,
         "can_execute_source": False,

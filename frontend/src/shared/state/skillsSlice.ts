@@ -44,6 +44,8 @@ export interface SkillSpec {
   evidence_contract: Record<string, any>;
   compatibility: Record<string, any>;
   risks: string[];
+  shared_assets?: Array<Record<string, any>>;
+  source_files?: Array<Record<string, any>>;
 }
 
 export interface SkillSpecCandidate {
@@ -247,6 +249,8 @@ export interface SkillImportPreviewRequest {
   content?: string;
   raw_text?: string;
   files?: Array<Record<string, any>>;
+  skill_set_manifest?: Record<string, any> | null;
+  shared_assets?: Array<Record<string, any>>;
   required_tools?: string[];
   required_mcp_servers?: string[];
   provenance?: Record<string, any>;
@@ -259,6 +263,9 @@ export interface SkillImportPreviewResult {
   preview: Record<string, any> & {
     compatibility_score?: Record<string, any>;
     migration_assistant?: Record<string, any>;
+    skill_set_summary?: Record<string, any>;
+    shared_assets?: Array<Record<string, any>>;
+    prepared_ingestion_guard?: Record<string, any>;
   };
   policy: Record<string, any>;
   can_create_candidate: boolean;

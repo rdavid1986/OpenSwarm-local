@@ -32,6 +32,11 @@ def evaluate_skill_import_policy(preview_report: dict[str, Any]) -> dict[str, An
         reasons.append({"code": "dangerous_execution_instruction", "severity": "critical", "message": "Dangerous execution instructions block candidate creation."})
 
     source_format = str(report.get("source_format") or contract.get("source_format") or spec.get("source_format") or "unknown")
+    if source_format in {"adk_agent_framework", "gemini_cli_config", "qwen_code_config", "kiro_spec"}:
+        reasons.append({"code": "agent_framework_not_skill_candidate", "severity": "high", "message": "Agent/tool framework material must be routed to agent/tool import, not direct skill candidate creation."})
+    skill_set_summary = report.get("skill_set_summary") if isinstance(report.get("skill_set_summary"), dict) else contract.get("skill_set_summary") if isinstance(contract.get("skill_set_summary"), dict) else {}
+    if source_format == "skill_set" or int(skill_set_summary.get("skill_count") or 0) > 1:
+        reasons.append({"code": "skill_set_candidate_requires_review", "severity": "medium", "message": "Skill sets require explicit SkillSetCandidate review before any install flow."})
     content = str(spec.get("content") or "")
     provenance = spec.get("provenance") if isinstance(spec.get("provenance"), dict) else {}
     source_license = contract.get("source_license") or provenance.get("source_license")

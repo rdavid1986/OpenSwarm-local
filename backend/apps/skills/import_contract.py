@@ -28,6 +28,8 @@ SOURCE_FORMATS = {
     "kiro_spec",
     "mcp_tool_instruction",
     "markdown_prompt_pack",
+    "skill_set",
+    "adk_agent_framework",
     "skill_pack",
     "repo",
     "zip",

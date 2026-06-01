@@ -44,6 +44,8 @@ _ADAPTERS = [
     _adapter("copilot_instruction_adapter", ["copilot_instruction"], 0.85, ["copilot-instructions.md"], "wrap Copilot instructions as expert instruction content"),
     _adapter("codex_instruction_adapter", ["codex_instruction"], 0.85, ["AGENTS.md or instruction text"], "wrap Codex instructions as expert instruction content"),
     _adapter("mcp_tool_instruction_adapter", ["mcp_tool_instruction"], 0.75, ["prepared MCP instruction text"], "extract declarative requirements only", ["runtime tool invocation", "server activation"]),
+    _adapter("skill_set_adapter", ["skill_set"], 0.82, ["manifest metadata or multiple SKILL.md files"], "preserve skill set structure and shared assets as preview metadata", ["bulk install", "asset execution", "automatic routing"]),
+    _adapter("google_adk_agent_framework_adapter", ["adk_agent_framework"], 0.45, ["prepared ADK agent files or snippets"], "classify ADK as agent/tool framework material, not direct skill install", ["agent runtime import", "tool execution", "handoffs", "session services"]),
     _adapter("markdown_prompt_pack_adapter", ["markdown_prompt_pack", "skill_pack", "repo", "zip", "folder"], 0.65, ["prepared markdown or manifest metadata"], "combine prepared prompt content into preview", ["archive extraction", "repository fetch"]),
     _adapter("unknown_fallback_adapter", ["unknown"], 0.1, [], "preserve content with low confidence warnings", ["automatic trust", "automatic candidate creation"]),
 ]

@@ -547,6 +547,8 @@ const Skills: React.FC = () => {
     source_url: importSourceUrl || '',
     name: importName || 'Imported Skill',
     content: importContent,
+    skill_set_manifest: importSourceFormat === 'skill_set' ? { name: importName || 'Imported Skill Set', preview_only: true } : undefined,
+    shared_assets: [],
   });
 
   const handlePreviewImport = async () => {
@@ -2061,12 +2063,19 @@ const Skills: React.FC = () => {
     const policyReasons = Array.isArray(policy.reasons) ? policy.reasons : [];
     const requiredTools = Array.isArray(preview.required_tools) ? preview.required_tools : [];
     const requiredMcpServers = Array.isArray(preview.required_mcp_servers) ? preview.required_mcp_servers : [];
+    const skillSetSummary = (preview.skill_set_summary && typeof preview.skill_set_summary === 'object') ? preview.skill_set_summary as Record<string, any> : (importContract.skill_set_summary && typeof importContract.skill_set_summary === 'object') ? importContract.skill_set_summary as Record<string, any> : {};
+    const sharedAssets = Array.isArray(preview.shared_assets) ? preview.shared_assets : Array.isArray(importContract.shared_assets) ? importContract.shared_assets : [];
+    const preparedGuard = (preview.prepared_ingestion_guard && typeof preview.prepared_ingestion_guard === 'object') ? preview.prepared_ingestion_guard as Record<string, any> : (importContract.prepared_ingestion_guard && typeof importContract.prepared_ingestion_guard === 'object') ? importContract.prepared_ingestion_guard as Record<string, any> : {};
+    const acceptedPreparedFiles = Array.isArray(preparedGuard.accepted_files) ? preparedGuard.accepted_files : [];
+    const rejectedPreparedFiles = Array.isArray(preparedGuard.rejected_files) ? preparedGuard.rejected_files : [];
     const previewDiff = typeof preview.preview_diff === 'string' ? preview.preview_diff : '';
     const canCreate = skillImportPreview?.can_create_candidate === true;
     const formatOptions = [
       'markdown_prompt_pack',
       'claude_skill',
       'anthropic_skill',
+      'skill_set',
+      'adk_agent_framework',
       'openswarm_skillspec',
       'openswarm_legacy_skill',
       'cursor_rule',
@@ -2295,6 +2304,37 @@ const Skills: React.FC = () => {
                 {warnings.length > 0 && (
                   <Typography sx={{ fontSize: '0.68rem', color: c.text.ghost, lineHeight: 1.4, mt: 0.35 }}>
                     Warnings: {warnings.slice(0, 4).map((item) => toDisplayText(item)).join(', ')}
+                  </Typography>
+                )}
+              </ReviewSection>
+
+              <ReviewSection title="Skill set / prepared assets" tone={toDisplayText(skillSetSummary.skill_count, 0) !== '0' || sharedAssets.length > 0 || rejectedPreparedFiles.length > 0 ? 'warning' : 'success'}>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 0.75 }}>
+                  <MetaChip label={`skills ${toDisplayText(skillSetSummary.skill_count, 0)}`} tone={Number(skillSetSummary.skill_count || 0) > 1 ? 'warning' : 'default'} />
+                  <MetaChip label={`shared assets ${sharedAssets.length}`} tone={sharedAssets.length ? 'warning' : 'success'} />
+                  <MetaChip label={`accepted files ${acceptedPreparedFiles.length}`} />
+                  <MetaChip label={`rejected files ${rejectedPreparedFiles.length}`} tone={rejectedPreparedFiles.length ? 'error' : 'success'} />
+                  <MetaChip label={`guard ${toDisplayText(preparedGuard.status, 'not_applicable')}`} tone={preparedGuard.status === 'blocked' ? 'error' : preparedGuard.status === 'needs_review' ? 'warning' : 'success'} />
+                  <MetaChip label="bulk install disabled" tone="warning" />
+                  <MetaChip label="asset execution disabled" tone="warning" />
+                </Box>
+                {sharedAssets.length > 0 ? (
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.45 }}>
+                    {sharedAssets.slice(0, 6).map((asset, index) => {
+                      const item = isPlainObject(asset) ? asset : {};
+                      return (
+                        <Typography key={`shared-asset-${index}`} sx={{ fontSize: '0.68rem', color: c.text.ghost, lineHeight: 1.35 }}>
+                          {toDisplayText(item.path || item.name, 'shared asset')} · {toDisplayText(item.role, 'shared_asset')} · {toDisplayText(item.size_bytes, 0)} bytes
+                        </Typography>
+                      );
+                    })}
+                  </Box>
+                ) : (
+                  <EmptyReviewState text="No shared assets reported for this preview." tone="success" />
+                )}
+                {rejectedPreparedFiles.length > 0 && (
+                  <Typography sx={{ fontSize: '0.68rem', color: c.status.error, lineHeight: 1.4, mt: 0.65 }}>
+                    Rejected prepared files: {rejectedPreparedFiles.slice(0, 4).map((item) => toDisplayText(isPlainObject(item) ? item.code || item.path : item)).join(', ')}
                   </Typography>
                 )}
               </ReviewSection>
