@@ -114,6 +114,11 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         or str(data.get("materialization_kind") or "").startswith(("action_materialization", "patch_materialization", "command_materialization", "action_rollback"))
     ):
         return "action_materialization_runtime"
+    if (
+        data.get("source_kind") == "sdd_tdd_materialization_e2e"
+        or str(data.get("e2e_kind") or "").startswith("sdd_tdd_materialization")
+    ):
+        return "sdd_tdd_materialization_e2e"
     if data.get("report_kind") == "skill_import_preview_report" or data.get("source_kind") in {"skill_import_preview", "skill_import_candidate"}:
         return "skill_import_preview"
     if (
@@ -1500,6 +1505,68 @@ def build_project_orientation_process_trace_item(source: dict[str, Any]) -> dict
 
 
 
+
+def build_sdd_tdd_materialization_e2e_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    if hasattr(source, "__dataclass_fields__"):
+        from dataclasses import asdict
+        data = asdict(source)
+    elif isinstance(source, dict):
+        data = source
+    else:
+        data = getattr(source, "__dict__", {}) if source is not None else {}
+    if not isinstance(data, dict):
+        data = {}
+    contract_kind = _first_text(data, "e2e_kind", default="sdd_tdd_materialization_e2e_gate")
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    blockers = data.get("blockers") if isinstance(data.get("blockers"), list) else []
+    gate_status = _first_text(data, "gate_status", "summary_status", default="")
+    blocked = bool(blockers or gate_status == "blocked")
+    warning = bool(required_actions or gate_status in {"", "missing", "warning"})
+    status = "blocked" if blocked else "warning" if warning else "completed"
+
+    title_by_kind = {
+        "sdd_tdd_materialization_e2e_gate": "SDD/TDD/Materialization E2E gate",
+        "sdd_tdd_materialization_e2e_summary": "SDD/TDD/Materialization E2E summary",
+    }
+
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or data.get("candidate_id") or contract_kind,
+        kind="validation",
+        subsystem="ValidationCore",
+        title=title_by_kind.get(contract_kind, "SDD/TDD/Materialization E2E contract"),
+        summary="E2E completion gate recorded without executing commands, writing files, applying patches, activating tools, or writing memory.",
+        status=status,
+        evidence_refs=data.get("evidence_refs") if isinstance(data.get("evidence_refs"), list) else [],
+        details={
+            "source_kind": "sdd_tdd_materialization_e2e",
+            "contract_kind": contract_kind,
+            "e2e_version": data.get("e2e_version"),
+            "candidate_id": data.get("candidate_id"),
+            "gate_status": data.get("gate_status"),
+            "summary_status": data.get("summary_status"),
+            "sdd_status": data.get("sdd_status"),
+            "tdd_status": data.get("tdd_status"),
+            "materialization_status": data.get("materialization_status"),
+            "completion_conditions": data.get("completion_conditions") if isinstance(data.get("completion_conditions"), dict) else {},
+            "process_trace_refs": data.get("process_trace_refs") if isinstance(data.get("process_trace_refs"), list) else [],
+            "sdd_gate": data.get("sdd_gate") if isinstance(data.get("sdd_gate"), dict) else {},
+            "tdd_gate": data.get("tdd_gate") if isinstance(data.get("tdd_gate"), dict) else {},
+            "materialization_gate": data.get("materialization_gate") if isinstance(data.get("materialization_gate"), dict) else {},
+            "blockers": blockers,
+            "required_actions": required_actions,
+            "can_mark_change_completed": data.get("can_mark_change_completed", False),
+            "can_execute": False,
+            "can_write_files": False,
+            "can_apply_patch": False,
+            "can_execute_commands": False,
+            "can_activate_tools": False,
+            "can_activate_mcp": False,
+            "can_write_memory": False,
+            "contains_private_reasoning": False,
+        },
+        metadata={"source_kind": "sdd_tdd_materialization_e2e", "contract_kind": contract_kind},
+    )
+
 def build_action_materialization_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
     data = source or {}
     contract_kind = _first_text(data, "materialization_kind", default="action_materialization_contract")
@@ -2445,6 +2512,8 @@ def build_opencode_command_process_trace_item(source: dict[str, Any]) -> dict[st
 
 def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
     source_kind = normalize_process_trace_source_kind(source)
+    if source_kind == "sdd_tdd_materialization_e2e":
+        return build_sdd_tdd_materialization_e2e_process_trace_item(source)
     data = redact_process_trace_source(source)
     if source_kind == "runtime_timer":
         item = process_trace_item_from_runtime_metric(source if isinstance(source, RuntimeTimerRecord) else data)
