@@ -6,6 +6,10 @@ import IconButton from '@mui/material/IconButton';
 import Chip from '@mui/material/Chip';
 import Button from '@mui/material/Button';
 import Collapse from '@mui/material/Collapse';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogTitle from '@mui/material/DialogTitle';
 import CloseIcon from '@mui/icons-material/Close';
 import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
@@ -869,6 +873,57 @@ function shouldShowRuntimeApprovalGroupHeader(approval: any, approvals: any[]): 
   const first = source.find((entry) => getRuntimeApprovalGroupKey(entry) === key);
   const group = buildRuntimeApprovalGroupModel(approval, source);
   return group.grouped && runtimeApprovalId(first) === runtimeApprovalId(approval);
+}
+
+
+
+type ApprovalConfirmationActionType = 'allow' | 'deny';
+
+type ApprovalConfirmationRequest = {
+  approvalId: string;
+  actionType: ApprovalConfirmationActionType;
+  actionLabel: string;
+  title: string;
+  toolName: string;
+  taskType: string;
+  candidateId: string;
+  policyRef: string;
+  preview: string;
+  groupLabel: string;
+  groupStatusLabel: string;
+  riskLabel: string;
+};
+
+function buildApprovalConfirmationRequest(
+  approval: any,
+  approvalId: string,
+  actionType: ApprovalConfirmationActionType,
+  group: RuntimeApprovalGroupModel,
+): ApprovalConfirmationRequest {
+  const ux = buildRuntimeApprovalUxModel(approval);
+  const actionLabel = actionType === 'allow' ? ux.allowLabel : ux.denyLabel;
+  const riskLabel = ux.kind === 'rollback'
+    ? 'Rollback approval'
+    : ux.kind === 'post_validation'
+      ? 'Post-validation approval'
+      : ux.kind === 'materialization'
+        ? 'Materialization approval'
+        : 'Tool approval';
+
+  return {
+    approvalId,
+    actionType,
+    actionLabel,
+    title: `${actionLabel}: ${ux.label}`,
+    toolName: ux.toolName,
+    taskType: ux.taskType,
+    candidateId: ux.candidateId,
+    policyRef: ux.policyRef,
+    preview: ux.preview,
+    groupLabel: group.label,
+    groupStatusLabel: group.statusLabel,
+    riskLabel,
+  };
 }
 
 
@@ -2621,6 +2676,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     dispatch(openSettingsModal('tools'));
   }, [dispatch, navigate]);
 
+  const [approvalConfirmation, setApprovalConfirmation] = useState<ApprovalConfirmationRequest | null>(null);
+
   const handleStartImplementation = useCallback(async (action?: any) => {
     if (!activeSwarmId || swarmState.actionLoading || startImplementationInFlightRef.current) return;
     if (action?.enabled === false) return;
@@ -4239,7 +4296,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                           size="small"
                           variant="contained"
                           disabled={swarmState.actionLoading}
-                          onClick={() => handleApprovalAction(approvalId, 'allow')}
+                          onClick={() => setApprovalConfirmation(buildApprovalConfirmationRequest(approval, approvalId, 'allow', approvalGroup))}
                           sx={{ minHeight: 26, px: 1, py: 0.25, fontSize: '0.72rem', textTransform: 'none' }}
                         >
                           {approvalUx.allowLabel}
@@ -4248,7 +4305,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                           size="small"
                           variant="outlined"
                           disabled={swarmState.actionLoading}
-                          onClick={() => handleApprovalAction(approvalId, 'deny')}
+                          onClick={() => setApprovalConfirmation(buildApprovalConfirmationRequest(approval, approvalId, 'deny', approvalGroup))}
                           sx={{ minHeight: 26, px: 1, py: 0.25, fontSize: '0.72rem', textTransform: 'none' }}
                         >
                           {approvalUx.denyLabel}
@@ -4271,6 +4328,62 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               </Box>
             );
           }))}
+
+
+          <Dialog
+            open={Boolean(approvalConfirmation)}
+            onClose={() => setApprovalConfirmation(null)}
+            maxWidth="sm"
+            fullWidth
+          >
+            <DialogTitle sx={{ fontSize: '0.95rem', fontWeight: 850 }}>
+              {approvalConfirmation?.title || 'Confirm approval action'}
+            </DialogTitle>
+            <DialogContent>
+              <Box sx={{ display: 'grid', gap: 0.75 }}>
+                <Typography sx={{ color: c.text.secondary, fontSize: '0.76rem', lineHeight: 1.45 }}>
+                  This action affects a runtime approval flow. It does not execute directly from the modal; it forwards the decision to ApprovalRuntime and PolicyRuntime.
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.45 }}>
+                  {approvalConfirmation?.riskLabel && <Chip size="small" label={approvalConfirmation.riskLabel} sx={{ height: 20, fontSize: '0.62rem' }} />}
+                  {approvalConfirmation?.toolName && <Chip size="small" label={approvalConfirmation.toolName} sx={{ height: 20, maxWidth: 180, fontSize: '0.62rem' }} />}
+                  {approvalConfirmation?.taskType && <Chip size="small" label={approvalConfirmation.taskType} sx={{ height: 20, maxWidth: 180, fontSize: '0.62rem' }} />}
+                  {approvalConfirmation?.candidateId && <Chip size="small" label={`candidate:${approvalConfirmation.candidateId}`} sx={{ height: 20, maxWidth: 220, fontSize: '0.62rem' }} />}
+                  {approvalConfirmation?.policyRef && <Chip size="small" label={`policy:${approvalConfirmation.policyRef}`} sx={{ height: 20, maxWidth: 220, fontSize: '0.62rem' }} />}
+                </Box>
+                {(approvalConfirmation?.groupLabel || approvalConfirmation?.groupStatusLabel) && (
+                  <Typography sx={{ color: c.text.tertiary, fontSize: '0.7rem', lineHeight: 1.4 }}>
+                    {[approvalConfirmation?.groupLabel, approvalConfirmation?.groupStatusLabel].filter(Boolean).join(' · ')}
+                  </Typography>
+                )}
+                <Box sx={{ p: 0.85, borderRadius: 1.1, border: `1px solid ${c.border.subtle}`, bgcolor: c.bg.page }}>
+                  <Typography sx={{ color: c.text.ghost, fontSize: '0.62rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', mb: 0.35 }}>
+                    Tool input preview
+                  </Typography>
+                  <Typography sx={{ color: c.text.secondary, fontSize: '0.68rem', lineHeight: 1.45, overflowWrap: 'anywhere', fontFamily: c.font.mono }}>
+                    {approvalConfirmation?.preview || 'No tool input preview.'}
+                  </Typography>
+                </Box>
+              </Box>
+            </DialogContent>
+            <DialogActions sx={{ px: 3, pb: 2 }}>
+              <Button size="small" variant="outlined" onClick={() => setApprovalConfirmation(null)}>
+                Cancel
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                disabled={!approvalConfirmation || swarmState.actionLoading}
+                onClick={() => {
+                  const request = approvalConfirmation;
+                  setApprovalConfirmation(null);
+                  if (request) void handleApprovalAction(request.approvalId, request.actionType);
+                }}
+              >
+                Confirm {approvalConfirmation?.actionLabel || 'action'}
+              </Button>
+            </DialogActions>
+          </Dialog>
 
           {renderPanelHeader('events', 'Recent activity', events.length)}
           {openPanelSections.events && (events.length === 0 ? (
