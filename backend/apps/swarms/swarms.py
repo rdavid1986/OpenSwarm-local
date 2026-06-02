@@ -1761,20 +1761,27 @@ def _project_intake_questions() -> list[dict[str, Any]]:
             "options": [{"label": option, "value": option} for option in options] + [custom],
         }
 
+    # Temporary short intake for local testing.
+    # Keep existing question ids so downstream plan enrichment remains compatible.
     return [
-        q("app_type", "Tipo de app/web", "¿Qué tipo de app querés construir?", ["Web app", "Landing + formulario", "Dashboard interno", "E-commerce", "SaaS"]),
-        q("main_goal", "Objetivo principal", "¿Cuál es el objetivo principal del producto?", ["Gestionar operaciones", "Vender online", "Capturar leads", "Automatizar un proceso", "Mostrar información"]),
-        q("target_users", "Usuarios objetivo", "¿Quiénes van a usarla principalmente?", ["Clientes finales", "Equipo interno", "Administradores", "Vendedores", "Usuarios públicos"]),
-        q("frontend", "Frontend deseado", "¿Qué frontend preferís para el MVP?", ["React", "Next.js", "Vite + React", "HTML/CSS simple", "No tengo preferencia"]),
-        q("backend", "Backend deseado", "¿Qué backend preferís?", ["FastAPI", "Node/Express", "Next.js API routes", "Sin backend por ahora", "No tengo preferencia"]),
-        q("database", "Persistencia/base de datos", "¿Qué persistencia necesitás?", ["PostgreSQL", "SQLite", "Supabase", "Archivos JSON", "No necesita base por ahora"]),
-        q("auth", "Autenticación", "¿Necesita login o roles?", ["Sin login", "Login simple", "Admin + usuarios", "OAuth/Google", "No sé todavía"]),
-        q("payments", "Pagos", "¿Necesita pagos en el MVP?", ["No", "Stripe", "Mercado Pago", "Solo registrar pagos manuales", "Más adelante"]),
-        q("deploy", "Deploy", "¿Dónde imaginás deployarlo?", ["Local primero", "Vercel", "Docker/VPS", "Render/Fly.io", "No definido"]),
-        q("visual_style", "Estilo visual", "¿Qué estilo visual buscás?", ["Minimalista", "Corporativo", "Moderno/SaaS", "Colorido", "Inspirado en una marca existente"]),
-        q("mvp_priority", "Prioridad MVP", "¿Qué debe estar sí o sí en el primer MVP?", ["Formulario principal", "Dashboard", "CRUD básico", "Reportes", "Flujo completo end-to-end"]),
-        q("technical_constraints", "Restricciones técnicas", "¿Hay restricciones técnicas importantes?", ["Usar stack existente", "Sin servicios pagos", "Funcionar offline/local", "Código simple de mantener", "No hay restricciones"]),
-        q("out_of_scope", "Fuera del MVP", "¿Qué debería quedar fuera del MVP inicial?", ["Pagos", "Autenticación avanzada", "Diseño final pulido", "Integraciones externas", "Mobile app nativa"]),
+        q(
+            "app_type",
+            "Tipo de proyecto",
+            "¿Qué tipo de proyecto querés crear?",
+            ["Página informativa", "Landing page", "Web app", "Dashboard", "Otro"],
+        ),
+        q(
+            "backend",
+            "Backend",
+            "¿Necesita backend?",
+            ["No, solo frontend", "Sí, necesita backend/API", "No sé todavía"],
+        ),
+        q(
+            "mvp_priority",
+            "Información principal",
+            "¿Qué información, secciones o funciones principales debe tener?",
+            ["Secciones informativas", "Formulario/contacto", "Listado de productos/servicios", "Dashboard o datos", "Lo escribo yo"],
+        ),
     ]
 
 
@@ -1924,16 +1931,18 @@ def _project_intake_question_payload(state: dict[str, Any]) -> dict[str, Any]:
 async def _start_project_intake(swarm, user_message: str, model: str = "qwen2.5-coder:14b") -> tuple[str, dict[str, Any]]:
     now = _project_intake_now()
     fallback_profile = _infer_project_intake_profile(user_message)
-    policy = await resolve_dynamic_intake_policy(
-        user_message=user_message,
-        questions=_project_intake_questions(),
-        fallback_profile=fallback_profile,
-        model=model,
-        project_memory_source=swarm,
-        intent_brief=build_intent_brief(swarm, user_message=user_message),
-    )
-    skipped_questions = policy.get("skipped_questions") if isinstance(policy.get("skipped_questions"), list) else fallback_profile.get("skipped_questions", [])
-    question_overrides = policy.get("question_overrides") if isinstance(policy.get("question_overrides"), dict) else {}
+    # Temporary short intake for testing: avoid model policy latency.
+    policy = {
+        "source": "short_test_fallback",
+        "profile": fallback_profile.get("profile") or "quick_project",
+        "confidence": fallback_profile.get("confidence", 0.6),
+        "skipped_questions": [],
+        "question_overrides": {},
+        "reason": "Short test intake: fixed three-question App Builder flow; model policy disabled for faster local testing.",
+        "provider_health": None,
+    }
+    skipped_questions = []
+    question_overrides = {}
     intake_profile = {
         "profile": policy.get("profile") or fallback_profile.get("profile"),
         "confidence": policy.get("confidence", fallback_profile.get("confidence")),

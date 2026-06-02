@@ -1519,9 +1519,17 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
 
   const handleAddView = useCallback((outputId: string) => {
     dispatch(addViewCard({ outputId, expandedSessionIds }));
-    setTimeout(() => {
-      const card = store.getState().dashboardLayout.viewCards[outputId];
+
+    const focusAddedView = (attempt = 0) => {
+      const state = store.getState();
+      const card = state.dashboardLayout.viewCards[outputId];
+      const output = state.outputs.items[outputId];
       const viewport = canvas.viewportRef.current;
+
+      if (!output && attempt === 0) {
+        void dispatch(fetchOutputs());
+      }
+
       if (card && viewport) {
         const targetZoom = 0.9;
         const targetPanX = (viewport.clientWidth - card.width * targetZoom) / 2 - card.x * targetZoom;
@@ -1537,7 +1545,13 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
         canvas.actions.setState({ panX: targetPanX, panY: targetPanY, zoom: targetZoom });
         handleHighlightCard(outputId);
       }
-    }, 200);
+
+      if (!output && attempt < 5) {
+        window.setTimeout(() => focusAddedView(attempt + 1), 180);
+      }
+    };
+
+    window.setTimeout(() => focusAddedView(0), 40);
   }, [dispatch, expandedSessionIds, canvas.actions, canvas.viewportRef, handleHighlightCard, selection]);
 
   const handleAddBrowser = useCallback(() => {

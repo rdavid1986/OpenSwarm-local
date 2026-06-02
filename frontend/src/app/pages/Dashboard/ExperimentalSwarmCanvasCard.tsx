@@ -2280,9 +2280,27 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     ? `${lastSwarmActionWasImplementation ? 'Implementation ran' : 'Thought'} for ${formatSwarmActionDuration(lastSwarmActionDurationMs)}`
     : null;
 
-  const chatMessages = hasLoadedActiveSwarm
+  const persistedChatMessages = hasLoadedActiveSwarm
     ? (swarmState.messages || []).filter((message: any) => getVisibleSwarmMessageText(getSwarmMessageText(message)))
     : [];
+  const lastSubmittedAlreadyPersisted = !!activeSwarmId && !!lastSubmittedPrompt && persistedChatMessages.some((message: any) => {
+    const role = getSwarmMessageRole(message);
+    return (role === 'user' || role === 'human') && getVisibleSwarmMessageText(getSwarmMessageText(message)) === lastSubmittedPrompt;
+  });
+  const optimisticSubmittedMessage = !!lastSubmittedPrompt && swarmState.actionLoading && !lastSubmittedAlreadyPersisted
+    ? {
+        id: `optimistic-user-${activeSwarmId || 'new'}`,
+        role: 'user',
+        content: lastSubmittedPrompt,
+        message: lastSubmittedPrompt,
+        text: lastSubmittedPrompt,
+        created_at: new Date().toISOString(),
+        optimistic: true,
+      }
+    : null;
+  const chatMessages = optimisticSubmittedMessage
+    ? [...persistedChatMessages, optimisticSubmittedMessage]
+    : persistedChatMessages;
   const finalAuditModel = useMemo(
     () => buildSwarmFinalAuditModel({
       tasks,
@@ -2454,11 +2472,6 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     : Array.isArray((activeSwarm as any)?.implementation?.errors)
       ? (activeSwarm as any).implementation.errors
       : [];
-  const lastSubmittedAlreadyPersisted = !!activeSwarmId && !!lastSubmittedPrompt && chatMessages.some((message: any) => {
-    const role = getSwarmMessageRole(message);
-    return (role === 'user' || role === 'human') && getVisibleSwarmMessageText(getSwarmMessageText(message)) === lastSubmittedPrompt;
-  });
-
   const contextEstimate = useMemo(() => {
     let totalChars = 0;
     for (const message of chatMessages) {
@@ -2652,8 +2665,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const handleOpenOutputPreview = useCallback(async () => {
     if (stableOutputBridgeOutputId) {
       setSeenPreviewOutputId(stableOutputBridgeOutputId);
-      await dispatch(fetchOutputs());
       onAddPreviewCard?.(stableOutputBridgeOutputId);
+      void dispatch(fetchOutputs());
       return;
     }
     if (canCreateOutputBridge) {
