@@ -119,6 +119,11 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         or str(data.get("e2e_kind") or "").startswith("sdd_tdd_materialization")
     ):
         return "sdd_tdd_materialization_e2e"
+    if (
+        data.get("source_kind") == "runtime_e2e_integration"
+        or str(data.get("runtime_e2e_kind") or "").startswith("runtime_e2e")
+    ):
+        return "runtime_e2e_integration"
     if data.get("report_kind") == "skill_import_preview_report" or data.get("source_kind") in {"skill_import_preview", "skill_import_candidate"}:
         return "skill_import_preview"
     if (
@@ -1506,6 +1511,74 @@ def build_project_orientation_process_trace_item(source: dict[str, Any]) -> dict
 
 
 
+
+def build_runtime_e2e_integration_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    if hasattr(source, "__dataclass_fields__"):
+        from dataclasses import asdict
+        data = asdict(source)
+    elif isinstance(source, dict):
+        data = source
+    else:
+        data = getattr(source, "__dict__", {}) if source is not None else {}
+    if not isinstance(data, dict):
+        data = {}
+
+    contract_kind = _first_text(data, "runtime_e2e_kind", default="runtime_e2e_integration_state")
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    blockers = data.get("blockers") if isinstance(data.get("blockers"), list) else []
+    stage = _first_text(data, "stage", default="")
+    completed = data.get("can_mark_runtime_e2e_complete") is True or stage == "completed"
+    status = "completed" if completed else "blocked" if blockers else "warning"
+
+    title_by_kind = {
+        "runtime_e2e_integration_request": "Runtime E2E integration request",
+        "runtime_e2e_integration_state": "Runtime E2E integration state",
+    }
+
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or data.get("candidate_id") or contract_kind,
+        kind="validation",
+        subsystem="RuntimeCore",
+        title=title_by_kind.get(contract_kind, "Runtime E2E integration contract"),
+        summary="Runtime E2E integration recorded as a contract without executing commands, writing files, applying patches, activating tools, or writing memory.",
+        status=status,
+        evidence_refs=data.get("evidence_refs") if isinstance(data.get("evidence_refs"), list) else [],
+        details={
+            "source_kind": "runtime_e2e_integration",
+            "contract_kind": contract_kind,
+            "runtime_e2e_version": data.get("runtime_e2e_version"),
+            "swarm_id": data.get("swarm_id"),
+            "agent_id": data.get("agent_id"),
+            "candidate_id": data.get("candidate_id"),
+            "stage": data.get("stage"),
+            "workspace_path": data.get("workspace_path"),
+            "policy_matrix_ref": data.get("policy_matrix_ref"),
+            "approval_id": data.get("approval_id"),
+            "completion_conditions": data.get("completion_conditions") if isinstance(data.get("completion_conditions"), dict) else {},
+            "sdd_gate": data.get("sdd_gate") if isinstance(data.get("sdd_gate"), dict) else {},
+            "tdd_gate": data.get("tdd_gate") if isinstance(data.get("tdd_gate"), dict) else {},
+            "materialization_execution": data.get("materialization_execution") if isinstance(data.get("materialization_execution"), dict) else {},
+            "post_validation": data.get("post_validation") if isinstance(data.get("post_validation"), dict) else {},
+            "rollback": data.get("rollback") if isinstance(data.get("rollback"), dict) else {},
+            "materialization_gate": data.get("materialization_gate") if isinstance(data.get("materialization_gate"), dict) else {},
+            "e2e_gate": data.get("e2e_gate") if isinstance(data.get("e2e_gate"), dict) else {},
+            "process_trace_refs": data.get("process_trace_refs") if isinstance(data.get("process_trace_refs"), list) else [],
+            "blockers": blockers,
+            "required_actions": required_actions,
+            "can_start_runtime_e2e": data.get("can_start_runtime_e2e", False),
+            "can_mark_runtime_e2e_complete": data.get("can_mark_runtime_e2e_complete", False),
+            "can_execute": False,
+            "can_write_files": False,
+            "can_apply_patch": False,
+            "can_execute_commands": False,
+            "can_activate_tools": False,
+            "can_activate_mcp": False,
+            "can_write_memory": False,
+            "contains_private_reasoning": False,
+        },
+        metadata={"source_kind": "runtime_e2e_integration", "contract_kind": contract_kind},
+    )
+
 def build_sdd_tdd_materialization_e2e_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
     if hasattr(source, "__dataclass_fields__"):
         from dataclasses import asdict
@@ -2512,6 +2585,8 @@ def build_opencode_command_process_trace_item(source: dict[str, Any]) -> dict[st
 
 def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
     source_kind = normalize_process_trace_source_kind(source)
+    if source_kind == "runtime_e2e_integration":
+        return build_runtime_e2e_integration_process_trace_item(source)
     if source_kind == "sdd_tdd_materialization_e2e":
         return build_sdd_tdd_materialization_e2e_process_trace_item(source)
     data = redact_process_trace_source(source)
