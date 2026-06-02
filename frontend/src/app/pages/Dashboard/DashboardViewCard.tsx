@@ -306,6 +306,7 @@ const DashboardViewCard: React.FC<Props> = ({
     && compareIterationSeenKey !== seenCompareIterationKey
     && compareChangedDiffCount > 0
   );
+  const showLegacyHeaderCanvasControls = false;
 
   // ---- Drag via header ----
   const DRAG_THRESHOLD = 3;
@@ -744,7 +745,24 @@ const DashboardViewCard: React.FC<Props> = ({
 
         <Box sx={{ flex: 1 }} />
 
-        {candidateIteration && (
+        <EditableOutputSurface
+          output={output}
+          previewMode={previewMode}
+          candidateIteration={candidateIteration}
+          changedCount={changedDiffCount}
+          actionLoading={Boolean(iterationActionLoading)}
+          onRefine={output.source_swarm_id ? () => onRefineOutput?.(output, selectedPreset) : undefined}
+          onCompare={compareCandidateIteration && compareCandidateServeUrl && `${output.id}::candidate::${compareCandidateIteration.iteration_id}` !== viewCardId ? () => {
+            const syntheticEvent = { stopPropagation: () => {} } as React.MouseEvent;
+            handleOpenCandidatePreview(syntheticEvent);
+          } : undefined}
+          onOpenDiff={candidateIteration ? () => setShowDiffPanel(true) : undefined}
+          onAccept={candidateIteration ? handleAcceptCandidate : undefined}
+          onDiscard={candidateIteration ? handleDiscardCandidate : undefined}
+        />
+
+
+        {showLegacyHeaderCanvasControls && candidateIteration && (
           <Tooltip title={`Candidate iteration ${candidateIteration.iteration_id}`} placement="top">
             <Box
               data-preview-control="true"
@@ -767,7 +785,7 @@ const DashboardViewCard: React.FC<Props> = ({
           </Tooltip>
         )}
 
-        {showCandidateIterationControls && (
+        {showLegacyHeaderCanvasControls && showCandidateIterationControls && (
           <Tooltip title="Accept candidate changes" placement="top">
             <span>
               <Button
@@ -796,7 +814,7 @@ const DashboardViewCard: React.FC<Props> = ({
           </Tooltip>
         )}
 
-        {showCandidateIterationControls && (
+        {showLegacyHeaderCanvasControls && showCandidateIterationControls && (
           <Tooltip title="Discard candidate changes" placement="top">
             <span>
               <Button
@@ -825,7 +843,7 @@ const DashboardViewCard: React.FC<Props> = ({
           </Tooltip>
         )}
 
-        {compareCandidateIteration && compareCandidateServeUrl && `${output.id}::candidate::${compareCandidateIteration.iteration_id}` !== viewCardId && (
+        {showLegacyHeaderCanvasControls && compareCandidateIteration && compareCandidateServeUrl && `${output.id}::candidate::${compareCandidateIteration.iteration_id}` !== viewCardId && (
           <Tooltip title="Open candidate preview card beside this preview" placement="top">
             <Button
               size="small"
@@ -860,7 +878,7 @@ const DashboardViewCard: React.FC<Props> = ({
           </Tooltip>
         )}
 
-        {candidateIteration && (
+        {showLegacyHeaderCanvasControls && candidateIteration && (
           <Tooltip title="View candidate file diff" placement="top">
             <Button
               size="small"
@@ -888,7 +906,7 @@ const DashboardViewCard: React.FC<Props> = ({
           </Tooltip>
         )}
 
-        {output.source_swarm_id && (
+        {showLegacyHeaderCanvasControls && output.source_swarm_id && (
           <Tooltip title="Refine this app in the source Swarm" placement="top">
             <Button
               size="small"
@@ -1014,31 +1032,16 @@ const DashboardViewCard: React.FC<Props> = ({
           onClose={() => setShowDiffPanel(false)}
           c={c}
         />
-        <EditableOutputSurface
-          output={output}
-          previewMode={previewMode}
-          candidateIteration={candidateIteration}
-          changedCount={changedDiffCount}
-          actionLoading={Boolean(iterationActionLoading)}
-          onRefine={output.source_swarm_id ? () => onRefineOutput?.(output, selectedPreset) : undefined}
-          onCompare={compareCandidateIteration && compareCandidateServeUrl && `${output.id}::candidate::${compareCandidateIteration.iteration_id}` !== viewCardId ? () => {
-            const syntheticEvent = { stopPropagation: () => {} } as React.MouseEvent;
-            handleOpenCandidatePreview(syntheticEvent);
-          } : undefined}
-          onOpenDiff={candidateIteration ? () => setShowDiffPanel(true) : undefined}
-          onAccept={candidateIteration ? handleAcceptCandidate : undefined}
-          onDiscard={candidateIteration ? handleDiscardCandidate : undefined}
-        />
 
         <Box
             sx={{
-              width: isMaximized ? 'max-content' : scaledFrameW,
-              height: isMaximized ? 'max-content' : scaledFrameH,
-              minWidth: isMaximized ? '100%' : scaledFrameW,
-              minHeight: isMaximized ? '100%' : scaledFrameH,
+              width: '100%',
+              height: '100%',
+              minWidth: 0,
+              minHeight: 0,
               display: 'flex',
-              alignItems: isMaximized && scaledFrameH < availableH ? 'center' : 'flex-start',
-              justifyContent: isMaximized && scaledFrameW < availableW ? 'center' : 'flex-start',
+              alignItems: scaledFrameH < availableH ? 'center' : 'flex-start',
+              justifyContent: scaledFrameW < availableW ? 'center' : 'flex-start',
             }}
           >
             <Box

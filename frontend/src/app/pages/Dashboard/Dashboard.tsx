@@ -97,6 +97,19 @@ import { API_BASE } from '@/shared/config';
 
 const SELECT_ATTR = 'data-select-type';
 
+type CandidatePreviewRequest = {
+  outputId: string;
+  iterationId: string;
+  candidateWorkspacePath?: string | null;
+  parentViewCardId?: string | null;
+  title?: string | null;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+};
+
+
 const DashboardSelectionOverlay: React.FC = () => {
   const { overlay, dragRect, dragPreview } = useDomElementSelector();
   return <SelectionOverlay overlay={overlay} dragRect={dragRect} dragPreview={dragPreview} />;
@@ -1517,42 +1530,61 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     [canvas.viewportRef, dispatch, dashboardId, expandedSessionIds, focusAgentCardWithRetry],
   );
 
+  const focusViewCardWithRetry = useCallback((viewCardId: string, outputId: string, attempt = 0) => {
+    const state = store.getState();
+    const card = state.dashboardLayout.viewCards[viewCardId];
+    const output = state.outputs.items[outputId];
+    const viewport = canvas.viewportRef.current;
+
+    if (!output && attempt === 0) {
+      void dispatch(fetchOutputs());
+    }
+
+    if (card && viewport) {
+      const targetZoom = 0.9;
+      const targetPanX = (viewport.clientWidth - card.width * targetZoom) / 2 - card.x * targetZoom;
+      const visualCardH = card.height * targetZoom;
+      const preferredTop = (viewport.clientHeight - visualCardH) / 2;
+      const safeTop = Math.max(96, preferredTop);
+      const targetPanY = safeTop - card.y * targetZoom;
+      dispatch(bringToFront({ id: viewCardId, type: 'view' }));
+      selection.deselectAll();
+      setFocusedCardId(viewCardId);
+      document.body.classList.remove('dashboard-marquee-active');
+      document.body.style.userSelect = '';
+      canvas.actions.setState({ panX: targetPanX, panY: targetPanY, zoom: targetZoom });
+      handleHighlightCard(viewCardId);
+    }
+
+    if ((!output || !card) && attempt < 6) {
+      window.setTimeout(() => focusViewCardWithRetry(viewCardId, outputId, attempt + 1), 160);
+    }
+  }, [dispatch, canvas.actions, canvas.viewportRef, handleHighlightCard, selection]);
+
   const handleAddView = useCallback((outputId: string) => {
     dispatch(addViewCard({ outputId, expandedSessionIds }));
+    window.setTimeout(() => focusViewCardWithRetry(outputId, outputId), 40);
+  }, [dispatch, expandedSessionIds, focusViewCardWithRetry]);
 
-    const focusAddedView = (attempt = 0) => {
-      const state = store.getState();
-      const card = state.dashboardLayout.viewCards[outputId];
-      const output = state.outputs.items[outputId];
-      const viewport = canvas.viewportRef.current;
-
-      if (!output && attempt === 0) {
-        void dispatch(fetchOutputs());
-      }
-
-      if (card && viewport) {
-        const targetZoom = 0.9;
-        const targetPanX = (viewport.clientWidth - card.width * targetZoom) / 2 - card.x * targetZoom;
-        const visualCardH = card.height * targetZoom;
-        const preferredTop = (viewport.clientHeight - visualCardH) / 2;
-        const safeTop = Math.max(96, preferredTop);
-        const targetPanY = safeTop - card.y * targetZoom;
-        dispatch(bringToFront({ id: outputId, type: 'view' }));
-        selection.deselectAll();
-        setFocusedCardId(outputId);
-        document.body.classList.remove('dashboard-marquee-active');
-        document.body.style.userSelect = '';
-        canvas.actions.setState({ panX: targetPanX, panY: targetPanY, zoom: targetZoom });
-        handleHighlightCard(outputId);
-      }
-
-      if (!output && attempt < 5) {
-        window.setTimeout(() => focusAddedView(attempt + 1), 180);
-      }
-    };
-
-    window.setTimeout(() => focusAddedView(0), 40);
-  }, [dispatch, expandedSessionIds, canvas.actions, canvas.viewportRef, handleHighlightCard, selection]);
+  const handleAddCandidatePreview = useCallback((request: CandidatePreviewRequest) => {
+    if (!request.outputId || !request.iterationId) return;
+    const candidateViewCardId = `${request.outputId}::candidate::${request.iterationId}`;
+    dispatch(addViewCard({
+      outputId: request.outputId,
+      viewCardId: candidateViewCardId,
+      previewKind: 'candidate',
+      iterationId: request.iterationId,
+      candidateWorkspacePath: request.candidateWorkspacePath ?? null,
+      parentViewCardId: request.parentViewCardId ?? request.outputId,
+      title: request.title || 'Candidate Preview',
+      expandedSessionIds,
+      x: request.x,
+      y: request.y,
+      width: request.width,
+      height: request.height,
+    }));
+    window.setTimeout(() => focusViewCardWithRetry(candidateViewCardId, request.outputId), 40);
+  }, [dispatch, expandedSessionIds, focusViewCardWithRetry]);
 
   const handleAddBrowser = useCallback(() => {
     report('dashboard', 'browser_added');
@@ -2747,6 +2779,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                 onDoubleClick={handleCardDoubleClick}
                 onSwarmBound={persistLayoutNow}
                 onAddPreviewCard={handleAddView}
+                onAddCandidatePreview={handleAddCandidatePreview}
                 draftPrompt={swarmDraftPrompts[sc.swarm_card_id] || null}
                 onDraftPromptConsumed={() => {
                   setSwarmDraftPrompts((prev) => {

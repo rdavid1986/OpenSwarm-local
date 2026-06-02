@@ -5,6 +5,7 @@ import hashlib
 import logging
 import mimetypes
 import base64
+from urllib.parse import quote
 from datetime import datetime
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -112,34 +113,41 @@ _HREF_SRC_ATTR_RE = re.compile(
 )
 
 
-def _inject_token_into_relative_urls(html: str, token: str) -> str:
-    """Append `?token=<t>` to every relative href/src in the served HTML.
+def _append_query_param(url: str, name: str, value: str) -> str:
+    if not value or f"{name}=" in url:
+        return url
+    hash_idx = url.find("#")
+    if hash_idx >= 0:
+        base, frag = url[:hash_idx], url[hash_idx:]
+    else:
+        base, frag = url, ""
+    sep = "&" if "?" in base else "?"
+    return f"{base}{sep}{name}={quote(str(value), safe='')}{frag}"
 
-    Browsers strip the parent iframe URL's query string before resolving
-    relative `<link href="styles.css">` / `<script src="x.js">`, so without
-    this rewrite the sub-resource fetch lands at the auth middleware with no
-    credentials and gets a 401. Idempotent: skips URLs that already carry a
-    `token=` param. Skips absolute URLs (CDN, data:, etc.) — see prefix list.
+
+def _inject_token_into_relative_urls(html: str, token: str, asset_rev: str = "") -> str:
+    """Append auth/cache query params to relative href/src in served HTML.
+
+    Iframe sub-resource fetches drop the parent iframe query string. This keeps
+    relative CSS/JS/image requests authenticated and cache-busted per preview
+    revision, especially for Candidate Preview workspaces.
     """
-    if not token:
+    if not token and not asset_rev:
         return html
 
     def _patch(match: re.Match) -> str:
-        attr, quote, url = match.group(1), match.group(2), match.group(3)
+        attr, quote_char, url = match.group(1), match.group(2), match.group(3)
         lowered = url.lower().lstrip()
         if lowered.startswith(_ABSOLUTE_URL_PREFIXES):
             return match.group(0)
-        if "token=" in url:
+
+        patched_url = url
+        patched_url = _append_query_param(patched_url, "token", token)
+        patched_url = _append_query_param(patched_url, "_asset_rev", asset_rev)
+
+        if patched_url == url:
             return match.group(0)
-        # Split off any hash fragment so `?token=` lands in the query, not in
-        # the fragment: `page.html?v=1#sec` → `page.html?v=1&token=X#sec`.
-        hash_idx = url.find("#")
-        if hash_idx >= 0:
-            base, frag = url[:hash_idx], url[hash_idx:]
-        else:
-            base, frag = url, ""
-        sep = "&" if "?" in base else "?"
-        return f'{attr}={quote}{base}{sep}token={token}{frag}{quote}'
+        return f'{attr}={quote_char}{patched_url}{quote_char}'
 
     return _HREF_SRC_ATTR_RE.sub(_patch, html)
 
@@ -667,7 +675,7 @@ def _walk_directory(folder: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 @outputs.router.get("/workspace/{workspace_id}/serve/{filepath:path}")
-async def serve_workspace_file(workspace_id: str, filepath: str, _d: str = ""):
+async def serve_workspace_file(workspace_id: str, filepath: str, _d: str = "", _candidate_rev: str = "", _preview_rev: str = "", _asset_rev: str = ""):
     """Serve a file from a workspace folder. For index.html, inject OUTPUT data."""
     folder = os.path.join(WORKSPACE_DIR, workspace_id)
     full_path = os.path.normpath(os.path.join(folder, filepath))
@@ -685,14 +693,15 @@ async def serve_workspace_file(workspace_id: str, filepath: str, _d: str = ""):
         # Iframe sub-resource fetches (<link>, <script src>, <img>) drop the
         # parent's ?token= query string, so rewrite the HTML to put the token
         # back on every relative URL — otherwise sub-resources 401.
-        content = _inject_token_into_relative_urls(content, get_auth_token())
+        asset_rev = _asset_rev or _candidate_rev or _preview_rev or str(Path(full_path).stat().st_mtime_ns)
+        content = _inject_token_into_relative_urls(content, get_auth_token(), asset_rev=asset_rev)
 
     mime, _ = mimetypes.guess_type(filepath)
-    return Response(content=content, media_type=mime or "text/plain")
+    return Response(content=content, media_type=mime or "text/plain", headers={"Cache-Control": "no-store, max-age=0", "Pragma": "no-cache"})
 
 
 @outputs.router.get("/{output_id}/serve/{filepath:path}")
-async def serve_output_file(output_id: str, filepath: str, _d: str = ""):
+async def serve_output_file(output_id: str, filepath: str, _d: str = "", _preview_rev: str = "", _asset_rev: str = ""):
     """Serve a file from a saved output's files dict. For index.html, inject OUTPUT data."""
     output = _load(output_id)
     content = output.files.get(filepath)
@@ -702,10 +711,11 @@ async def serve_output_file(output_id: str, filepath: str, _d: str = ""):
     if filepath == "index.html":
         input_json, result_json = _decode_data_param(_d) if _d else ("{}", "null")
         content = _inject_data_into_html(content, input_json, result_json)
-        content = _inject_token_into_relative_urls(content, get_auth_token())
+        asset_rev = _asset_rev or _preview_rev or str(output.updated_at or "")
+        content = _inject_token_into_relative_urls(content, get_auth_token(), asset_rev=asset_rev)
 
     mime, _ = mimetypes.guess_type(filepath)
-    return Response(content=content, media_type=mime or "text/plain")
+    return Response(content=content, media_type=mime or "text/plain", headers={"Cache-Control": "no-store, max-age=0", "Pragma": "no-cache"})
 
 
 # ---------------------------------------------------------------------------

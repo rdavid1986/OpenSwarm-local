@@ -161,14 +161,14 @@ const ViewPreview = forwardRef<ViewPreviewHandle, Props>(({
     >
       <iframe
         ref={iframeRef}
-        key={iframeSrc ? `url-${reloadKey}` : 'srcdoc'}
+        key={iframeSrc ? `url-${iframeSrc}` : 'srcdoc'}
         src={iframeSrc}
         sandbox="allow-scripts allow-same-origin"
         style={{
           width: '100%',
           height: '100%',
           border: 'none',
-          background: '#fff',
+          background: 'transparent',
           ...style,
         }}
         title="App Preview"

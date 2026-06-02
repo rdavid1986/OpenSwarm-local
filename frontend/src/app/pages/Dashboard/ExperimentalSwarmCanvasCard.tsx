@@ -106,6 +106,13 @@ interface Props {
     height?: number;
   }) => void;
   onAddPreviewCard?: (outputId: string) => void;
+  onAddCandidatePreview?: (request: {
+    outputId: string;
+    iterationId: string;
+    candidateWorkspacePath?: string | null;
+    parentViewCardId?: string | null;
+    title?: string | null;
+  }) => void;
   draftPrompt?: string | null;
   onDraftPromptConsumed?: () => void;
   dashboardId?: string;
@@ -2003,6 +2010,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   onDoubleClick,
   onSwarmBound,
   onAddPreviewCard,
+  onAddCandidatePreview,
   draftPrompt,
   onDraftPromptConsumed,
   dashboardId,
@@ -2674,6 +2682,36 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     }
   }, [canCreateOutputBridge, dispatch, handleCreateOutputBridge, onAddPreviewCard, stableOutputBridgeOutputId]);
 
+  const handleOpenCandidatePreview = useCallback(async () => {
+    if (!stableOutputBridgeOutputId) {
+      await handleOpenOutputPreview();
+      return;
+    }
+
+    try {
+      const iterations = await dispatch(fetchOutputIterations(stableOutputBridgeOutputId)).unwrap();
+      const candidates = [...iterations]
+        .filter((iteration: any) => iteration?.status === 'candidate' && iteration?.candidate_workspace_path)
+        .sort((a: any, b: any) => String(a.updated_at || a.created_at || '').localeCompare(String(b.updated_at || b.created_at || '')));
+      const latestCandidate = candidates[candidates.length - 1];
+      if (latestCandidate?.iteration_id) {
+        onAddCandidatePreview?.({
+          outputId: stableOutputBridgeOutputId,
+          iterationId: latestCandidate.iteration_id,
+          candidateWorkspacePath: latestCandidate.candidate_workspace_path || null,
+          parentViewCardId: stableOutputBridgeOutputId,
+          title: 'Candidate Preview',
+        });
+        void dispatch(fetchOutputs());
+        return;
+      }
+    } catch {
+      // Fallback to stable preview; errors are visible elsewhere in the refinement trace.
+    }
+
+    await handleOpenOutputPreview();
+  }, [dispatch, handleOpenOutputPreview, onAddCandidatePreview, stableOutputBridgeOutputId]);
+
   const handleProjectIntakeOption = useCallback(async (option: any) => {
     const label = renderText(option?.label ?? option?.value, '').trim();
     const value = renderText(option?.value ?? option?.label, '').trim();
@@ -2733,7 +2771,12 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       model: activeSwarmModel,
     }));
     dispatch(fetchExperimentalSwarm(activeSwarmId));
-  }, [activeSwarmId, activeSwarmModel, dispatch, swarmState.actionLoading]);
+    if (action === 'confirm') {
+      window.setTimeout(() => {
+        void handleOpenCandidatePreview();
+      }, 180);
+    }
+  }, [activeSwarmId, activeSwarmModel, dispatch, handleOpenCandidatePreview, swarmState.actionLoading]);
 
   const handleMcpRequiredUserAction = useCallback((action: McpRequiredUserAction) => {
     const actionType = action.actionType.toLowerCase();
@@ -3638,7 +3681,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                           )}
                           {isExecuted && (
                             <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem', lineHeight: 1.35, mt: 0.35 }}>
-                              Siguiente paso: abrir Preview, revisar Compare/Diff y elegir Accept o Discard.
+                              Siguiente paso: revisar Candidate Preview, Diff y elegir Accept o Discard.
                             </Typography>
                           )}
                           {isExecuted && (stableOutputBridgeOutputId || canCreateOutputBridge) && (
@@ -3647,7 +3690,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                               variant="outlined"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleOpenOutputPreview();
+                                handleOpenCandidatePreview();
                               }}
                               onPointerDown={(e) => e.stopPropagation()}
                               sx={{
