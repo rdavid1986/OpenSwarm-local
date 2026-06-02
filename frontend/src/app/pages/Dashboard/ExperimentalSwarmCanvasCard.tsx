@@ -1570,6 +1570,58 @@ function getMiniAgentAdaptiveSkillState(task: any): {
 }
 
 
+
+function runtimeE2EPayloadToTraceItem(value: any, activeSwarmId: string | null): ProcessTraceItem | null {
+  const payload = asPlainRecord(value);
+  if (!Object.keys(payload).length) return null;
+
+  const state = asPlainRecord(payload.state);
+  const selection = asPlainRecord(payload.selection);
+  const details = Object.keys(state).length ? state : payload;
+  const blockers = Array.isArray(details.blockers) ? details.blockers : [];
+  const requiredActions = Array.isArray(details.required_actions) ? details.required_actions : [];
+  const stage = renderText(details.stage, 'runtime_e2e');
+
+  const status: ProcessTraceItem['status'] = payload.ok === false
+    ? 'failed'
+    : details.can_mark_runtime_e2e_complete === true
+      ? 'completed'
+      : blockers.length > 0
+        ? 'blocked'
+        : requiredActions.length > 0
+          ? 'warning'
+          : 'planned';
+
+  return {
+    trace_id: String(details.trace_id || `runtime-e2e-${activeSwarmId || 'new'}`),
+    kind: 'validation',
+    subsystem: 'RuntimeCore',
+    title: 'Runtime E2E integration',
+    summary: 'Runtime E2E integration state from the real swarm payload.',
+    status,
+    badge: stage.replace(/_/g, ' '),
+    related_task_id: activeSwarmId || '',
+    details: {
+      ...details,
+      source_kind: 'runtime_e2e_integration',
+      contract_kind: details.contract_kind || details.runtime_e2e_kind || 'runtime_e2e_integration_state',
+      selection,
+      payload_ok: payload.ok,
+      can_execute: false,
+      can_write_files: false,
+      can_apply_patch: false,
+      can_execute_commands: false,
+      can_activate_tools: false,
+      can_activate_mcp: false,
+      can_write_memory: false,
+      contains_private_reasoning: false,
+    },
+    evidence_refs: Array.isArray(details.evidence_refs) ? details.evidence_refs : [],
+    artifact_refs: Array.isArray(details.artifact_refs) ? details.artifact_refs : [],
+  };
+}
+
+
 function buildSwarmCardProcessTraceItems(params: {
   activeSwarm: any | null;
   activeSwarmId: string | null;
@@ -1590,6 +1642,7 @@ function buildSwarmCardProcessTraceItems(params: {
   events: any[];
   finalResult: any;
   finalAuditModel?: SwarmFinalAuditModel | null;
+  runtimeE2EIntegration?: any;
   chatMessageCount: number;
 }): ProcessTraceItem[] {
   const status: ProcessTraceItem['status'] = params.actionLoading
@@ -1767,6 +1820,11 @@ function buildSwarmCardProcessTraceItems(params: {
         claim_guard_status: audit.claimGuardStatus,
       },
     });
+  }
+
+  const runtimeE2ETraceItem = runtimeE2EPayloadToTraceItem(params.runtimeE2EIntegration, params.activeSwarmId);
+  if (runtimeE2ETraceItem && !items.some((item) => item.trace_id === runtimeE2ETraceItem.trace_id)) {
+    items.unshift(runtimeE2ETraceItem);
   }
 
   return items.slice(0, 8);
@@ -2160,6 +2218,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       events,
       finalResult,
       finalAuditModel,
+      runtimeE2EIntegration: (activeSwarm as any)?.runtime_e2e_integration,
       chatMessageCount: chatMessages.length,
     }),
     [
