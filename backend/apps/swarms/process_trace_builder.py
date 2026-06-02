@@ -104,6 +104,11 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         or str(data.get("sdd_contract_kind") or "").startswith("sdd_")
     ):
         return "sdd_orchestrator_runtime"
+    if (
+        data.get("source_kind") == "tdd_agent_runtime"
+        or str(data.get("tdd_contract_kind") or "").startswith("tdd_")
+    ):
+        return "tdd_agent_runtime"
     if data.get("report_kind") == "skill_import_preview_report" or data.get("source_kind") in {"skill_import_preview", "skill_import_candidate"}:
         return "skill_import_preview"
     if (
@@ -1490,6 +1495,94 @@ def build_project_orientation_process_trace_item(source: dict[str, Any]) -> dict
 
 
 
+def build_tdd_agent_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    contract_kind = _first_text(data, "tdd_contract_kind", default="tdd_agent_contract")
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    blockers = data.get("blockers") if isinstance(data.get("blockers"), list) else []
+    evidence_status = _first_text(data, "evidence_status", default="")
+    approval_required = bool(data.get("approval_required"))
+    blocked = bool(blockers or evidence_status == "blocked")
+    warning = bool(required_actions or approval_required or evidence_status in {"missing", "weak"})
+    status = "blocked" if blocked else "warning" if warning else "completed"
+    title_by_kind = {
+        "tdd_agent_manifest_role": "TDD agent manifest role",
+        "tdd_test_list_contract": "TDD test list",
+        "tdd_red_phase_contract": "TDD red phase",
+        "tdd_green_patch_candidate": "TDD green patch candidate",
+        "tdd_refactor_contract": "TDD refactor contract",
+        "tdd_evidence_report": "TDD evidence report",
+    }
+    kind = "validation" if contract_kind in {"tdd_red_phase_contract", "tdd_evidence_report", "tdd_test_list_contract"} else "planning"
+
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or contract_kind,
+        kind=kind,
+        subsystem="ValidationCore",
+        title=title_by_kind.get(contract_kind, "TDD agent contract"),
+        summary="TDD contract recorded without writing tests, executing commands, applying patches, activating tools, or writing memory.",
+        status=status,
+        evidence_refs=data.get("evidence_refs") if isinstance(data.get("evidence_refs"), list) else [],
+        details={
+            "source_kind": "tdd_agent_runtime",
+            "contract_kind": contract_kind,
+            "tdd_version": data.get("tdd_version"),
+            "agent_id": data.get("agent_id"),
+            "aliases": data.get("aliases") if isinstance(data.get("aliases"), list) else [],
+            "role": data.get("role"),
+            "capabilities": data.get("capabilities") if isinstance(data.get("capabilities"), list) else [],
+            "boundaries": data.get("boundaries") if isinstance(data.get("boundaries"), list) else [],
+            "feature_under_test": data.get("feature_under_test"),
+            "acceptance_criteria": data.get("acceptance_criteria") if isinstance(data.get("acceptance_criteria"), list) else [],
+            "test_cases": data.get("test_cases") if isinstance(data.get("test_cases"), list) else [],
+            "edge_cases": data.get("edge_cases") if isinstance(data.get("edge_cases"), list) else [],
+            "fixtures_needed": data.get("fixtures_needed") if isinstance(data.get("fixtures_needed"), list) else [],
+            "files_likely_touched": data.get("files_likely_touched") if isinstance(data.get("files_likely_touched"), list) else [],
+            "target_test_file": data.get("target_test_file"),
+            "test_name": data.get("test_name"),
+            "behavior_under_test": data.get("behavior_under_test"),
+            "expected_failure_reason": data.get("expected_failure_reason"),
+            "command_to_run": data.get("command_to_run"),
+            "dry_run_only": data.get("dry_run_only", True),
+            "minimal_patch_candidate": data.get("minimal_patch_candidate") if isinstance(data.get("minimal_patch_candidate"), dict) else {},
+            "touched_files": data.get("touched_files") if isinstance(data.get("touched_files"), list) else [],
+            "expected_test_command": data.get("expected_test_command"),
+            "expected_pass_condition": data.get("expected_pass_condition"),
+            "regression_scope": data.get("regression_scope") if isinstance(data.get("regression_scope"), list) else [],
+            "refactor_intent": data.get("refactor_intent"),
+            "invariant_tests": data.get("invariant_tests") if isinstance(data.get("invariant_tests"), list) else [],
+            "affected_symbols": data.get("affected_symbols") if isinstance(data.get("affected_symbols"), list) else [],
+            "phase": data.get("phase"),
+            "test_command": data.get("test_command"),
+            "failing_output_ref": data.get("failing_output_ref"),
+            "passing_output_ref": data.get("passing_output_ref"),
+            "diff_summary": data.get("diff_summary"),
+            "regression_coverage": data.get("regression_coverage") if isinstance(data.get("regression_coverage"), list) else [],
+            "evidence_status": evidence_status,
+            "required_actions": required_actions,
+            "approval_required": approval_required,
+            "policy_matrix_required": data.get("policy_matrix_required", True),
+            "safeshell_required": data.get("safeshell_required", False),
+            "test_runner_required": data.get("test_runner_required", False),
+            "materialization_required": data.get("materialization_required", False),
+            "can_mark_green": data.get("can_mark_green", False),
+            "can_mark_refactor_safe": data.get("can_mark_refactor_safe", False),
+            "can_execute": False,
+            "can_execute_tests": False,
+            "can_write_tests": False,
+            "can_write_files": False,
+            "can_apply_patch": False,
+            "can_create_agent": False,
+            "can_create_miniagent": False,
+            "can_activate_tools": False,
+            "can_activate_mcp": False,
+            "can_write_memory": False,
+            "contains_private_reasoning": False,
+        },
+        metadata={"source_kind": "tdd_agent_runtime", "contract_kind": contract_kind},
+    )
+
+
 def build_sdd_orchestrator_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
     data = source or {}
     contract_kind = _first_text(data, "sdd_contract_kind", default="sdd_orchestrator_contract")
@@ -2195,6 +2288,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
             item = _context_item(data)
     elif source_kind == "project_rules_import":
         item = build_project_rules_import_process_trace_item(data)
+    elif source_kind == "tdd_agent_runtime":
+        item = build_tdd_agent_process_trace_item(data)
     elif source_kind == "sdd_orchestrator_runtime":
         item = build_sdd_orchestrator_process_trace_item(data)
     elif source_kind == "agent_mention_routing":
