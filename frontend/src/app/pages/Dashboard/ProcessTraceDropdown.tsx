@@ -385,6 +385,112 @@ function buildProjectOrientationWarning(item: ProcessTraceItem): string | null {
 
 
 
+
+function isRuntimeE2ETraceItem(item: ProcessTraceItem): boolean {
+  const details = item.details || {};
+  const metadata = item.metadata || {};
+  const source = getDetailValue(details, 'source_kind') || metadata.source_kind;
+  const contract = traceText(getDetailValue(details, 'contract_kind', 'runtime_e2e_kind'), '');
+  return source === 'runtime_e2e_integration'
+    || contract.startsWith('runtime_e2e')
+    || getDetailValue(details, 'can_mark_runtime_e2e_complete', 'can_start_runtime_e2e') !== undefined;
+}
+
+function RuntimeE2EIntegrationCard({ item }: { item: ProcessTraceItem }) {
+  const c = useClaudeTokens();
+  const details = item.details || {};
+  const conditions = nestedRecord(getDetailValue(details, 'completion_conditions'));
+  const blockers = getDetailValue(details, 'blockers');
+  const required = getDetailValue(details, 'required_actions');
+  const refs = getDetailValue(details, 'process_trace_refs');
+  const stage = traceText(getDetailValue(details, 'stage'), 'blocked').replace(/_/g, ' ');
+  const stages = [
+    { id: 'request', label: 'Request', value: Boolean(conditions.request_has_candidate && conditions.request_has_workspace && conditions.request_has_policy && conditions.request_has_approval), description: 'candidate/workspace/policy/approval' },
+    { id: 'sdd', label: 'SDD', value: conditions.sdd_ok, description: 'spec completion gate' },
+    { id: 'tdd', label: 'TDD', value: conditions.tdd_ok, description: 'runtime TDD gate' },
+    { id: 'execution', label: 'Execution', value: conditions.materialization_execution_ok, description: 'approved materialization' },
+    { id: 'post-validation', label: 'Post-validation', value: conditions.post_validation_ok, description: 'validation after change' },
+    { id: 'rollback', label: 'Rollback', value: conditions.rollback_ready, description: 'recovery path ready' },
+    { id: 'safe', label: 'Safe', value: conditions.materialization_safe, description: 'materialization safe gate' },
+    { id: 'complete', label: 'E2E complete', value: conditions.e2e_ok || getDetailValue(details, 'can_mark_runtime_e2e_complete'), description: 'global runtime close' },
+  ];
+
+  return (
+    <Box
+      sx={{
+        display: 'grid',
+        gap: 0.75,
+        p: 0.85,
+        borderRadius: 1.25,
+        border: `1px solid ${c.border.subtle}`,
+        bgcolor: `${c.bg.elevated}70`,
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, minWidth: 0 }}>
+        <Typography sx={{ color: c.text.secondary, fontSize: '0.72rem', fontWeight: 850, letterSpacing: '0.02em' }}>
+          Runtime E2E integration
+        </Typography>
+        <Typography noWrap title={stage} sx={{ color: c.text.ghost, fontSize: '0.64rem', fontFamily: c.font.mono, minWidth: 0 }}>
+          {stage}
+        </Typography>
+      </Box>
+
+      <Box sx={{ display: 'flex', alignItems: 'stretch', gap: 0.45, minWidth: 0, overflowX: 'auto', pb: 0.15 }}>
+        {stages.map((stageItem, index) => {
+          const positive = isPositiveGateValue(stageItem.value);
+          const negative = isNegativeGateValue(stageItem.value);
+          const tone = positive ? c.status.success : negative ? c.status.warning : c.text.tertiary;
+          return (
+            <React.Fragment key={stageItem.id}>
+              <Box
+                title={`${stageItem.label}: ${gateValueLabel(stageItem.value)} · ${stageItem.description}`}
+                sx={{
+                  display: 'grid',
+                  gap: 0.2,
+                  minWidth: 124,
+                  flex: '0 0 auto',
+                  px: 0.65,
+                  py: 0.55,
+                  borderRadius: 1.1,
+                  border: `1px solid ${tone}${positive || negative ? '66' : '33'}`,
+                  bgcolor: `${tone}${positive || negative ? '13' : '08'}`,
+                }}
+              >
+                <Typography noWrap sx={{ color: tone, fontSize: '0.64rem', fontWeight: 900 }}>
+                  {index + 1}. {stageItem.label}
+                </Typography>
+                <Typography noWrap sx={{ color: c.text.secondary, fontSize: '0.6rem', maxWidth: 136 }}>
+                  {gateValueLabel(stageItem.value)}
+                </Typography>
+                <Typography noWrap sx={{ color: c.text.ghost, fontSize: '0.56rem', maxWidth: 136 }}>
+                  {stageItem.description}
+                </Typography>
+              </Box>
+              {index < stages.length - 1 && (
+                <Box sx={{ alignSelf: 'center', width: 14, height: 1, flex: '0 0 auto', bgcolor: c.border.subtle }} />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </Box>
+
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.45 }}>
+        <TraceGatePill label="Can start" value={getDetailValue(details, 'can_start_runtime_e2e')} />
+        <TraceGatePill label="Can complete" value={getDetailValue(details, 'can_mark_runtime_e2e_complete')} />
+        <TraceGatePill label="Stage" value={getDetailValue(details, 'stage')} />
+      </Box>
+
+      {(refs || blockers || required) && (
+        <Box sx={{ display: 'grid', gap: 0.25 }}>
+          {refs && <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem' }}>ProcessTrace refs: {compactTraceList(refs, 4)}</Typography>}
+          {blockers && <Typography sx={{ color: c.status.warning, fontSize: '0.66rem' }}>Blockers: {compactTraceList(blockers, 4)}</Typography>}
+          {required && <Typography sx={{ color: c.text.ghost, fontSize: '0.66rem' }}>Required: {compactTraceList(required, 4)}</Typography>}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
 function isE2EGateTraceItem(item: ProcessTraceItem): boolean {
   const details = item.details || {};
   const metadata = item.metadata || {};
@@ -835,9 +941,28 @@ function buildSubsystemDetailRows(item: ProcessTraceItem, durationLabel: string 
     || item.metadata?.source_kind === 'project_orientation_multiagent'
     || String(getDetailValue(details, 'source_kind') || '').startsWith('project_orientation_')
     || Boolean(getDetailValue(details, 'project_type', 'selected_pattern', 'orientation_required', 'app_builder_gate'));
+  const isRuntimeE2E = isRuntimeE2ETraceItem(item);
   const isE2EGates = isE2EGateTraceItem(item);
   const isActionMaterialization = isActionMaterializationTraceItem(item);
   const isSddOrchestrator = isSddOrchestratorTraceItem(item);
+
+  if (isRuntimeE2E) {
+    pushDetailRow(rows, 'Runtime E2E contract', getDetailValue(details, 'contract_kind'));
+    pushDetailRow(rows, 'Stage', getDetailValue(details, 'stage'));
+    pushDetailRow(rows, 'Candidate', getDetailValue(details, 'candidate_id'));
+    pushDetailRow(rows, 'Swarm', getDetailValue(details, 'swarm_id'));
+    pushDetailRow(rows, 'Agent', getDetailValue(details, 'agent_id'));
+    pushDetailRow(rows, 'Workspace', getDetailValue(details, 'workspace_path'));
+    pushDetailRow(rows, 'Policy', getDetailValue(details, 'policy_matrix_ref'));
+    pushDetailRow(rows, 'Approval', getDetailValue(details, 'approval_id'));
+    pushDetailRow(rows, 'Can start runtime E2E', getDetailValue(details, 'can_start_runtime_e2e'));
+    pushDetailRow(rows, 'Can complete runtime E2E', getDetailValue(details, 'can_mark_runtime_e2e_complete'));
+    pushDetailRow(rows, 'Conditions', getDetailValue(details, 'completion_conditions'));
+    pushDetailRow(rows, 'ProcessTrace refs', getDetailValue(details, 'process_trace_refs'), { list: true });
+    pushDetailRow(rows, 'Blockers', getDetailValue(details, 'blockers'), { list: true });
+    pushDetailRow(rows, 'Required', getDetailValue(details, 'required_actions'), { list: true });
+    return rows;
+  }
 
   if (isE2EGates) {
     pushDetailRow(rows, 'E2E contract', getDetailValue(details, 'contract_kind'));
@@ -1156,6 +1281,7 @@ function RichTraceSections({ item }: { item: ProcessTraceItem }) {
   const subsystem = String(item.subsystem || '').toLowerCase();
   const kind = String(item.kind || '').toLowerCase();
   const isFileOutput = ['filecore', 'outputcore'].includes(subsystem) || ['file', 'diff', 'workspace', 'output', 'artifact'].includes(kind);
+  const isRuntimeE2E = isRuntimeE2ETraceItem(item);
   const isE2EGates = isE2EGateTraceItem(item);
   const isActionMaterialization = isActionMaterializationTraceItem(item);
   const isSddOrchestrator = isSddOrchestratorTraceItem(item);
@@ -1168,10 +1294,11 @@ function RichTraceSections({ item }: { item: ProcessTraceItem }) {
     ['Validation', getDetailValue(details, 'validation_summary', 'validation')],
   ] as Array<[string, unknown]>;
   const hasSummary = summaryFields.some(([, value]) => value !== undefined && value !== null && value !== '');
-  if (!isFileOutput && !hasSummary && !isSddOrchestrator && !isE2EGates && !isActionMaterialization) return null;
+  if (!isFileOutput && !hasSummary && !isSddOrchestrator && !isRuntimeE2E && !isE2EGates && !isActionMaterialization) return null;
 
   return (
     <Box sx={{ display: 'grid', gap: 0.85, mb: 1 }}>
+      {isRuntimeE2E && <RuntimeE2EIntegrationCard item={item} />}
       {isE2EGates && <E2EGateSummaryCard item={item} />}
       {isActionMaterialization && <ActionMaterializationEvidenceCard item={item} />}
       {isSddOrchestrator && <SddRoleFlowCard item={item} />}
