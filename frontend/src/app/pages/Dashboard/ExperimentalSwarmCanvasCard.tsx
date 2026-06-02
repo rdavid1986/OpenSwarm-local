@@ -2311,6 +2311,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       activeSwarmModel,
     ],
   );
+  const [processTraceFilter, setProcessTraceFilter] = useState<ProcessTraceFilterId>('all');
   const swarmProcessTraceItems = useMemo(
     () => buildSwarmCardProcessTraceItems({
       activeSwarm,
@@ -2741,7 +2742,6 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   }, [dispatch, navigate]);
 
   const [approvalConfirmation, setApprovalConfirmation] = useState<ApprovalConfirmationRequest | null>(null);
-  const [processTraceFilter, setProcessTraceFilter] = useState<ProcessTraceFilterId>('all');
 
   const handleStartImplementation = useCallback(async (action?: any) => {
     if (!activeSwarmId || swarmState.actionLoading || startImplementationInFlightRef.current) return;
