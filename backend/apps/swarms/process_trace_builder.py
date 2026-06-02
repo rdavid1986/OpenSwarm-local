@@ -1519,6 +1519,11 @@ def build_action_materialization_process_trace_item(source: dict[str, Any]) -> d
         "action_materialization_decision": "Action materialization decision",
         "action_materialization_execution_request": "Action materialization execution request",
         "action_materialization_execution_result": "Action materialization execution result",
+        "action_materialization_post_validation_request": "Action materialization post-validation request",
+        "action_materialization_post_validation_result": "Action materialization post-validation result",
+        "action_materialization_rollback_request": "Action materialization rollback request",
+        "action_materialization_rollback_result": "Action materialization rollback result",
+        "action_materialization_post_validation_gate": "Action materialization post-validation gate",
     }
     kind = "action" if contract_kind in {"action_materialization_request", "action_materialization_decision"} else "validation"
 
@@ -1571,6 +1576,16 @@ def build_action_materialization_process_trace_item(source: dict[str, Any]) -> d
             "changed_files": data.get("changed_files") if isinstance(data.get("changed_files"), list) else [],
             "command_outputs": data.get("command_outputs") if isinstance(data.get("command_outputs"), list) else [],
             "can_mark_executed": data.get("can_mark_executed", False),
+            "validation_status": data.get("validation_status"),
+            "validation_results": data.get("validation_results") if isinstance(data.get("validation_results"), list) else [],
+            "post_validation_status": data.get("post_validation_status"),
+            "rollback_status": data.get("rollback_status"),
+            "rollback_results": data.get("rollback_results") if isinstance(data.get("rollback_results"), list) else [],
+            "rollback_ready": data.get("rollback_ready", False),
+            "completion_conditions": data.get("completion_conditions") if isinstance(data.get("completion_conditions"), dict) else {},
+            "can_mark_validated": data.get("can_mark_validated", False),
+            "can_mark_rolled_back": data.get("can_mark_rolled_back", False),
+            "can_mark_materialization_safe": data.get("can_mark_materialization_safe", False),
             "approval_required": data.get("approval_required", True),
             "policy_matrix_required": data.get("policy_matrix_required", True),
             "safeshell_required": data.get("safeshell_required", True),

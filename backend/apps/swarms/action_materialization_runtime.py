@@ -118,6 +118,48 @@ def _content_text(value: Any, *, limit: int = 20000) -> str:
     return str(value)[:limit]
 
 
+def _normalize_operation(operation: Any) -> dict[str, Any]:
+    """Normalize rollback/materialization file operations for ToolRuntime."""
+    if not isinstance(operation, dict):
+        return {
+            "path": "",
+            "operation": "patch",
+            "content": "",
+            "old_text": "",
+            "new_text": "",
+            "proposed_content": "",
+            "replace_all": False,
+            "requires_approval": True,
+            "can_write": False,
+        }
+
+    raw = operation or {}
+    op = _slug(raw.get("operation") or raw.get("type") or "patch")
+    if op not in WRITE_OPERATIONS and op not in {"diff"}:
+        op = "patch"
+
+    content = _content_text(raw.get("content"), limit=20000)
+    old_text = _content_text(raw.get("old_text"), limit=20000)
+    new_text = _content_text(raw.get("new_text"), limit=20000)
+    proposed_content = _content_text(
+        raw.get("proposed_content") if raw.get("proposed_content") is not None else raw.get("content"),
+        limit=20000,
+    )
+
+    return {
+        "path": _text(raw.get("path") or raw.get("file") or raw.get("target_path"), limit=600),
+        "operation": op,
+        "content": content,
+        "old_text": old_text,
+        "new_text": new_text,
+        "proposed_content": proposed_content,
+        "replace_all": bool(raw.get("replace_all", False)),
+        "diff_summary": _text(raw.get("diff_summary") or raw.get("summary"), limit=1000),
+        "requires_approval": op in WRITE_OPERATIONS,
+        "can_write": False,
+    }
+
+
 def _normalize_command(command: Any) -> dict[str, Any]:
     text = _text(command, limit=1000)
     lowered = text.lower()
@@ -512,6 +554,414 @@ def execute_action_materialization_runtime(
         required_actions=_dedupe_text(required),
         rollback_plan=dump_action_materialization_contract(decision).get("rollback_plan", {}),
         can_mark_executed=status == "executed",
+    )
+
+
+@dataclass(frozen=True)
+class ActionMaterializationPostValidationRequest:
+    source_kind: str = "action_materialization_runtime"
+    materialization_kind: str = "action_materialization_post_validation_request"
+    materialization_version: str = ACTION_MATERIALIZATION_VERSION
+    candidate_id: str = ""
+    workspace_path: str = ""
+    approval_id: str = ""
+    policy_matrix_ref: str = ""
+    validation_commands: list[dict[str, Any]] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
+    can_execute: bool = False
+    can_write_files: bool = False
+    can_apply_patch: bool = False
+    can_execute_commands: bool = False
+    contains_private_reasoning: bool = False
+
+
+@dataclass(frozen=True)
+class ActionMaterializationPostValidationResult:
+    source_kind: str = "action_materialization_runtime"
+    materialization_kind: str = "action_materialization_post_validation_result"
+    materialization_version: str = ACTION_MATERIALIZATION_VERSION
+    candidate_id: str = ""
+    validation_status: str = "blocked"
+    validation_results: list[dict[str, Any]] = field(default_factory=list)
+    evidence_refs: list[str] = field(default_factory=list)
+    blockers: list[str] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
+    can_mark_validated: bool = False
+    can_execute: bool = False
+    can_write_files: bool = False
+    can_apply_patch: bool = False
+    can_execute_commands: bool = False
+    contains_private_reasoning: bool = False
+
+
+@dataclass(frozen=True)
+class ActionMaterializationRollbackRequest:
+    source_kind: str = "action_materialization_runtime"
+    materialization_kind: str = "action_materialization_rollback_request"
+    materialization_version: str = ACTION_MATERIALIZATION_VERSION
+    candidate_id: str = ""
+    workspace_path: str = ""
+    approval_id: str = ""
+    policy_matrix_ref: str = ""
+    rollback_operations: list[dict[str, Any]] = field(default_factory=list)
+    rollback_commands: list[dict[str, Any]] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
+    can_execute: bool = False
+    can_write_files: bool = False
+    can_apply_patch: bool = False
+    can_execute_commands: bool = False
+    contains_private_reasoning: bool = False
+
+
+@dataclass(frozen=True)
+class ActionMaterializationRollbackResult:
+    source_kind: str = "action_materialization_runtime"
+    materialization_kind: str = "action_materialization_rollback_result"
+    materialization_version: str = ACTION_MATERIALIZATION_VERSION
+    candidate_id: str = ""
+    rollback_status: str = "blocked"
+    rollback_results: list[dict[str, Any]] = field(default_factory=list)
+    evidence_refs: list[str] = field(default_factory=list)
+    blockers: list[str] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
+    can_mark_rolled_back: bool = False
+    can_execute: bool = False
+    can_write_files: bool = False
+    can_apply_patch: bool = False
+    can_execute_commands: bool = False
+    contains_private_reasoning: bool = False
+
+
+@dataclass(frozen=True)
+class ActionMaterializationPostValidationGate:
+    source_kind: str = "action_materialization_runtime"
+    materialization_kind: str = "action_materialization_post_validation_gate"
+    materialization_version: str = ACTION_MATERIALIZATION_VERSION
+    candidate_id: str = ""
+    gate_status: str = "blocked"
+    execution_status: str = "missing"
+    post_validation_status: str = "missing"
+    rollback_status: str = "missing"
+    rollback_ready: bool = False
+    completion_conditions: dict[str, bool] = field(default_factory=dict)
+    evidence_refs: list[str] = field(default_factory=list)
+    blockers: list[str] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
+    can_mark_materialization_safe: bool = False
+    can_execute: bool = False
+    can_write_files: bool = False
+    can_apply_patch: bool = False
+    can_execute_commands: bool = False
+    contains_private_reasoning: bool = False
+
+
+def _materialization_contract_dict(value: Any) -> dict[str, Any]:
+    dumped = dump_action_materialization_contract(value)
+    return dumped if isinstance(dumped, dict) else {}
+
+
+def build_action_materialization_post_validation_request(
+    execution_result: Any,
+    *,
+    validation_commands: list[Any] | None = None,
+    workspace_path: Any = "",
+    approval_id: Any = "",
+    policy_matrix_ref: Any = "",
+) -> ActionMaterializationPostValidationRequest:
+    execution = _materialization_contract_dict(execution_result)
+    raw_commands = validation_commands if validation_commands is not None else execution.get("validation_commands", [])
+    commands = [_normalize_command(command) for command in (raw_commands or [])]
+
+    required = ["review_action_materialization_post_validation_request"]
+    if execution.get("execution_status") != "executed" or execution.get("can_mark_executed") is not True:
+        required.append("execute_materialization_before_post_validation")
+    if not _text(workspace_path):
+        required.append("define_workspace_path")
+    if not _text(approval_id):
+        required.append("attach_approved_runtime_approval_id")
+    if not _text(policy_matrix_ref):
+        required.append("attach_policy_matrix_decision")
+    if not commands:
+        required.append("define_post_validation_commands")
+
+    return ActionMaterializationPostValidationRequest(
+        candidate_id=_text(execution.get("candidate_id"), limit=240),
+        workspace_path=_text(workspace_path, limit=1000),
+        approval_id=_text(approval_id, limit=240),
+        policy_matrix_ref=_text(policy_matrix_ref, limit=240),
+        validation_commands=commands,
+        required_actions=_dedupe_text(required),
+    )
+
+
+def execute_action_materialization_post_validation(
+    execution_result: Any,
+    *,
+    validation_commands: list[Any] | None = None,
+    workspace_path: Any = "",
+    approval_id: Any = "",
+    policy_matrix_ref: Any = "",
+    swarm_id: Any = "",
+    agent_id: Any = "",
+    task_id: Any = "",
+) -> ActionMaterializationPostValidationResult:
+    from backend.apps.agents.runtime.tools import ToolCall, ToolExecutionContext, tool_runtime
+
+    request = build_action_materialization_post_validation_request(
+        execution_result,
+        validation_commands=validation_commands,
+        workspace_path=workspace_path,
+        approval_id=approval_id,
+        policy_matrix_ref=policy_matrix_ref,
+    )
+    hard_required = [
+        action for action in request.required_actions
+        if action not in {"review_action_materialization_post_validation_request"}
+    ]
+    if hard_required:
+        return ActionMaterializationPostValidationResult(
+            candidate_id=request.candidate_id,
+            validation_status="blocked",
+            blockers=hard_required,
+            required_actions=request.required_actions,
+        )
+
+    history: list[dict[str, Any]] = []
+    blockers: list[str] = []
+    required = ["review_action_materialization_post_validation_result"]
+
+    for command in request.validation_commands:
+        command_text = _text(command.get("command"), limit=1000)
+        if not command_text:
+            blockers.append("empty_validation_command")
+            continue
+        result = tool_runtime.execute_tool(
+            ToolCall(name="SafeShell", input={"command": command_text}, raw_name="SafeShell"),
+            ToolExecutionContext(
+                workspace_path=request.workspace_path,
+                session_id="action-materialization-post-validation",
+                swarm_id=_text(swarm_id, "action-materialization", limit=240),
+                agent_id=_text(agent_id, "action-validator", limit=240),
+                task_id=_text(task_id, request.candidate_id or "action-materialization-validation", limit=240),
+                allowed_tools=["SafeShell"],
+                require_human_approval=True,
+                metadata={
+                    "task_type": "action_materialization_post_validation",
+                    "policy_resume_approved": True,
+                    "approval_id": request.approval_id,
+                    "resume_tool_input": {"command": command_text},
+                    "policy_matrix_ref": request.policy_matrix_ref,
+                    "candidate_id": request.candidate_id,
+                },
+            ),
+            history=history,
+        )
+        if not result.ok:
+            blockers.append("post_validation_command_failed_or_not_approved")
+            required.append("review_failed_post_validation_command")
+
+    validation_results = _history_result_summary(history)
+    passed = bool(validation_results) and all(item.get("ok") is True for item in validation_results) and not blockers
+
+    return ActionMaterializationPostValidationResult(
+        candidate_id=request.candidate_id,
+        validation_status="passed" if passed else "failed" if validation_results else "blocked",
+        validation_results=validation_results,
+        evidence_refs=["post_validation_evidence", "ProcessTrace"] if passed else [],
+        blockers=_dedupe_text(blockers),
+        required_actions=_dedupe_text(required),
+        can_mark_validated=passed,
+    )
+
+
+def build_action_materialization_rollback_request(
+    execution_result: Any,
+    *,
+    rollback_operations: list[Any] | None = None,
+    rollback_commands: list[Any] | None = None,
+    workspace_path: Any = "",
+    approval_id: Any = "",
+    policy_matrix_ref: Any = "",
+) -> ActionMaterializationRollbackRequest:
+    execution = _materialization_contract_dict(execution_result)
+    rollback_plan = execution.get("rollback_plan") if isinstance(execution.get("rollback_plan"), dict) else {}
+    raw_operations = rollback_operations if rollback_operations is not None else rollback_plan.get("rollback_operations", [])
+    raw_commands = rollback_commands if rollback_commands is not None else rollback_plan.get("rollback_commands", [])
+
+    operations = [_normalize_operation(operation) for operation in (raw_operations or [])]
+    commands = [_normalize_command(command) for command in (raw_commands or [])]
+
+    required = ["review_action_materialization_rollback_request"]
+    if not _text(workspace_path):
+        required.append("define_workspace_path")
+    if not _text(approval_id):
+        required.append("attach_approved_runtime_approval_id")
+    if not _text(policy_matrix_ref):
+        required.append("attach_policy_matrix_decision")
+    if not operations and not commands:
+        required.append("define_rollback_operations_or_commands")
+
+    return ActionMaterializationRollbackRequest(
+        candidate_id=_text(execution.get("candidate_id"), limit=240),
+        workspace_path=_text(workspace_path, limit=1000),
+        approval_id=_text(approval_id, limit=240),
+        policy_matrix_ref=_text(policy_matrix_ref, limit=240),
+        rollback_operations=operations,
+        rollback_commands=commands,
+        required_actions=_dedupe_text(required),
+    )
+
+
+def execute_action_materialization_rollback_runtime(
+    execution_result: Any,
+    *,
+    rollback_operations: list[Any] | None = None,
+    rollback_commands: list[Any] | None = None,
+    workspace_path: Any = "",
+    approval_id: Any = "",
+    policy_matrix_ref: Any = "",
+    swarm_id: Any = "",
+    agent_id: Any = "",
+    task_id: Any = "",
+) -> ActionMaterializationRollbackResult:
+    from backend.apps.agents.runtime.tools import ToolCall, ToolExecutionContext, tool_runtime
+
+    request = build_action_materialization_rollback_request(
+        execution_result,
+        rollback_operations=rollback_operations,
+        rollback_commands=rollback_commands,
+        workspace_path=workspace_path,
+        approval_id=approval_id,
+        policy_matrix_ref=policy_matrix_ref,
+    )
+    hard_required = [
+        action for action in request.required_actions
+        if action not in {"review_action_materialization_rollback_request"}
+    ]
+    if hard_required:
+        return ActionMaterializationRollbackResult(
+            candidate_id=request.candidate_id,
+            rollback_status="blocked",
+            blockers=hard_required,
+            required_actions=request.required_actions,
+        )
+
+    history: list[dict[str, Any]] = []
+    blockers: list[str] = []
+    required = ["review_action_materialization_rollback_result"]
+
+    def run_tool(tool_name: str, tool_input: dict[str, Any]) -> None:
+        result = tool_runtime.execute_tool(
+            ToolCall(name=tool_name, input=tool_input, raw_name=tool_name),
+            ToolExecutionContext(
+                workspace_path=request.workspace_path,
+                session_id="action-materialization-rollback",
+                swarm_id=_text(swarm_id, "action-materialization", limit=240),
+                agent_id=_text(agent_id, "action-rollback", limit=240),
+                task_id=_text(task_id, request.candidate_id or "action-materialization-rollback", limit=240),
+                allowed_tools=["Write", "Edit", "Diff", "SafeShell"],
+                require_human_approval=True,
+                metadata={
+                    "task_type": "action_materialization_rollback",
+                    "policy_resume_approved": True,
+                    "approval_id": request.approval_id,
+                    "resume_tool_input": tool_input,
+                    "policy_matrix_ref": request.policy_matrix_ref,
+                    "candidate_id": request.candidate_id,
+                },
+            ),
+            history=history,
+        )
+        if not result.ok:
+            blockers.append(f"{tool_name.lower()}_rollback_failed_or_not_approved")
+            required.append("review_failed_rollback_tool_result")
+
+    for operation in request.rollback_operations:
+        tool_name, tool_input = _tool_input_for_operation(operation)
+        run_tool(tool_name, tool_input)
+
+    for command in request.rollback_commands:
+        command_text = _text(command.get("command"), limit=1000)
+        if not command_text:
+            continue
+        run_tool("SafeShell", {"command": command_text})
+
+    rollback_results = _history_result_summary(history)
+    rolled_back = bool(rollback_results) and all(item.get("ok") is True for item in rollback_results) and not blockers
+
+    return ActionMaterializationRollbackResult(
+        candidate_id=request.candidate_id,
+        rollback_status="rolled_back" if rolled_back else "failed" if rollback_results else "blocked",
+        rollback_results=rollback_results,
+        evidence_refs=["rollback_evidence", "ProcessTrace"] if rolled_back else [],
+        blockers=_dedupe_text(blockers),
+        required_actions=_dedupe_text(required),
+        can_mark_rolled_back=rolled_back,
+    )
+
+
+def build_action_materialization_post_validation_gate(
+    *,
+    execution_result: Any,
+    post_validation_result: Any = None,
+    rollback_request: Any = None,
+    rollback_result: Any = None,
+    rollback_required: bool = True,
+) -> ActionMaterializationPostValidationGate:
+    execution = _materialization_contract_dict(execution_result)
+    post_validation = _materialization_contract_dict(post_validation_result) if post_validation_result is not None else {}
+    rollback_request_data = _materialization_contract_dict(rollback_request) if rollback_request is not None else {}
+    rollback_result_data = _materialization_contract_dict(rollback_result) if rollback_result is not None else {}
+
+    rollback_plan = execution.get("rollback_plan") if isinstance(execution.get("rollback_plan"), dict) else {}
+    execution_ok = execution.get("execution_status") == "executed" and execution.get("can_mark_executed") is True
+    validation_ok = post_validation.get("validation_status") == "passed" and post_validation.get("can_mark_validated") is True
+    rollback_executed = rollback_result_data.get("rollback_status") == "rolled_back" and rollback_result_data.get("can_mark_rolled_back") is True
+    rollback_available = bool(
+        rollback_plan
+        or rollback_request_data.get("rollback_operations")
+        or rollback_request_data.get("rollback_commands")
+        or rollback_executed
+    )
+    rollback_ready = bool(not rollback_required or rollback_available or rollback_executed)
+
+    conditions = {
+        "execution_ok": execution_ok,
+        "post_validation_ok": validation_ok,
+        "rollback_ready": rollback_ready,
+    }
+
+    blockers: list[str] = []
+    required: list[str] = ["review_action_materialization_post_validation_gate"]
+
+    if not execution_ok:
+        blockers.append("materialization_execution_not_confirmed")
+        required.append("execute_action_materialization_runtime")
+    if not validation_ok:
+        blockers.append("post_validation_not_confirmed")
+        required.append("run_post_materialization_validation")
+    if not rollback_ready:
+        blockers.append("rollback_not_ready")
+        required.append("define_or_execute_controlled_rollback")
+
+    safe = all(conditions.values()) and not blockers
+    evidence_refs = []
+    evidence_refs.extend(_as_list(execution.get("evidence_refs")))
+    evidence_refs.extend(_as_list(post_validation.get("evidence_refs")))
+    evidence_refs.extend(_as_list(rollback_result_data.get("evidence_refs")))
+
+    return ActionMaterializationPostValidationGate(
+        candidate_id=_text(execution.get("candidate_id") or post_validation.get("candidate_id") or rollback_result_data.get("candidate_id"), limit=240),
+        gate_status="completed" if safe else "blocked",
+        execution_status=_text(execution.get("execution_status"), "missing", limit=120),
+        post_validation_status=_text(post_validation.get("validation_status"), "missing", limit=120),
+        rollback_status=_text(rollback_result_data.get("rollback_status"), "ready" if rollback_ready else "missing", limit=120),
+        rollback_ready=rollback_ready,
+        completion_conditions=conditions,
+        evidence_refs=_dedupe_text(evidence_refs),
+        blockers=_dedupe_text(blockers),
+        required_actions=_dedupe_text(required),
+        can_mark_materialization_safe=safe,
     )
 
 def dump_action_materialization_contract(value: Any) -> dict[str, Any]:
