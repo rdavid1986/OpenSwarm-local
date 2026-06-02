@@ -1885,6 +1885,65 @@ function buildSwarmCardProcessTraceItems(params: {
   return items.slice(0, 8);
 }
 
+
+type ProcessTraceFilterId =
+  | 'all'
+  | 'blocked'
+  | 'warning'
+  | 'completed'
+  | 'runtime_e2e'
+  | 'materialization'
+  | 'post_validation'
+  | 'rollback';
+
+const PROCESS_TRACE_FILTERS: Array<{ id: ProcessTraceFilterId; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'blocked', label: 'Blocked' },
+  { id: 'warning', label: 'Warning' },
+  { id: 'completed', label: 'Completed' },
+  { id: 'runtime_e2e', label: 'Runtime E2E' },
+  { id: 'materialization', label: 'Materialization' },
+  { id: 'post_validation', label: 'Post-validation' },
+  { id: 'rollback', label: 'Rollback' },
+];
+
+function processTraceFilterMatches(item: ProcessTraceItem, filter: ProcessTraceFilterId): boolean {
+  if (filter === 'all') return true;
+  const status = normalizeStatusValue(item.status);
+  const details = asPlainRecord(item.details);
+  const metadata = asPlainRecord((item as any).metadata);
+  const sourceKind = renderText(details.source_kind || metadata.source_kind, '').toLowerCase();
+  const contractKind = renderText(details.contract_kind || details.runtime_e2e_kind || details.materialization_kind, '').toLowerCase();
+  const haystack = [
+    item.kind,
+    item.subsystem,
+    item.title,
+    item.summary,
+    item.badge,
+    sourceKind,
+    contractKind,
+    details.stage,
+    details.execution_status,
+    details.validation_status,
+    details.post_validation_status,
+    details.rollback_status,
+  ].map((value) => renderText(value, '', 240).toLowerCase()).join(' ');
+
+  if (filter === 'blocked') return status === 'blocked' || Array.isArray(details.blockers) && details.blockers.length > 0;
+  if (filter === 'warning') return status === 'warning' || Array.isArray(details.required_actions) && details.required_actions.length > 0;
+  if (filter === 'completed') return status === 'completed' || status === 'passed' || status === 'verified';
+  if (filter === 'runtime_e2e') return sourceKind === 'runtime_e2e_integration' || haystack.includes('runtime_e2e');
+  if (filter === 'materialization') return haystack.includes('materialization');
+  if (filter === 'post_validation') return haystack.includes('post_validation') || haystack.includes('post-validation');
+  if (filter === 'rollback') return haystack.includes('rollback');
+  return true;
+}
+
+function countProcessTraceFilterItems(items: ProcessTraceItem[], filter: ProcessTraceFilterId): number {
+  return items.filter((item) => processTraceFilterMatches(item, filter)).length;
+}
+
+
 function getImplementationVisualState(params: {
   hasSwarm: boolean;
   isRunning: boolean;
@@ -2299,6 +2358,11 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       chatMessages.length,
     ],
   );
+
+  const filteredSwarmProcessTraceItems = useMemo(
+    () => swarmProcessTraceItems.filter((item) => processTraceFilterMatches(item, processTraceFilter)),
+    [swarmProcessTraceItems, processTraceFilter],
+  );
   const orientationTraceItems = useMemo(
     () => swarmProcessTraceItems.filter((item) => {
       const source = String((item.details as any)?.source_kind || item.metadata?.source_kind || '');
@@ -2677,6 +2741,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   }, [dispatch, navigate]);
 
   const [approvalConfirmation, setApprovalConfirmation] = useState<ApprovalConfirmationRequest | null>(null);
+  const [processTraceFilter, setProcessTraceFilter] = useState<ProcessTraceFilterId>('all');
 
   const handleStartImplementation = useCallback(async (action?: any) => {
     if (!activeSwarmId || swarmState.actionLoading || startImplementationInFlightRef.current) return;
@@ -3936,7 +4001,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               model={activeSwarmModel}
               queueCount={0}
               pendingApprovalsCount={approvals.length || swarmState.pendingCount || 0}
-              traceCount={swarmProcessTraceItems.length}
+              traceCount={filteredSwarmProcessTraceItems.length}
               evidenceCount={finalEvidence.length}
               artifactCount={artifacts.length}
               latestActivity={latestSwarmActivity}
@@ -3945,6 +4010,30 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 { label: 'Events', value: events.length },
               ]}
             />
+
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.45, alignItems: 'center' }}>
+              {PROCESS_TRACE_FILTERS.map((filter) => {
+                const count = countProcessTraceFilterItems(swarmProcessTraceItems, filter.id);
+                const active = processTraceFilter === filter.id;
+                return (
+                  <Chip
+                    key={filter.id}
+                    size="small"
+                    label={`${filter.label}:${count}`}
+                    clickable
+                    onClick={() => setProcessTraceFilter(filter.id)}
+                    sx={{
+                      height: 20,
+                      fontSize: '0.6rem',
+                      color: active ? c.bg.page : c.text.tertiary,
+                      bgcolor: active ? c.accent.primary : c.bg.secondary,
+                      border: `1px solid ${active ? c.accent.primary : c.border.subtle}`,
+                      fontWeight: active ? 800 : 600,
+                    }}
+                  />
+                );
+              })}
+            </Box>
 
             <ChatDebugContextView
               title="Swarm debug context"
@@ -3956,7 +4045,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 model: activeSwarmModel,
                 queueCount: 0,
                 pendingApprovalsCount: approvals.length || swarmState.pendingCount || 0,
-                traceCount: swarmProcessTraceItems.length,
+                traceCount: filteredSwarmProcessTraceItems.length,
                 evidenceCount: finalEvidence.length,
                 artifactCount: artifacts.length,
                 latestActivity: latestSwarmActivity,
@@ -3965,15 +4054,15 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                   { label: 'Events', value: events.length },
                 ],
               }}
-              processTraceItems={swarmProcessTraceItems}
+              processTraceItems={filteredSwarmProcessTraceItems}
               compact
             />
             <ProjectMemoryContextPanel
-              processTraceItems={swarmProcessTraceItems}
+              processTraceItems={filteredSwarmProcessTraceItems}
               compact
             />
             <AgentHandoffPanel
-              processTraceItems={swarmProcessTraceItems}
+              processTraceItems={filteredSwarmProcessTraceItems}
               compact
             />
             <RemoteTaskStateContractPanel
@@ -3998,7 +4087,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 actions: ['send with composer payload', 'open preview', 'compare', 'accept/discard candidate', 'resume approvals', 'view process trace'],
                 disabledActions: ['mobile remote execution not implemented', 'remote scheduler not implemented'],
                 contextCount: finalEvidence.length,
-                traceCount: swarmProcessTraceItems.length,
+                traceCount: filteredSwarmProcessTraceItems.length,
                 evidenceCount: finalEvidence.length,
                 queueCount: 0,
                 monitorVisible: showSwarmTaskMonitor,
