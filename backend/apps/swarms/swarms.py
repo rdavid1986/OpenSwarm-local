@@ -56,6 +56,12 @@ from backend.apps.agents.runtime.model_dag_proposal_preview import (
 )
 from backend.apps.agents.runtime.approvals import approval_runtime
 from backend.apps.agents.runtime.events import event_trace_runtime
+from backend.apps.swarms.runtime_e2e_composer import (
+    build_runtime_e2e_composer_selection,
+    compose_runtime_e2e_integration_state_from_swarm,
+    dump_runtime_e2e_composer_selection,
+)
+from backend.apps.swarms.runtime_e2e_integration import dump_runtime_e2e_integration_contract
 from backend.apps.agents.orchestration.models import AgentToAgentMessage
 from backend.apps.configuration.models import (
     AgentConfig,
@@ -184,9 +190,33 @@ class ExperimentalOutputRefinementPrepareRequest(BaseModel):
     requested_change: str
 
 
+def _runtime_e2e_integration_payload(swarm) -> dict[str, Any]:
+    try:
+        state = compose_runtime_e2e_integration_state_from_swarm(swarm)
+        selection = build_runtime_e2e_composer_selection(swarm)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "source_kind": "runtime_e2e_integration",
+            "error": str(exc)[:500],
+            "can_start_runtime_e2e": False,
+            "can_mark_runtime_e2e_complete": False,
+        }
+
+    return {
+        "ok": True,
+        "source_kind": "runtime_e2e_integration",
+        "state": dump_runtime_e2e_integration_contract(state),
+        "selection": dump_runtime_e2e_composer_selection(selection),
+        "can_start_runtime_e2e": bool(getattr(state, "can_start_runtime_e2e", False)),
+        "can_mark_runtime_e2e_complete": bool(getattr(state, "can_mark_runtime_e2e_complete", False)),
+    }
+
+
 def _dump(swarm):
     data = swarm.model_dump(mode="json")
     data["experimental_capabilities"] = _experimental_capabilities_payload()
+    data["runtime_e2e_integration"] = _runtime_e2e_integration_payload(swarm)
     if _get_project_intake_state(swarm).get("status") == "ready_to_implement":
         data["project_intake_action"] = _project_intake_start_implementation_action()
     return data
