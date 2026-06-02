@@ -777,6 +777,101 @@ function buildRuntimeApprovalUxModel(approval: any) {
   };
 }
 
+type RuntimeApprovalGroupModel = {
+  key: string;
+  label: string;
+  count: number;
+  pendingCount: number;
+  approvedCount: number;
+  deniedCount: number;
+  candidateId: string;
+  policyRef: string;
+  kinds: RuntimeApprovalUxKind[];
+  statusLabel: string;
+  grouped: boolean;
+};
+
+function runtimeApprovalId(approval: any): string {
+  return renderText(approval?.id || approval?.approval_id || approval?.request_id || '', '', 120);
+}
+
+function getRuntimeApprovalMetadata(approval: any): Record<string, any> {
+  return approval?.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
+}
+
+function getRuntimeApprovalToolInput(approval: any): Record<string, any> {
+  return approval?.tool_input && typeof approval.tool_input === 'object' ? approval.tool_input : {};
+}
+
+function getRuntimeApprovalGroupKey(approval: any): string {
+  const ux = buildRuntimeApprovalUxModel(approval);
+  const metadata = getRuntimeApprovalMetadata(approval);
+  const toolInput = getRuntimeApprovalToolInput(approval);
+  const candidateId = ux.candidateId || renderText(metadata.candidate_id || toolInput.candidate_id || approval?.candidate_id, '', 120);
+  const policyRef = ux.policyRef || renderText(metadata.policy_matrix_ref || metadata.policy_ref || approval?.policy_matrix_ref, '', 120);
+
+  if (candidateId || policyRef) {
+    return `change:${candidateId || 'unknown-candidate'}:policy:${policyRef || 'no-policy'}`;
+  }
+
+  const taskId = renderText(metadata.task_id || approval?.task_id || toolInput.task_id, '', 120);
+  if (ux.kind !== 'tool' && taskId) {
+    return `runtime:${ux.kind}:task:${taskId}`;
+  }
+
+  return `approval:${runtimeApprovalId(approval) || 'unknown'}`;
+}
+
+function approvalStatusKind(approval: any): string {
+  return normalizeStatusValue(approval?.status || approval?.decision || 'pending') || 'pending';
+}
+
+function isRuntimeApprovalPending(approval: any): boolean {
+  const status = approvalStatusKind(approval);
+  return !['allowed', 'approved', 'denied', 'rejected', 'resumed', 'completed'].includes(status);
+}
+
+function buildRuntimeApprovalGroupModel(approval: any, approvals: any[]): RuntimeApprovalGroupModel {
+  const key = getRuntimeApprovalGroupKey(approval);
+  const source = Array.isArray(approvals) ? approvals : [];
+  const group = source.filter((entry) => getRuntimeApprovalGroupKey(entry) === key);
+  const currentUx = buildRuntimeApprovalUxModel(approval);
+  const kinds = Array.from(new Set(group.map((entry) => buildRuntimeApprovalUxModel(entry).kind))) as RuntimeApprovalUxKind[];
+  const pendingCount = group.filter(isRuntimeApprovalPending).length;
+  const approvedCount = group.filter((entry) => ['allowed', 'approved', 'resumed', 'completed'].includes(approvalStatusKind(entry))).length;
+  const deniedCount = group.filter((entry) => ['denied', 'rejected'].includes(approvalStatusKind(entry))).length;
+  const label = currentUx.candidateId
+    ? `Candidate ${currentUx.candidateId}`
+    : currentUx.policyRef
+      ? `Policy ${currentUx.policyRef}`
+      : currentUx.isMaterializationFlow
+        ? `${runtimeApprovalKindLabel(currentUx.kind)} flow`
+        : 'Approval group';
+
+  return {
+    key,
+    label,
+    count: group.length,
+    pendingCount,
+    approvedCount,
+    deniedCount,
+    candidateId: currentUx.candidateId,
+    policyRef: currentUx.policyRef,
+    kinds,
+    statusLabel: `${group.length} approval${group.length === 1 ? '' : 's'} · ${pendingCount} pending · ${approvedCount} approved${deniedCount ? ` · ${deniedCount} denied` : ''}`,
+    grouped: group.length > 1 || Boolean(currentUx.candidateId || currentUx.policyRef || currentUx.isMaterializationFlow),
+  };
+}
+
+function shouldShowRuntimeApprovalGroupHeader(approval: any, approvals: any[]): boolean {
+  const key = getRuntimeApprovalGroupKey(approval);
+  const source = Array.isArray(approvals) ? approvals : [];
+  const first = source.find((entry) => getRuntimeApprovalGroupKey(entry) === key);
+  const group = buildRuntimeApprovalGroupModel(approval, source);
+  return group.grouped && runtimeApprovalId(first) === runtimeApprovalId(approval);
+}
+
+
 type SwarmFinalAuditStatus = 'ready' | 'passed' | 'warning' | 'blocked' | 'failed' | 'unknown';
 
 type SwarmFinalAuditModel = {
@@ -4012,6 +4107,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             const canResume = approvalId && ['allowed', 'approved'].includes(status);
             const approvalUx = buildRuntimeApprovalUxModel(approval);
             const approvalTone = runtimeApprovalKindTone(approvalUx.kind, c);
+            const approvalGroup = buildRuntimeApprovalGroupModel(approval, approvals);
+            const showApprovalGroupHeader = shouldShowRuntimeApprovalGroupHeader(approval, approvals);
 
             return (
               <Box
@@ -4024,6 +4121,24 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                   bgcolor: c.bg.page,
                 }}
               >
+                {showApprovalGroupHeader && (
+                  <Box sx={{ mb: 0.8, p: 0.75, borderRadius: 1.1, border: `1px solid ${approvalTone}33`, bgcolor: `${approvalTone}0A` }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1, mb: 0.45 }}>
+                      <Typography sx={{ color: c.text.secondary, fontSize: '0.7rem', fontWeight: 850, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {approvalGroup.label}
+                      </Typography>
+                      <Chip size="small" label={approvalGroup.statusLabel} sx={{ height: 19, maxWidth: 230, fontSize: '0.58rem', color: c.text.tertiary, bgcolor: c.bg.secondary }} />
+                    </Box>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.45 }}>
+                      {approvalGroup.candidateId && <Chip size="small" label={`candidate:${approvalGroup.candidateId}`} sx={{ height: 18, maxWidth: 190, fontSize: '0.58rem', color: c.text.tertiary, bgcolor: c.bg.secondary }} />}
+                      {approvalGroup.policyRef && <Chip size="small" label={`policy:${approvalGroup.policyRef}`} sx={{ height: 18, maxWidth: 190, fontSize: '0.58rem', color: c.text.tertiary, bgcolor: c.bg.secondary }} />}
+                      {approvalGroup.kinds.map((kind) => (
+                        <Chip key={`${approvalGroup.key}-${kind}`} size="small" label={runtimeApprovalKindLabel(kind)} sx={{ height: 18, fontSize: '0.58rem', color: runtimeApprovalKindTone(kind, c), bgcolor: `${runtimeApprovalKindTone(kind, c)}12` }} />
+                      ))}
+                    </Box>
+                  </Box>
+                )}
+
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.75 }}>
                   <Typography sx={{ fontSize: '0.78rem', fontWeight: 650, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {approvalUx.label}
