@@ -109,6 +109,11 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         or str(data.get("tdd_contract_kind") or "").startswith("tdd_")
     ):
         return "tdd_agent_runtime"
+    if (
+        data.get("source_kind") == "action_materialization_runtime"
+        or str(data.get("materialization_kind") or "").startswith(("action_materialization", "patch_materialization", "command_materialization", "action_rollback"))
+    ):
+        return "action_materialization_runtime"
     if data.get("report_kind") == "skill_import_preview_report" or data.get("source_kind") in {"skill_import_preview", "skill_import_candidate"}:
         return "skill_import_preview"
     if (
@@ -1495,6 +1500,89 @@ def build_project_orientation_process_trace_item(source: dict[str, Any]) -> dict
 
 
 
+def build_action_materialization_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
+    data = source or {}
+    contract_kind = _first_text(data, "materialization_kind", default="action_materialization_contract")
+    required_actions = data.get("required_actions") if isinstance(data.get("required_actions"), list) else []
+    blockers = data.get("blockers") if isinstance(data.get("blockers"), list) else []
+    decision = _first_text(data, "decision", default="")
+    blocked = bool(blockers or decision == "blocked")
+    warning = bool(required_actions or decision in {"requires_approval", "needs_review", ""})
+    status = "blocked" if blocked else "warning" if warning else "completed"
+    title_by_kind = {
+        "action_materialization_request": "Action materialization request",
+        "action_materialization_policy_gate": "Action materialization policy gate",
+        "patch_materialization_plan": "Patch materialization plan",
+        "command_materialization_plan": "Command materialization plan",
+        "action_materialization_evidence_plan": "Action materialization evidence plan",
+        "action_rollback_plan": "Action rollback plan",
+        "action_materialization_decision": "Action materialization decision",
+    }
+    kind = "action" if contract_kind in {"action_materialization_request", "action_materialization_decision"} else "validation"
+
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or data.get("candidate_id") or contract_kind,
+        kind=kind,
+        subsystem="ActionCore",
+        title=title_by_kind.get(contract_kind, "Action materialization contract"),
+        summary="Action materialization contract recorded without writing files, applying patches, executing commands, activating tools, or writing memory.",
+        status=status,
+        evidence_refs=data.get("evidence_refs") if isinstance(data.get("evidence_refs"), list) else [],
+        details={
+            "source_kind": "action_materialization_runtime",
+            "contract_kind": contract_kind,
+            "materialization_version": data.get("materialization_version"),
+            "candidate_id": data.get("candidate_id"),
+            "source_contract_kind": data.get("source_contract_kind"),
+            "actor_id": data.get("actor_id"),
+            "request_hash": data.get("request_hash"),
+            "requested_operations": data.get("requested_operations") if isinstance(data.get("requested_operations"), list) else [],
+            "requested_commands": data.get("requested_commands") if isinstance(data.get("requested_commands"), list) else [],
+            "approval_id": data.get("approval_id"),
+            "decision": decision,
+            "risk_level": data.get("risk_level"),
+            "policy_matrix_ref": data.get("policy_matrix_ref"),
+            "blockers": blockers,
+            "warnings": data.get("warnings") if isinstance(data.get("warnings"), list) else [],
+            "workspace_id": data.get("workspace_id"),
+            "file_operations": data.get("file_operations") if isinstance(data.get("file_operations"), list) else [],
+            "diff_summary": data.get("diff_summary"),
+            "rollback_plan": data.get("rollback_plan") if isinstance(data.get("rollback_plan"), list) else [],
+            "cwd": data.get("cwd"),
+            "shell": data.get("shell"),
+            "timeout_seconds": data.get("timeout_seconds"),
+            "commands": data.get("commands") if isinstance(data.get("commands"), list) else [],
+            "allow_network": data.get("allow_network", False),
+            "required_evidence": data.get("required_evidence") if isinstance(data.get("required_evidence"), list) else [],
+            "validation_commands": data.get("validation_commands") if isinstance(data.get("validation_commands"), list) else [],
+            "rollback_steps": data.get("rollback_steps") if isinstance(data.get("rollback_steps"), list) else [],
+            "rollback_commands": data.get("rollback_commands") if isinstance(data.get("rollback_commands"), list) else [],
+            "required_actions": required_actions,
+            "request": data.get("request") if isinstance(data.get("request"), dict) else {},
+            "policy_gate": data.get("policy_gate") if isinstance(data.get("policy_gate"), dict) else {},
+            "patch_plan": data.get("patch_plan") if isinstance(data.get("patch_plan"), dict) else {},
+            "command_plan": data.get("command_plan") if isinstance(data.get("command_plan"), dict) else {},
+            "evidence_plan": data.get("evidence_plan") if isinstance(data.get("evidence_plan"), dict) else {},
+            "rollback_plan_detail": data.get("rollback_plan") if isinstance(data.get("rollback_plan"), dict) else {},
+            "approval_required": data.get("approval_required", True),
+            "policy_matrix_required": data.get("policy_matrix_required", True),
+            "safeshell_required": data.get("safeshell_required", True),
+            "rollback_required": data.get("rollback_required", True),
+            "evidence_required": data.get("evidence_required", True),
+            "can_materialize": data.get("can_materialize", False),
+            "can_execute": False,
+            "can_write_files": False,
+            "can_apply_patch": False,
+            "can_execute_commands": False,
+            "can_activate_tools": False,
+            "can_activate_mcp": False,
+            "can_write_memory": False,
+            "contains_private_reasoning": False,
+        },
+        metadata={"source_kind": "action_materialization_runtime", "contract_kind": contract_kind},
+    )
+
+
 def build_tdd_agent_process_trace_item(source: dict[str, Any]) -> dict[str, Any]:
     data = source or {}
     contract_kind = _first_text(data, "tdd_contract_kind", default="tdd_agent_contract")
@@ -2288,6 +2376,8 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
             item = _context_item(data)
     elif source_kind == "project_rules_import":
         item = build_project_rules_import_process_trace_item(data)
+    elif source_kind == "action_materialization_runtime":
+        item = build_action_materialization_process_trace_item(data)
     elif source_kind == "tdd_agent_runtime":
         item = build_tdd_agent_process_trace_item(data)
     elif source_kind == "sdd_orchestrator_runtime":
