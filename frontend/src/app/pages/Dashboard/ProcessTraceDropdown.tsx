@@ -431,6 +431,140 @@ function buildTemporalSnapshot(item: ProcessTraceItem, nowMs: number) {
   };
 }
 
+
+const SDD_ROLE_FLOW = [
+  { id: 'explorer', label: 'Explorer', contract: 'sdd_explorer_context' },
+  { id: 'proposer', label: 'Proposer', contract: 'sdd_proposal' },
+  { id: 'spec_writer', label: 'SpecWriter', contract: 'sdd_spec_contract' },
+  { id: 'designer', label: 'Designer', contract: 'sdd_design_contract' },
+  { id: 'task_planner', label: 'TaskPlanner', contract: 'sdd_task_dag_contract' },
+  { id: 'risk_policy_reviewer', label: 'RiskPolicy', contract: 'sdd_policy_review_contract' },
+  { id: 'test_strategist', label: 'TestStrategist', contract: 'sdd_test_strategy_contract' },
+  { id: 'implementer', label: 'Implementer', contract: 'sdd_implementation_candidate' },
+  { id: 'verifier', label: 'Verifier', contract: 'sdd_verification_report' },
+  { id: 'evidence_recorder', label: 'Evidence', contract: 'sdd_evidence_trace' },
+];
+
+function isSddOrchestratorTraceItem(item: ProcessTraceItem): boolean {
+  const details = item.details || {};
+  const metadata = item.metadata || {};
+  const source = getDetailValue(details, 'source_kind') || metadata.source_kind;
+  const contract = traceText(getDetailValue(details, 'contract_kind'), '');
+  return source === 'sdd_orchestrator_runtime'
+    || String(source || '').startsWith('sdd_orchestrator')
+    || contract.startsWith('sdd_')
+    || Boolean(getDetailValue(
+      details,
+      'candidate_id',
+      'materialization_decision',
+      'spec_compliance',
+      'evidence_quality',
+      'delegation_id',
+      'expected_output_contract_kind',
+    ));
+}
+
+function getSddCurrentContract(item: ProcessTraceItem): string {
+  const details = item.details || {};
+  return traceText(getDetailValue(details, 'contract_kind'), '').trim();
+}
+
+function getSddRoleState(item: ProcessTraceItem, role: { id: string; contract: string }): { label: string; active: boolean } {
+  const details = item.details || {};
+  const currentContract = getSddCurrentContract(item);
+  const status = normalizeStatus(String(item.status || 'planned'));
+  const roles = getDetailValue(details, 'roles');
+
+  if (currentContract === role.contract) {
+    return { label: STATUS_LABELS[status] || status, active: true };
+  }
+
+  if (currentContract === 'sdd_role_manifest' && Array.isArray(roles)) {
+    const declared = roles.some((entry: any) => {
+      const roleId = String(entry?.role_id || '').trim();
+      const roleName = String(entry?.role || '').trim().toLowerCase();
+      return roleId === role.id || roleName.includes(role.id.replace(/_/g, ''));
+    });
+    if (declared) return { label: 'declared', active: false };
+  }
+
+  return { label: 'not reported', active: false };
+}
+
+function SddRoleFlowCard({ item }: { item: ProcessTraceItem }) {
+  const c = useClaudeTokens();
+  const details = item.details || {};
+  const currentContract = getSddCurrentContract(item);
+  const candidateId = traceText(getDetailValue(details, 'candidate_id'), '');
+  const nextRole = traceText(getDetailValue(details, 'next_role'), '');
+  const evidenceQuality = traceText(getDetailValue(details, 'evidence_quality'), '');
+  const materializationDecision = traceText(getDetailValue(details, 'materialization_decision'), '');
+  const blockers = getDetailValue(details, 'blockers');
+
+  return (
+    <Box
+      sx={{
+        display: 'grid',
+        gap: 0.75,
+        p: 0.85,
+        borderRadius: 1.25,
+        border: `1px solid ${c.border.subtle}`,
+        bgcolor: `${c.bg.elevated}70`,
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, minWidth: 0 }}>
+        <Typography sx={{ color: c.text.secondary, fontSize: '0.72rem', fontWeight: 850, letterSpacing: '0.02em' }}>
+          SDD role flow
+        </Typography>
+        <Typography noWrap title={currentContract || 'not reported'} sx={{ color: c.text.ghost, fontSize: '0.64rem', fontFamily: c.font.mono, minWidth: 0 }}>
+          {currentContract || 'not reported'}
+        </Typography>
+      </Box>
+
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.45 }}>
+        {SDD_ROLE_FLOW.map((role) => {
+          const state = getSddRoleState(item, role);
+          return (
+            <Box
+              key={role.id}
+              title={`${role.label}: ${state.label}`}
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 0.35,
+                maxWidth: 160,
+                px: 0.55,
+                py: 0.3,
+                borderRadius: 999,
+                border: `1px solid ${state.active ? c.status.info : c.border.subtle}`,
+                bgcolor: state.active ? `${c.status.info}18` : `${c.text.primary}08`,
+              }}
+            >
+              <Typography noWrap sx={{ color: state.active ? c.status.info : c.text.tertiary, fontSize: '0.62rem', fontWeight: 800 }}>
+                {role.label}
+              </Typography>
+              <Typography noWrap sx={{ color: c.text.ghost, fontSize: '0.58rem', maxWidth: 72 }}>
+                {state.label}
+              </Typography>
+            </Box>
+          );
+        })}
+      </Box>
+
+      {(candidateId || nextRole || evidenceQuality || materializationDecision || blockers) && (
+        <Box sx={{ display: 'grid', gap: 0.25 }}>
+          {candidateId && <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem' }}>Candidate: {candidateId}</Typography>}
+          {nextRole && <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem' }}>Next role: {nextRole}</Typography>}
+          {evidenceQuality && <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem' }}>Evidence: {evidenceQuality}</Typography>}
+          {materializationDecision && <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem' }}>Materialization: {materializationDecision}</Typography>}
+          {blockers && <Typography sx={{ color: c.status.warning, fontSize: '0.66rem' }}>Blockers: {compactTraceList(blockers, 4)}</Typography>}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+
 function buildSubsystemDetailRows(item: ProcessTraceItem, durationLabel: string | null): Array<[string, unknown]> {
   const rows: Array<[string, unknown]> = [];
   const details = item.details || {};
@@ -445,6 +579,7 @@ function buildSubsystemDetailRows(item: ProcessTraceItem, durationLabel: string 
     || item.metadata?.source_kind === 'project_orientation_multiagent'
     || String(getDetailValue(details, 'source_kind') || '').startsWith('project_orientation_')
     || Boolean(getDetailValue(details, 'project_type', 'selected_pattern', 'orientation_required', 'app_builder_gate'));
+  const isSddOrchestrator = isSddOrchestratorTraceItem(item);
 
   if (isProjectOrientation) {
     pushDetailRow(rows, 'Project type', getDetailValue(details, 'project_type'));
@@ -469,6 +604,39 @@ function buildSubsystemDetailRows(item: ProcessTraceItem, durationLabel: string 
     pushDetailRow(rows, 'Can execute', getDetailValue(details, 'can_execute'));
     return rows;
   }
+
+  if (isSddOrchestrator) {
+    pushDetailRow(rows, 'SDD contract', getDetailValue(details, 'contract_kind'));
+    pushDetailRow(rows, 'Candidate', getDetailValue(details, 'candidate_id'));
+    pushDetailRow(rows, 'Task', getDetailValue(details, 'task_id'));
+    pushDetailRow(rows, 'Target role', getDetailValue(details, 'target_role'));
+    pushDetailRow(rows, 'Current stage', getDetailValue(details, 'current_stage'));
+    pushDetailRow(rows, 'Next role', getDetailValue(details, 'next_role'));
+    pushDetailRow(rows, 'Expected output', getDetailValue(details, 'expected_output_contract_kind'));
+    pushDetailRow(rows, 'Source contract', getDetailValue(details, 'source_contract_kind'));
+    pushDetailRow(rows, 'Spec compliance', getDetailValue(details, 'spec_compliance'));
+    pushDetailRow(rows, 'Acceptance', getDetailValue(details, 'acceptance_result'));
+    pushDetailRow(rows, 'Regression', getDetailValue(details, 'regression_result'));
+    pushDetailRow(rows, 'Design', getDetailValue(details, 'design_compliance'));
+    pushDetailRow(rows, 'Evidence quality', getDetailValue(details, 'evidence_quality'));
+    pushDetailRow(rows, 'Materialization', getDetailValue(details, 'materialization_decision'));
+    pushDetailRow(rows, 'Can materialize', getDetailValue(details, 'can_materialize'));
+    pushDetailRow(rows, 'Can verify', getDetailValue(details, 'can_mark_verified'));
+    pushDetailRow(rows, 'Can delegate', getDetailValue(details, 'can_delegate'));
+    pushDetailRow(rows, 'Touched files', getDetailValue(details, 'touched_files', 'changed_files'), { list: true });
+    pushDetailRow(rows, 'Validation commands', getDetailValue(details, 'validation_commands'), { list: true });
+    pushDetailRow(rows, 'Validation refs', getDetailValue(details, 'validation_refs'), { list: true });
+    pushDetailRow(rows, 'Materialization refs', getDetailValue(details, 'materialization_refs'), { list: true });
+    pushDetailRow(rows, 'ProcessTrace refs', getDetailValue(details, 'process_trace_refs'), { list: true });
+    pushDetailRow(rows, 'Blockers', getDetailValue(details, 'blockers'), { list: true });
+    pushDetailRow(rows, 'Required', getDetailValue(details, 'required_actions'), { list: true });
+    pushDetailRow(rows, 'PolicyMatrix', getDetailValue(details, 'policy_matrix_required'));
+    pushDetailRow(rows, 'Approval', getDetailValue(details, 'approval_required'));
+    pushDetailRow(rows, 'Handoff required', getDetailValue(details, 'handoff_required'));
+    pushDetailRow(rows, 'Can execute', getDetailValue(details, 'can_execute'));
+    return rows;
+  }
+
   const isShellDialect = getDetailValue(details, 'source_kind') === 'shell_dialect_runtime'
     || item.metadata?.source_kind === 'shell_dialect_runtime'
     || Boolean(getDetailValue(details, 'contract_kind', 'gate_kind', 'profile_kind', 'command_kind', 'translation_kind', 'preflight_kind', 'error_kind', 'retry_kind'));
@@ -698,6 +866,7 @@ function RichTraceSections({ item }: { item: ProcessTraceItem }) {
   const subsystem = String(item.subsystem || '').toLowerCase();
   const kind = String(item.kind || '').toLowerCase();
   const isFileOutput = ['filecore', 'outputcore'].includes(subsystem) || ['file', 'diff', 'workspace', 'output', 'artifact'].includes(kind);
+  const isSddOrchestrator = isSddOrchestratorTraceItem(item);
   const summaryFields = [
     ['Session summary', getDetailValue(details, 'session_summary')],
     ['Key learnings', getDetailValue(details, 'key_learnings', 'learnings')],
@@ -707,10 +876,11 @@ function RichTraceSections({ item }: { item: ProcessTraceItem }) {
     ['Validation', getDetailValue(details, 'validation_summary', 'validation')],
   ] as Array<[string, unknown]>;
   const hasSummary = summaryFields.some(([, value]) => value !== undefined && value !== null && value !== '');
-  if (!isFileOutput && !hasSummary) return null;
+  if (!isFileOutput && !hasSummary && !isSddOrchestrator) return null;
 
   return (
     <Box sx={{ display: 'grid', gap: 0.85, mb: 1 }}>
+      {isSddOrchestrator && <SddRoleFlowCard item={item} />}
       {isFileOutput && (
         <Box
           sx={{
