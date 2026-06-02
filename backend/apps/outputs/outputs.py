@@ -289,13 +289,22 @@ def _create_candidate_iteration_from_output(
     validation_refs: list[str] | None = None,
 ) -> OutputIterationRecord:
     now = datetime.now().isoformat()
+    base_files = dict(output.files)
+    if parent_iteration_id:
+        parent_record = load_output_iteration(parent_iteration_id)
+        if parent_record.output_id != output.id:
+            raise HTTPException(status_code=400, detail="Parent iteration does not belong to this output")
+        if parent_record.status not in {"candidate", "accepted", "restored"}:
+            raise HTTPException(status_code=400, detail="Parent iteration is not refinable")
+        base_files = dict(parent_record.files_after or {})
+
     record = OutputIterationRecord(
         output_id=output.id,
         source_swarm_id=source_swarm_id or output.source_swarm_id,
         parent_iteration_id=parent_iteration_id,
         requested_change=requested_change,
-        files_before=dict(output.files),
-        files_after=dict(output.files),
+        files_before=dict(base_files),
+        files_after=dict(base_files),
         diff_summary={"status": "candidate_created", "changed": []},
         evidence_refs=evidence_refs or [],
         validation_refs=validation_refs or [],

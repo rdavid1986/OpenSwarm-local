@@ -107,6 +107,20 @@ type CandidatePreviewRequest = {
   y?: number;
   width?: number;
   height?: number;
+  devicePreset?: 'desktop-full-hd' | 'desktop' | 'laptop' | 'tablet' | 'mobile' | 'custom' | null;
+};
+
+type PreviewRefineOrigin = {
+  viewCardId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  previewKind?: 'stable' | 'candidate' | 'iteration' | null;
+  iterationId?: string | null;
+  candidateWorkspacePath?: string | null;
+  parentViewCardId?: string | null;
+  devicePreset?: 'desktop-full-hd' | 'desktop' | 'laptop' | 'tablet' | 'mobile' | 'custom' | null;
 };
 
 
@@ -1582,6 +1596,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
       y: request.y,
       width: request.width,
       height: request.height,
+      devicePreset: request.devicePreset ?? null,
     }));
     window.setTimeout(() => focusViewCardWithRetry(candidateViewCardId, request.outputId), 40);
   }, [dispatch, expandedSessionIds, focusViewCardWithRetry]);
@@ -1706,7 +1721,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   }, [canvas.actions, canvas.viewportRef, dispatch, handleHighlightCard, selection]);
 
 
-  const buildRefinementDraft = useCallback((output: Output, preset: string, sourceSwarmId: string) => {
+  const buildRefinementDraft = useCallback((output: Output, preset: string, sourceSwarmId: string, origin?: PreviewRefineOrigin | null) => {
     const presetLabel = preset || 'current';
     const artifactRefs = (output.artifact_refs || []).join(', ') || 'none';
     const evidenceRefs = (output.evidence_refs || []).join(', ') || 'none';
@@ -1722,16 +1737,26 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
       `Validation status: ${output.validation_status || 'unknown'}`,
       `Artifacts: ${artifactRefs}`,
       `Evidence: ${evidenceRefs}`,
+      `Origin view card: ${origin?.viewCardId || output.id}`,
+      `Origin x: ${typeof origin?.x === 'number' ? origin.x : 'unknown'}`,
+      `Origin y: ${typeof origin?.y === 'number' ? origin.y : 'unknown'}`,
+      `Origin width: ${typeof origin?.width === 'number' ? origin.width : 'unknown'}`,
+      `Origin height: ${typeof origin?.height === 'number' ? origin.height : 'unknown'}`,
+      `Origin preview kind: ${origin?.previewKind || 'stable'}`,
+      `Origin iteration id: ${origin?.iterationId || ''}`,
+      `Origin candidate workspace: ${origin?.candidateWorkspacePath || ''}`,
+      `Origin parent view card: ${origin?.parentViewCardId || ''}`,
+      `Origin device preset: ${origin?.devicePreset || ''}`,
       '',
       'Cambio solicitado:',
     ].join('\n');
   }, []);
 
-  const handleRefineOutput = useCallback((output: Output, preset: string) => {
+  const handleRefineOutput = useCallback((output: Output, preset: string, origin?: PreviewRefineOrigin | null) => {
     const sourceSwarmId = output.source_swarm_id;
     if (!sourceSwarmId) return;
 
-    const draft = buildRefinementDraft(output, preset, sourceSwarmId);
+    const draft = buildRefinementDraft(output, preset, sourceSwarmId, origin);
     const swarmCards = store.getState().dashboardLayout.swarmCards;
     const sourceSwarmCard = Object.values(swarmCards)
       .find((card) => card.swarm_id === sourceSwarmId);
@@ -2718,6 +2743,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
                   onBringToFront={handleBringToFront}
                   onFocusViewCard={focusViewCard}
                   onRefineOutput={handleRefineOutput}
+                  parentViewCardId={vc.parent_view_card_id ?? null}
                 />
               );
             })}

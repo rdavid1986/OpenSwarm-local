@@ -104,6 +104,7 @@ interface Props {
     y?: number;
     width?: number;
     height?: number;
+    devicePreset?: 'desktop-full-hd' | 'desktop' | 'laptop' | 'tablet' | 'mobile' | 'custom' | null;
   }) => void;
   onAddPreviewCard?: (outputId: string) => void;
   onAddCandidatePreview?: (request: {
@@ -112,6 +113,11 @@ interface Props {
     candidateWorkspacePath?: string | null;
     parentViewCardId?: string | null;
     title?: string | null;
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+    devicePreset?: 'desktop-full-hd' | 'desktop' | 'laptop' | 'tablet' | 'mobile' | 'custom' | null;
   }) => void;
   draftPrompt?: string | null;
   onDraftPromptConsumed?: () => void;
@@ -128,6 +134,7 @@ const DEFAULT_SWARM_CONTEXT_LIMIT = 32_000;
 
 const PREVIEW_REFINEMENT_MARKER = 'quiero refinar la app generada desde esta preview';
 const SKILL_WORKSPACE_API = `${API_BASE}/skills`;
+const CANDIDATE_PREVIEW_GAP = 18;
 
 function stableSkillWorkspaceIdForSwarmCard(swarmCardId: string): string {
   const safeId = String(swarmCardId || 'swarm-main')
@@ -154,6 +161,16 @@ function parsePreviewRefinementDraft(message: string): {
   validationStatus: string;
   artifactRefs: string[];
   evidenceRefs: string[];
+  originViewCardId: string;
+  originX: number | null;
+  originY: number | null;
+  originWidth: number | null;
+  originHeight: number | null;
+  originPreviewKind: string;
+  originIterationId: string;
+  originCandidateWorkspacePath: string;
+  originParentViewCardId: string;
+  originDevicePreset: 'desktop-full-hd' | 'desktop' | 'laptop' | 'tablet' | 'mobile' | 'custom' | null;
 } | null {
   const lines = (message || '').split(/\r?\n/);
   const normalized = message.toLowerCase();
@@ -175,6 +192,16 @@ function parsePreviewRefinementDraft(message: string): {
     'candidate workspace:',
     'base workspace:',
     'candidate reused:',
+    'origin view card:',
+    'origin x:',
+    'origin y:',
+    'origin width:',
+    'origin height:',
+    'origin preview kind:',
+    'origin iteration id:',
+    'origin candidate workspace:',
+    'origin parent view card:',
+    'origin device preset:',
   ];
 
   for (const rawLine of lines) {
@@ -203,6 +230,12 @@ function parsePreviewRefinementDraft(message: string): {
   const sourceSwarmId = metadata['source swarm'] || '';
   if (!outputId || !sourceSwarmId) return null;
 
+  const parseOptionalNumber = (value: string | undefined): number | null => {
+    if (!value) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
   return {
     outputId,
     outputName: metadata['output name'] || '',
@@ -212,6 +245,18 @@ function parsePreviewRefinementDraft(message: string): {
     validationStatus: metadata['validation status'] || '',
     artifactRefs: parseCsvRefs(metadata.artifacts),
     evidenceRefs: parseCsvRefs(metadata.evidence),
+    originViewCardId: metadata['origin view card'] || outputId,
+    originX: parseOptionalNumber(metadata['origin x']),
+    originY: parseOptionalNumber(metadata['origin y']),
+    originWidth: parseOptionalNumber(metadata['origin width']),
+    originHeight: parseOptionalNumber(metadata['origin height']),
+    originPreviewKind: metadata['origin preview kind'] || 'stable',
+    originIterationId: metadata['origin iteration id'] || '',
+    originCandidateWorkspacePath: metadata['origin candidate workspace'] || '',
+    originParentViewCardId: metadata['origin parent view card'] || '',
+    originDevicePreset: ['desktop-full-hd', 'desktop', 'laptop', 'tablet', 'mobile', 'custom'].includes(metadata['origin device preset'])
+      ? (metadata['origin device preset'] as 'desktop-full-hd' | 'desktop' | 'laptop' | 'tablet' | 'mobile' | 'custom')
+      : null,
   };
 }
 
@@ -281,6 +326,16 @@ function buildInternalPreviewRefinementMessage(
     `Validation status: ${draft.validationStatus || 'unknown'}`,
     `Artifacts: ${artifactRefs}`,
     `Evidence: ${evidenceRefs}`,
+    `Origin view card: ${draft.originViewCardId || draft.outputId}`,
+    `Origin x: ${typeof draft.originX === 'number' ? draft.originX : 'unknown'}`,
+    `Origin y: ${typeof draft.originY === 'number' ? draft.originY : 'unknown'}`,
+    `Origin width: ${typeof draft.originWidth === 'number' ? draft.originWidth : 'unknown'}`,
+    `Origin height: ${typeof draft.originHeight === 'number' ? draft.originHeight : 'unknown'}`,
+    `Origin preview kind: ${draft.originPreviewKind || 'stable'}`,
+    `Origin iteration id: ${draft.originIterationId || ''}`,
+    `Origin candidate workspace: ${draft.originCandidateWorkspacePath || ''}`,
+    `Origin parent view card: ${draft.originParentViewCardId || ''}`,
+    `Origin device preset: ${draft.originDevicePreset || ''}`,
     '',
     'Cambio solicitado:',
     requestedChange,
@@ -2569,6 +2624,17 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
     let messageToSend = cleanPrompt || lastSubmittedPrompt || 'Continue';
     let visibleSubmittedPrompt = messageToSend;
+    let directPreviewCandidateToOpen: {
+      outputId: string;
+      iterationId: string;
+      candidateWorkspacePath?: string | null;
+      parentViewCardId?: string | null;
+      x?: number;
+      y?: number;
+      width?: number;
+      height?: number;
+      devicePreset?: 'desktop-full-hd' | 'desktop' | 'laptop' | 'tablet' | 'mobile' | 'custom' | null;
+    } | null = null;
 
     if (pendingPreviewRefinementDraft && cleanPrompt) {
       messageToSend = buildInternalPreviewRefinementMessage(pendingPreviewRefinementDraft, cleanPrompt);
@@ -2607,17 +2673,33 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     const refinementDraft = parsePreviewRefinementDraft(messageToSend);
     if (refinementDraft) {
       try {
-        const existingIterations = await dispatch(fetchOutputIterations(refinementDraft.outputId)).unwrap();
-        const latestCandidate = [...existingIterations]
-          .reverse()
-          .find((iteration) => iteration.status === 'candidate' && iteration.candidate_workspace_path);
-        const candidate = latestCandidate || (await dispatch(createCandidateOutputIteration({
+        const parentIterationId = refinementDraft.originPreviewKind === 'candidate'
+          ? (refinementDraft.originIterationId || null)
+          : null;
+        const candidate = (await dispatch(createCandidateOutputIteration({
           outputId: refinementDraft.outputId,
           requestedChange: refinementDraft.requestedChange,
           sourceSwarmId: refinementDraft.sourceSwarmId,
+          parentIterationId,
           evidenceRefs: refinementDraft.evidenceRefs,
         })).unwrap()).iteration;
-        const reusedCandidate = Boolean(latestCandidate);
+        const reusedCandidate = false;
+        const hasOriginGeometry =
+          typeof refinementDraft.originX === 'number'
+          && typeof refinementDraft.originY === 'number'
+          && typeof refinementDraft.originWidth === 'number'
+          && typeof refinementDraft.originHeight === 'number';
+        directPreviewCandidateToOpen = {
+          outputId: refinementDraft.outputId,
+          iterationId: candidate.iteration_id,
+          candidateWorkspacePath: candidate.candidate_workspace_path || null,
+          parentViewCardId: refinementDraft.originParentViewCardId || refinementDraft.outputId,
+          x: hasOriginGeometry ? refinementDraft.originX! + refinementDraft.originWidth! + CANDIDATE_PREVIEW_GAP : undefined,
+          y: hasOriginGeometry ? refinementDraft.originY! : undefined,
+          width: hasOriginGeometry ? refinementDraft.originWidth! : undefined,
+          height: hasOriginGeometry ? refinementDraft.originHeight! : undefined,
+          devicePreset: refinementDraft.originDevicePreset || null,
+        };
         messageToSend = appendCandidateMetadataToRefinementDraft(messageToSend, candidate, reusedCandidate);
         visibleSubmittedPrompt = buildVisiblePreviewRefinementMessage(refinementDraft, reusedCandidate);
         setPendingPreviewRefinementDraft(null);
@@ -2638,7 +2720,51 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       composerPayload: composerPayload || null,
     }));
     dispatch(fetchExperimentalSwarm(swarmIdToRun));
-  }, [activeSwarm?.intent, activeSwarmId, activeSwarmModel, dashboardId, dispatch, ensureSkillWorkspace, lastSubmittedPrompt, onSwarmBound, pendingPreviewRefinementDraft, prompt, swarmCardId]);
+
+    if (directPreviewCandidateToOpen) {
+      const candidateToOpen = directPreviewCandidateToOpen;
+      let candidateIterationToOpen: OutputIterationRecord | null = null;
+      try {
+        const refreshedIterations = await dispatch(fetchOutputIterations(candidateToOpen.outputId)).unwrap();
+        const sortedCandidates = [...refreshedIterations]
+          .filter((iteration) => iteration.status === 'candidate' && iteration.candidate_workspace_path)
+          .sort((a, b) => String(a.updated_at || a.created_at || '').localeCompare(String(b.updated_at || b.created_at || '')));
+        candidateIterationToOpen = sortedCandidates.find((iteration) => iteration.iteration_id === candidateToOpen.iterationId)
+          || sortedCandidates[sortedCandidates.length - 1]
+          || null;
+      } catch (error) {
+        console.error('Failed to refresh candidate iteration after direct Preview refinement', error);
+      }
+
+      const finalCandidateToOpen = candidateIterationToOpen
+        ? {
+          ...candidateToOpen,
+          iterationId: candidateIterationToOpen.iteration_id,
+          candidateWorkspacePath: candidateIterationToOpen.candidate_workspace_path || candidateToOpen.candidateWorkspacePath || null,
+        }
+        : candidateToOpen;
+
+      emitOutputIterationsUpdated(finalCandidateToOpen.outputId);
+      window.setTimeout(() => {
+        onAddCandidatePreview?.({
+          outputId: finalCandidateToOpen.outputId,
+          iterationId: finalCandidateToOpen.iterationId,
+          candidateWorkspacePath: finalCandidateToOpen.candidateWorkspacePath || null,
+          parentViewCardId: finalCandidateToOpen.parentViewCardId || finalCandidateToOpen.outputId,
+          title: 'Candidate Preview',
+          x: finalCandidateToOpen.x,
+          y: finalCandidateToOpen.y,
+          width: finalCandidateToOpen.width,
+          height: finalCandidateToOpen.height,
+          devicePreset: finalCandidateToOpen.devicePreset || null,
+        });
+        void dispatch(fetchOutputs());
+        window.setTimeout(() => {
+          emitOutputIterationsUpdated(finalCandidateToOpen.outputId);
+        }, 240);
+      }, 260);
+    }
+  }, [activeSwarm?.intent, activeSwarmId, activeSwarmModel, dashboardId, dispatch, ensureSkillWorkspace, lastSubmittedPrompt, onAddCandidatePreview, onSwarmBound, pendingPreviewRefinementDraft, prompt, swarmCardId]);
 
   useEffect(() => {
     const intakeStatus = (activeSwarm as any)?.project_intake_state?.status;
@@ -2701,6 +2827,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
           candidateWorkspacePath: latestCandidate.candidate_workspace_path || null,
           parentViewCardId: stableOutputBridgeOutputId,
           title: 'Candidate Preview',
+          devicePreset: 'desktop',
         });
         void dispatch(fetchOutputs());
         return;
@@ -3165,10 +3292,10 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             )}
           </Box>
         </Box>
-        {(stableOutputBridgeOutputId || canCreateOutputBridge) && (
-          <Button
+        <Button
             size="small"
             variant="outlined"
+            disabled={!stableOutputBridgeOutputId && !canCreateOutputBridge}
             onClick={(e) => {
               e.stopPropagation();
               handleOpenOutputPreview();
@@ -3193,7 +3320,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               fontWeight: 500,
               textTransform: 'none',
               flexShrink: 0,
-              cursor: 'pointer',
+              cursor: stableOutputBridgeOutputId || canCreateOutputBridge ? 'pointer' : 'default',
+              opacity: stableOutputBridgeOutputId || canCreateOutputBridge ? 1 : 0.55,
               '&:hover': {
                 bgcolor: cardTokens.polish.hoverBackground,
                 borderColor: cardTokens.surface.selectedBorder,
@@ -3201,9 +3329,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               },
             }}
           >
-            Open Preview
+            Preview
           </Button>
-        )}
 
         <IconButton
           size="small"

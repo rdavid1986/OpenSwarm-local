@@ -3276,6 +3276,137 @@ async def experimental_swarm_chat(swarm_id: str, body: ExperimentalChatRequest):
         )
         return {**_dump(swarm), "provider_events": []}
 
+    if swarm_mode == "app_builder" and route == "refinement_request" and is_refinement_request:
+        direct_refinement = _extract_output_refinement_request(user_message)
+        if direct_refinement.get("candidate_iteration_id"):
+            resolution = {
+                "classification": "direct_preview_refinement",
+                "pending_action": "review_candidate_diff",
+                "output_id": direct_refinement.get("output_id"),
+                "requested_change": direct_refinement.get("requested_change"),
+                "confidence": 1.0,
+                "safe_to_prepare": True,
+                "reason": "Preview refinement already created a candidate iteration; Accept/Discard remains the human approval gate for Stable.",
+                "clarification_question": None,
+            }
+            refinement = dict(direct_refinement)
+            prepare_metadata: dict[str, Any] | None = None
+            validation_errors: list[dict[str, Any]] = []
+            guard_result: dict[str, Any] | None = None
+            execution_result: dict[str, Any] | None = None
+
+            refinement["status"] = "confirmed"
+            refinement["next_action"] = "run_refinement_pipeline"
+            swarm.final_result = dict(getattr(swarm, "final_result", {}) or {})
+            swarm.final_result["refinement_request"] = refinement
+            swarm = swarm_orchestrator.store.save(swarm)
+
+            swarm, validation_errors, prepare_metadata = swarm_orchestrator.prepare_output_refinement(
+                swarm_id=swarm.id,
+                output_id=str(refinement.get("output_id") or ""),
+                requested_change=str(refinement.get("requested_change") or ""),
+                approve=True,
+            )
+            if validation_errors:
+                refinement["status"] = "prepare_failed"
+                refinement["next_action"] = "confirm_refinement"
+            else:
+                refinement["status"] = "confirmed"
+                refinement["next_action"] = "run_refinement_pipeline"
+                swarm.final_result = dict(getattr(swarm, "final_result", {}) or {})
+                swarm.final_result["refinement_request"] = refinement
+                swarm.final_result["prepare_output_refinement"] = {
+                    "metadata": prepare_metadata,
+                    "validation_errors": [],
+                }
+                guard_result = evaluate_refinement_execution_guard(
+                    swarm=swarm,
+                    output_id=str(refinement.get("output_id") or ""),
+                    requested_change=str(refinement.get("requested_change") or ""),
+                    approve=True,
+                )
+                execution_result = await _execute_candidate_refinement(
+                    refinement_request=refinement,
+                    guard_result=guard_result,
+                    model=body.model,
+                )
+                execution_status = str((execution_result or {}).get("status") or "").strip()
+                if execution_status == "executed":
+                    refinement["status"] = "executed"
+                    refinement["next_action"] = "review_candidate_diff"
+                    refinement["files_changed"] = True
+                    refinement["candidate_iteration_id"] = execution_result.get("candidate_iteration_id")
+                elif refinement.get("candidate_iteration_id"):
+                    refinement["status"] = "prepared"
+                    refinement["next_action"] = "review_candidate_diff"
+                    refinement["files_changed"] = False
+
+            assistant_lines = [
+                "Refinamiento enviado a Candidate Preview.",
+                "",
+                "Estado real: Stable no fue modificado. Accept o Discard siguen siendo la decision humana final.",
+            ]
+            if validation_errors:
+                assistant_lines = [
+                    "No pude preparar ese cambio porque la validacion lo bloqueo.",
+                    "",
+                    "Estado real: Stable no fue modificado.",
+                ]
+            else:
+                if isinstance(guard_result, dict):
+                    assistant_lines.extend([
+                        "",
+                        f"Guard de ejecucion: {str(guard_result.get('guard_status') or 'unknown')}.",
+                        f"Riesgo: {str(guard_result.get('risk_level') or 'unknown')}.",
+                    ])
+                if isinstance(execution_result, dict):
+                    execution_status = str(execution_result.get("status") or "unknown")
+                    execution_reason = str(execution_result.get("reason") or "").strip()
+                    changed = execution_result.get("files_changed") if isinstance(execution_result.get("files_changed"), list) else []
+                    assistant_lines.extend([
+                        "",
+                        f"Ejecucion candidate: {execution_status}.",
+                    ])
+                    if changed:
+                        assistant_lines.append("Archivos candidate modificados: " + ", ".join(str(item) for item in changed))
+                    if execution_reason:
+                        assistant_lines.append(f"Motivo real: {execution_reason}.")
+                assistant_lines.append("Siguiente decision humana: revisar Diff y elegir Accept o Discard.")
+
+            assistant_content = "\n".join(assistant_lines)
+            payload = _pending_refinement_payload(
+                refinement_request=refinement,
+                swarm_mode=swarm_mode,
+                resolution=resolution,
+                prepare_metadata=prepare_metadata,
+                validation_errors=validation_errors,
+                guard_result=guard_result,
+                execution_result=execution_result,
+            )
+            payload.update(snapshot_payload(build_ri_state_snapshot(
+                swarm,
+                route="refinement_request",
+                user_message=user_message,
+                payload=payload,
+            )))
+            _save_local_chat_message(swarm, coordinator_id, assistant_content, payload)
+            swarm = swarm_orchestrator.store.save(swarm)
+            event_trace_runtime.create(
+                swarm_id=swarm.id,
+                event_type="chat_completed",
+                payload={
+                    "message": "direct_preview_refinement_executed",
+                    "source": "direct_preview_refinement",
+                    "route": "refinement_request",
+                    "swarm_mode": swarm_mode,
+                    "prepared": bool(prepare_metadata and not validation_errors),
+                    "guard_status": (guard_result or {}).get("guard_status"),
+                    "execution_status": (execution_result or {}).get("status"),
+                    "candidate_iteration_id": refinement.get("candidate_iteration_id"),
+                },
+            )
+            return {**_dump(swarm), "provider_events": []}
+
     if swarm_mode in {"plan", "debug", "skill_builder", "app_builder"} and not _is_project_intake_collecting(swarm):
         clarification = await resolve_model_context_clarification(
             user_message=user_message,

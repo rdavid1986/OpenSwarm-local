@@ -694,6 +694,7 @@ const dashboardLayoutSlice = createSlice({
       parentViewCardId?: string | null;
       title?: string | null;
       x?: number; y?: number; width?: number; height?: number;
+      devicePreset?: ViewCardPosition['device_preset'];
     }>) {
       const {
         outputId,
@@ -708,10 +709,18 @@ const dashboardLayoutSlice = createSlice({
         y,
         width,
         height,
+        devicePreset,
       } = action.payload;
       const id = viewCardId || outputId;
       if (state.viewCards[id]) {
         const existing = state.viewCards[id];
+        existing.output_id = outputId;
+        existing.preview_kind = previewKind || existing.preview_kind || 'stable';
+        existing.iteration_id = iterationId ?? existing.iteration_id ?? null;
+        existing.candidate_workspace_path = candidateWorkspacePath ?? existing.candidate_workspace_path ?? null;
+        existing.parent_view_card_id = parentViewCardId ?? existing.parent_view_card_id ?? null;
+        existing.title = title ?? existing.title ?? null;
+        existing.device_preset = devicePreset ?? existing.device_preset ?? null;
         if (x != null) existing.x = x;
         if (y != null) existing.y = y;
         if (width != null) existing.width = width;
@@ -737,6 +746,7 @@ const dashboardLayoutSlice = createSlice({
         candidate_workspace_path: candidateWorkspacePath ?? null,
         parent_view_card_id: parentViewCardId ?? null,
         title: title ?? null,
+        device_preset: devicePreset ?? null,
         x: posX,
         y: posY,
         width: width || DEFAULT_VIEW_CARD_W,

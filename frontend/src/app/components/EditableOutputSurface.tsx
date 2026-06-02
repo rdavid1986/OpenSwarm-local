@@ -120,14 +120,14 @@ const EditableOutputSurface: React.FC<Props> = ({
           <Typography sx={{ color: c.text.tertiary, fontSize: '0.65rem', mt: 0.45, lineHeight: 1.35 }}>
             {hasCandidate
               ? 'Review candidate changes before accepting. Stable output is not modified until Accept.'
-              : 'Stable output is read-only here. Targeted edits go through Refine/candidate flow.'}
+              : 'Stable output is read-only here. Refinements go through the Refine/candidate flow.'}
           </Typography>
 
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.65 }}>
-            <Tooltip title={onRefine ? 'Prepare a targeted change through the existing refinement flow.' : 'No source Swarm/refinement handler connected for this output.'}>
+            <Tooltip title={onRefine ? 'Prepare a refinement through the existing candidate flow.' : 'No source Swarm/refinement handler connected for this output.'}>
               <span>
                 <Button size="small" disabled={!onRefine || actionLoading} onClick={() => runAction(onRefine)} sx={{ fontSize: '0.66rem', textTransform: 'none' }}>
-                  Targeted change
+                  Refine
                 </Button>
               </span>
             </Tooltip>
