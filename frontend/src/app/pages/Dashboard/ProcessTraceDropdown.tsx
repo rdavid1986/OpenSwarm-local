@@ -384,6 +384,169 @@ function buildProjectOrientationWarning(item: ProcessTraceItem): string | null {
 }
 
 
+
+function isE2EGateTraceItem(item: ProcessTraceItem): boolean {
+  const details = item.details || {};
+  const metadata = item.metadata || {};
+  const source = getDetailValue(details, 'source_kind') || metadata.source_kind;
+  const contract = traceText(getDetailValue(details, 'contract_kind', 'e2e_kind'), '');
+  return source === 'sdd_tdd_materialization_e2e'
+    || contract.startsWith('sdd_tdd_materialization')
+    || getDetailValue(details, 'can_mark_change_completed') !== undefined;
+}
+
+function isActionMaterializationTraceItem(item: ProcessTraceItem): boolean {
+  const details = item.details || {};
+  const metadata = item.metadata || {};
+  const source = getDetailValue(details, 'source_kind') || metadata.source_kind;
+  const contract = traceText(getDetailValue(details, 'contract_kind', 'materialization_kind'), '');
+  return source === 'action_materialization_runtime'
+    || contract.startsWith('action_materialization')
+    || contract.startsWith('patch_materialization')
+    || contract.startsWith('command_materialization')
+    || getDetailValue(details, 'can_mark_materialization_safe', 'post_validation_status', 'rollback_ready') !== undefined;
+}
+
+function isPositiveGateValue(value: unknown): boolean {
+  if (value === true) return true;
+  const text = traceText(value, '').toLowerCase();
+  return ['true', 'completed', 'passed', 'executed', 'ready', 'rolled_back', 'verified', 'sufficient', 'safe', 'ok', 'success', 'no_drift'].includes(text);
+}
+
+function isNegativeGateValue(value: unknown): boolean {
+  if (value === false) return true;
+  const text = traceText(value, '').toLowerCase();
+  return ['false', 'blocked', 'failed', 'missing', 'not_ready', 'not_confirmed', 'unsafe', 'error'].includes(text);
+}
+
+function gateValueLabel(value: unknown): string {
+  if (typeof value === 'boolean') return value ? 'yes' : 'no';
+  return traceText(value, 'missing', 80).replace(/_/g, ' ');
+}
+
+function TraceGatePill({ label, value }: { label: string; value: unknown }) {
+  const c = useClaudeTokens();
+  const positive = isPositiveGateValue(value);
+  const negative = isNegativeGateValue(value);
+  const color = positive ? c.status.success : negative ? c.status.warning : c.text.tertiary;
+  return (
+    <Box
+      title={`${label}: ${gateValueLabel(value)}`}
+      sx={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 0.45,
+        minWidth: 0,
+        px: 0.6,
+        py: 0.34,
+        borderRadius: 999,
+        border: `1px solid ${positive || negative ? color : c.border.subtle}`,
+        bgcolor: `${color}${positive || negative ? '18' : '10'}`,
+      }}
+    >
+      <Typography noWrap sx={{ color, fontSize: '0.62rem', fontWeight: 850 }}>
+        {label}
+      </Typography>
+      <Typography noWrap sx={{ color: c.text.ghost, fontSize: '0.58rem', maxWidth: 120 }}>
+        {gateValueLabel(value)}
+      </Typography>
+    </Box>
+  );
+}
+
+function E2EGateSummaryCard({ item }: { item: ProcessTraceItem }) {
+  const c = useClaudeTokens();
+  const details = item.details || {};
+  const conditions = nestedRecord(getDetailValue(details, 'completion_conditions'));
+  const blockers = getDetailValue(details, 'blockers');
+  const required = getDetailValue(details, 'required_actions');
+  const refs = getDetailValue(details, 'process_trace_refs');
+
+  return (
+    <Box
+      sx={{
+        display: 'grid',
+        gap: 0.75,
+        p: 0.85,
+        borderRadius: 1.25,
+        border: `1px solid ${c.border.subtle}`,
+        bgcolor: `${c.bg.elevated}70`,
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, minWidth: 0 }}>
+        <Typography sx={{ color: c.text.secondary, fontSize: '0.72rem', fontWeight: 850, letterSpacing: '0.02em' }}>
+          E2E completion gate
+        </Typography>
+        <Typography noWrap title={traceText(getDetailValue(details, 'contract_kind'), '')} sx={{ color: c.text.ghost, fontSize: '0.64rem', fontFamily: c.font.mono, minWidth: 0 }}>
+          {traceText(getDetailValue(details, 'gate_status', 'summary_status'), 'missing')}
+        </Typography>
+      </Box>
+
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.45 }}>
+        <TraceGatePill label="SDD" value={getDetailValue(details, 'sdd_status') || conditions.sdd_completion_ok} />
+        <TraceGatePill label="TDD" value={getDetailValue(details, 'tdd_status') || conditions.tdd_runtime_ok} />
+        <TraceGatePill label="Materialization" value={getDetailValue(details, 'materialization_status') || conditions.materialization_safe_ok} />
+        <TraceGatePill label="Change complete" value={getDetailValue(details, 'can_mark_change_completed')} />
+      </Box>
+
+      {(refs || blockers || required) && (
+        <Box sx={{ display: 'grid', gap: 0.25 }}>
+          {refs && <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem' }}>ProcessTrace refs: {compactTraceList(refs, 4)}</Typography>}
+          {blockers && <Typography sx={{ color: c.status.warning, fontSize: '0.66rem' }}>Blockers: {compactTraceList(blockers, 4)}</Typography>}
+          {required && <Typography sx={{ color: c.text.ghost, fontSize: '0.66rem' }}>Required: {compactTraceList(required, 4)}</Typography>}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+function ActionMaterializationEvidenceCard({ item }: { item: ProcessTraceItem }) {
+  const c = useClaudeTokens();
+  const details = item.details || {};
+  const completion = nestedRecord(getDetailValue(details, 'completion_conditions'));
+  const changedFiles = getDetailValue(details, 'changed_files');
+  const blockers = getDetailValue(details, 'blockers');
+  const required = getDetailValue(details, 'required_actions');
+
+  return (
+    <Box
+      sx={{
+        display: 'grid',
+        gap: 0.75,
+        p: 0.85,
+        borderRadius: 1.25,
+        border: `1px solid ${c.border.subtle}`,
+        bgcolor: `${c.bg.elevated}70`,
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, minWidth: 0 }}>
+        <Typography sx={{ color: c.text.secondary, fontSize: '0.72rem', fontWeight: 850, letterSpacing: '0.02em' }}>
+          Materialization evidence
+        </Typography>
+        <Typography noWrap sx={{ color: c.text.ghost, fontSize: '0.64rem', fontFamily: c.font.mono, minWidth: 0 }}>
+          {traceText(getDetailValue(details, 'contract_kind'), 'action materialization')}
+        </Typography>
+      </Box>
+
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.45 }}>
+        <TraceGatePill label="Execution" value={getDetailValue(details, 'execution_status') || completion.execution_ok} />
+        <TraceGatePill label="Post-validation" value={getDetailValue(details, 'post_validation_status', 'validation_status') || completion.post_validation_ok} />
+        <TraceGatePill label="Rollback" value={getDetailValue(details, 'rollback_status', 'rollback_ready') || completion.rollback_ready} />
+        <TraceGatePill label="Safe" value={getDetailValue(details, 'can_mark_materialization_safe', 'can_mark_executed')} />
+      </Box>
+
+      {(changedFiles || blockers || required) && (
+        <Box sx={{ display: 'grid', gap: 0.25 }}>
+          {changedFiles && <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem' }}>Changed: {compactTraceList(changedFiles, 4)}</Typography>}
+          {blockers && <Typography sx={{ color: c.status.warning, fontSize: '0.66rem' }}>Blockers: {compactTraceList(blockers, 4)}</Typography>}
+          {required && <Typography sx={{ color: c.text.ghost, fontSize: '0.66rem' }}>Required: {compactTraceList(required, 4)}</Typography>}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+
 function numericDetail(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value.trim()) {
@@ -579,7 +742,41 @@ function buildSubsystemDetailRows(item: ProcessTraceItem, durationLabel: string 
     || item.metadata?.source_kind === 'project_orientation_multiagent'
     || String(getDetailValue(details, 'source_kind') || '').startsWith('project_orientation_')
     || Boolean(getDetailValue(details, 'project_type', 'selected_pattern', 'orientation_required', 'app_builder_gate'));
+  const isE2EGates = isE2EGateTraceItem(item);
+  const isActionMaterialization = isActionMaterializationTraceItem(item);
   const isSddOrchestrator = isSddOrchestratorTraceItem(item);
+
+  if (isE2EGates) {
+    pushDetailRow(rows, 'E2E contract', getDetailValue(details, 'contract_kind'));
+    pushDetailRow(rows, 'Candidate', getDetailValue(details, 'candidate_id'));
+    pushDetailRow(rows, 'Gate', getDetailValue(details, 'gate_status', 'summary_status'));
+    pushDetailRow(rows, 'SDD', getDetailValue(details, 'sdd_status'));
+    pushDetailRow(rows, 'TDD', getDetailValue(details, 'tdd_status'));
+    pushDetailRow(rows, 'Materialization', getDetailValue(details, 'materialization_status'));
+    pushDetailRow(rows, 'Can complete change', getDetailValue(details, 'can_mark_change_completed'));
+    pushDetailRow(rows, 'Conditions', getDetailValue(details, 'completion_conditions'));
+    pushDetailRow(rows, 'ProcessTrace refs', getDetailValue(details, 'process_trace_refs'), { list: true });
+    pushDetailRow(rows, 'Blockers', getDetailValue(details, 'blockers'), { list: true });
+    pushDetailRow(rows, 'Required', getDetailValue(details, 'required_actions'), { list: true });
+    return rows;
+  }
+
+  if (isActionMaterialization) {
+    pushDetailRow(rows, 'Materialization contract', getDetailValue(details, 'contract_kind'));
+    pushDetailRow(rows, 'Candidate', getDetailValue(details, 'candidate_id'));
+    pushDetailRow(rows, 'Execution', getDetailValue(details, 'execution_status'));
+    pushDetailRow(rows, 'Validation', getDetailValue(details, 'validation_status', 'post_validation_status'));
+    pushDetailRow(rows, 'Rollback', getDetailValue(details, 'rollback_status'));
+    pushDetailRow(rows, 'Rollback ready', getDetailValue(details, 'rollback_ready'));
+    pushDetailRow(rows, 'Safe', getDetailValue(details, 'can_mark_materialization_safe', 'can_mark_executed'));
+    pushDetailRow(rows, 'Changed files', getDetailValue(details, 'changed_files'), { list: true });
+    pushDetailRow(rows, 'Command outputs', getDetailValue(details, 'command_outputs'), { list: true });
+    pushDetailRow(rows, 'Tool results', getDetailValue(details, 'tool_results'), { list: true });
+    pushDetailRow(rows, 'Conditions', getDetailValue(details, 'completion_conditions'));
+    pushDetailRow(rows, 'Blockers', getDetailValue(details, 'blockers'), { list: true });
+    pushDetailRow(rows, 'Required', getDetailValue(details, 'required_actions'), { list: true });
+    return rows;
+  }
 
   if (isProjectOrientation) {
     pushDetailRow(rows, 'Project type', getDetailValue(details, 'project_type'));
@@ -866,6 +1063,8 @@ function RichTraceSections({ item }: { item: ProcessTraceItem }) {
   const subsystem = String(item.subsystem || '').toLowerCase();
   const kind = String(item.kind || '').toLowerCase();
   const isFileOutput = ['filecore', 'outputcore'].includes(subsystem) || ['file', 'diff', 'workspace', 'output', 'artifact'].includes(kind);
+  const isE2EGates = isE2EGateTraceItem(item);
+  const isActionMaterialization = isActionMaterializationTraceItem(item);
   const isSddOrchestrator = isSddOrchestratorTraceItem(item);
   const summaryFields = [
     ['Session summary', getDetailValue(details, 'session_summary')],
@@ -876,10 +1075,12 @@ function RichTraceSections({ item }: { item: ProcessTraceItem }) {
     ['Validation', getDetailValue(details, 'validation_summary', 'validation')],
   ] as Array<[string, unknown]>;
   const hasSummary = summaryFields.some(([, value]) => value !== undefined && value !== null && value !== '');
-  if (!isFileOutput && !hasSummary && !isSddOrchestrator) return null;
+  if (!isFileOutput && !hasSummary && !isSddOrchestrator && !isE2EGates && !isActionMaterialization) return null;
 
   return (
     <Box sx={{ display: 'grid', gap: 0.85, mb: 1 }}>
+      {isE2EGates && <E2EGateSummaryCard item={item} />}
+      {isActionMaterialization && <ActionMaterializationEvidenceCard item={item} />}
       {isSddOrchestrator && <SddRoleFlowCard item={item} />}
       {isFileOutput && (
         <Box
