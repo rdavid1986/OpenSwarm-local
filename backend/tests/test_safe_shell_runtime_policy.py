@@ -116,3 +116,51 @@ def test_safe_shell_generates_command_executed_evidence():
     assert evidence.kind == "command_executed"
     assert evidence.action == "executed"
     assert evidence.summary == "Executed safe command python -m py_compile ok.py"
+
+
+
+def test_safe_shell_allows_targeted_pytest_file():
+    workspace = Path(tempfile.mkdtemp(prefix="openswarm-safe-shell-pytest-")).resolve()
+    target = workspace / "test_ok.py"
+    target.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+    result = tool_runtime.execute_tool(
+        ToolCall(name="SafeShell", input={"command": "python -m pytest -q test_ok.py"}),
+        _ctx(workspace),
+        history=[],
+    )
+
+    assert result.ok is True
+    assert result.status == "completed"
+    assert result.result["command"] == "python -m pytest -q test_ok.py"
+    assert result.result["allowed"] is True
+    assert result.result["execution_status"] == "executed"
+    assert result.result["exit_code"] == 0
+
+
+def test_safe_shell_blocks_pytest_parent_traversal():
+    workspace = Path(tempfile.mkdtemp(prefix="openswarm-safe-shell-pytest-")).resolve()
+
+    result = tool_runtime.execute_tool(
+        ToolCall(name="SafeShell", input={"command": "python -m pytest -q ../outside_test.py"}),
+        _ctx(workspace),
+        history=[],
+    )
+
+    assert result.ok is False
+    assert result.status == "failed"
+    assert "path escapes workspace" in str(result.error)
+
+
+def test_safe_shell_blocks_untargeted_pytest():
+    workspace = Path(tempfile.mkdtemp(prefix="openswarm-safe-shell-pytest-")).resolve()
+
+    result = tool_runtime.execute_tool(
+        ToolCall(name="SafeShell", input={"command": "python -m pytest -q"}),
+        _ctx(workspace),
+        history=[],
+    )
+
+    assert result.ok is False
+    assert result.status == "failed"
+    assert "command is not allowlisted" in str(result.error)

@@ -880,6 +880,67 @@ li + li {
                 task.updated_at = _now_iso()
                 return validation_result
 
+            python_candidates = sorted(
+                path.relative_to(workspace).as_posix()
+                for path in workspace.glob("*.py")
+                if path.is_file()
+            )
+            if python_candidates:
+                history: list[dict[str, Any]] = []
+                selected_python = python_candidates[0]
+                command = f"python -m py_compile {selected_python}"
+                result = self.chain_runner.runtime.tools.execute_tool(
+                    ToolCall(name="SafeShell", input={"command": command}, raw_name="SafeShell"),
+                    ToolExecutionContext(
+                        workspace_path=workspace_path,
+                        session_id="experimental-dag-validation",
+                        swarm_id=swarm.id,
+                        agent_id=contract.id,
+                        task_id=task.id,
+                        allowed_tools=list(spec.allowed_tools),
+                        metadata={"task_type": "validation_execute", "fallback": "python_py_compile"},
+                    ),
+                    history=history,
+                )
+
+                swarm.tool_history.extend(history)
+
+                validation_result = {
+                    "status": "passed" if result.ok else "failed",
+                    "commands": [
+                        {
+                            "command": command,
+                            "ok": result.ok,
+                            "exit_code": result.result.get("exit_code"),
+                            "stdout": result.result.get("stdout", ""),
+                            "stderr": result.result.get("stderr", ""),
+                        }
+                    ],
+                    "evidence": ["command_executed"] if result.ok else [],
+                    "note": "Workspace is not a Git repository; validation used targeted Python py_compile via SafeShell.",
+                }
+                task.validations.append(validation_result)
+                if result.ok:
+                    task.evidence.append("command_executed")
+                    task.evidence.append({
+                        "kind": "command_executed",
+                        "command": command,
+                        "status": "passed",
+                        "tool": "SafeShell",
+                        "created_at": _now_iso(),
+                    })
+                else:
+                    task.errors.append({
+                        "error": "validation_command_failed",
+                        "command": command,
+                        "exit_code": result.result.get("exit_code"),
+                        "stderr": result.result.get("stderr", ""),
+                        "tool_error": result.error,
+                    })
+                task.status = "completed" if result.ok else "failed"
+                task.updated_at = _now_iso()
+                return validation_result
+
             candidate_paths = ["index.html", "README.md"]
             selected_path = next((candidate for candidate in candidate_paths if (workspace / candidate).exists()), candidate_paths[0])
             artifact_file = workspace / selected_path

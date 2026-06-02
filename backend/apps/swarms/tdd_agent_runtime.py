@@ -437,6 +437,249 @@ def build_tdd_evidence_report(
     )
 
 
+
+@dataclass(frozen=True)
+class TddControlledTestRunRequest:
+    source_kind: str = "tdd_agent_runtime"
+    tdd_contract_kind: str = "tdd_controlled_test_run_request"
+    tdd_version: str = TDD_AGENT_VERSION
+    phase: str = "red"
+    command: str = ""
+    workspace_path: str = ""
+    target_test_file: str = ""
+    expected_outcome: str = "failure"
+    required_actions: list[str] = field(default_factory=list)
+    safeshell_required: bool = True
+    test_runner_required: bool = True
+    approval_required: bool = True
+    can_execute: bool = False
+    can_execute_tests: bool = False
+    can_write_tests: bool = False
+    can_write_files: bool = False
+    can_apply_patch: bool = False
+    contains_private_reasoning: bool = False
+
+
+@dataclass(frozen=True)
+class TddControlledTestRunResult:
+    source_kind: str = "tdd_agent_runtime"
+    tdd_contract_kind: str = "tdd_controlled_test_run_result"
+    tdd_version: str = TDD_AGENT_VERSION
+    phase: str = "red"
+    command: str = ""
+    workspace_path: str = ""
+    execution_status: str = "not_executed"
+    test_status: str = "blocked"
+    exit_code: int | None = None
+    stdout: str = ""
+    stderr: str = ""
+    tool_error: str = ""
+    evidence_refs: list[str] = field(default_factory=list)
+    regression_coverage: list[str] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
+    red_confirmed: bool = False
+    green_confirmed: bool = False
+    refactor_confirmed: bool = False
+    can_mark_green: bool = False
+    can_mark_refactor_safe: bool = False
+    can_execute: bool = False
+    can_execute_tests: bool = False
+    can_write_tests: bool = False
+    can_write_files: bool = False
+    can_apply_patch: bool = False
+    contains_private_reasoning: bool = False
+
+
+@dataclass(frozen=True)
+class TddRuntimeGate:
+    source_kind: str = "tdd_agent_runtime"
+    tdd_contract_kind: str = "tdd_runtime_gate"
+    tdd_version: str = TDD_AGENT_VERSION
+    gate_status: str = "blocked"
+    red_confirmed: bool = False
+    green_confirmed: bool = False
+    refactor_confirmed: bool = False
+    blockers: list[str] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
+    evidence_refs: list[str] = field(default_factory=list)
+    can_mark_green: bool = False
+    can_mark_refactor_safe: bool = False
+    can_complete_tdd_cycle: bool = False
+    can_execute: bool = False
+    can_execute_tests: bool = False
+    can_write_tests: bool = False
+    can_write_files: bool = False
+    can_apply_patch: bool = False
+    contains_private_reasoning: bool = False
+
+
+def build_tdd_controlled_test_run_request(
+    *,
+    phase: Any = "red",
+    command: Any = "",
+    workspace_path: Any = "",
+    target_test_file: Any = "",
+    expected_outcome: Any = "",
+) -> TddControlledTestRunRequest:
+    phase_text = _text(phase, "red", limit=80).lower()
+    command_text = _text(command, limit=500)
+    target = _text(target_test_file, limit=500)
+    expected = _text(expected_outcome, "", limit=120) or ("failure" if phase_text in {"red", "red_phase"} else "success")
+    required = ["review_tdd_controlled_test_run_request"]
+
+    if not command_text:
+        required.append("define_test_command")
+    if not command_text.startswith("python -m pytest -q "):
+        required.append("use_targeted_pytest_quiet_command")
+    if not _text(workspace_path):
+        required.append("define_workspace_path")
+    if not target:
+        required.append("define_target_test_file")
+    if target and target not in command_text:
+        required.append("align_command_with_target_test_file")
+
+    return TddControlledTestRunRequest(
+        phase=phase_text,
+        command=command_text,
+        workspace_path=_text(workspace_path, limit=1000),
+        target_test_file=target,
+        expected_outcome=expected,
+        required_actions=_dedupe(required),
+    )
+
+
+def execute_tdd_controlled_test_run(
+    *,
+    phase: Any = "red",
+    command: Any = "",
+    workspace_path: Any = "",
+    target_test_file: Any = "",
+    regression_coverage: list[Any] | None = None,
+    swarm_id: Any = "tdd-runtime",
+    agent_id: Any = "tdd",
+    task_id: Any = "tdd-controlled-test-run",
+) -> TddControlledTestRunResult:
+    from backend.apps.agents.runtime.tools import ToolCall, ToolExecutionContext, tool_runtime
+
+    request = build_tdd_controlled_test_run_request(
+        phase=phase,
+        command=command,
+        workspace_path=workspace_path,
+        target_test_file=target_test_file,
+    )
+    phase_text = request.phase
+    coverage = _dedupe(_as_list(regression_coverage))
+    required = ["review_tdd_controlled_test_run_result"]
+
+    if request.required_actions and any(action != "review_tdd_controlled_test_run_request" for action in request.required_actions):
+        required.extend(request.required_actions)
+
+    history: list[dict[str, Any]] = []
+    result = tool_runtime.execute_tool(
+        ToolCall(name="SafeShell", input={"command": request.command}, raw_name="SafeShell"),
+        ToolExecutionContext(
+            workspace_path=request.workspace_path,
+            session_id="tdd-controlled-test-run",
+            swarm_id=_text(swarm_id, "tdd-runtime", limit=240),
+            agent_id=_text(agent_id, "tdd", limit=240),
+            task_id=_text(task_id, "tdd-controlled-test-run", limit=240),
+            allowed_tools=["SafeShell"],
+            metadata={"task_type": "tdd_controlled_test_runner", "phase": phase_text},
+        ),
+        history=history,
+    )
+
+    result_data = result.result or {}
+    execution_status = _text(result_data.get("execution_status"), "blocked", limit=120)
+    exit_code = result_data.get("exit_code")
+    stdout = _text(result_data.get("stdout"), limit=3000)
+    stderr = _text(result_data.get("stderr"), limit=3000)
+    executed = execution_status == "executed"
+
+    test_status = "passed" if result.ok else "failed" if executed else "blocked"
+    red_confirmed = bool(phase_text in {"red", "red_phase"} and executed and not result.ok)
+    green_confirmed = bool(phase_text in {"green", "green_phase"} and executed and result.ok)
+    refactor_confirmed = bool(phase_text in {"refactor", "refactor_phase"} and executed and result.ok and coverage)
+    can_mark_green = bool(green_confirmed and coverage)
+    can_mark_refactor_safe = bool(refactor_confirmed)
+
+    if phase_text in {"red", "red_phase"} and not red_confirmed:
+        required.append("attach_failing_red_test_output")
+    if phase_text in {"green", "green_phase"} and not can_mark_green:
+        required.append("attach_passing_green_test_and_regression_output")
+    if phase_text in {"refactor", "refactor_phase"} and not can_mark_refactor_safe:
+        required.append("attach_refactor_regression_output")
+    if not executed:
+        required.append("resolve_safeshell_test_execution_blocker")
+
+    evidence_refs = ["command_executed"] if executed else []
+
+    return TddControlledTestRunResult(
+        phase=phase_text,
+        command=request.command,
+        workspace_path=request.workspace_path,
+        execution_status=execution_status,
+        test_status=test_status,
+        exit_code=exit_code if isinstance(exit_code, int) else None,
+        stdout=stdout,
+        stderr=stderr,
+        tool_error=_text(result.error, limit=1000),
+        evidence_refs=evidence_refs,
+        regression_coverage=coverage,
+        required_actions=_dedupe(required),
+        red_confirmed=red_confirmed,
+        green_confirmed=green_confirmed,
+        refactor_confirmed=refactor_confirmed,
+        can_mark_green=can_mark_green,
+        can_mark_refactor_safe=can_mark_refactor_safe,
+    )
+
+
+def build_tdd_runtime_gate(
+    *,
+    red_result: Any = None,
+    green_result: Any = None,
+    refactor_result: Any = None,
+) -> TddRuntimeGate:
+    red = _safe(red_result) if red_result is not None else {}
+    green = _safe(green_result) if green_result is not None else {}
+    refactor = _safe(refactor_result) if refactor_result is not None else {}
+
+    red_ok = bool(isinstance(red, dict) and red.get("red_confirmed") is True)
+    green_ok = bool(isinstance(green, dict) and green.get("can_mark_green") is True)
+    refactor_ok = bool(isinstance(refactor, dict) and refactor.get("can_mark_refactor_safe") is True)
+
+    blockers: list[str] = []
+    required: list[str] = ["review_tdd_runtime_gate"]
+
+    if not red_ok:
+        blockers.append("red_phase_not_confirmed")
+        required.append("run_red_phase_and_attach_failing_output")
+    if not green_ok:
+        blockers.append("green_phase_not_confirmed")
+        required.append("run_green_phase_and_attach_passing_regression_output")
+    if not refactor_ok:
+        blockers.append("refactor_phase_not_confirmed")
+        required.append("run_refactor_phase_and_attach_regression_output")
+
+    evidence_refs = []
+    for source in [red, green, refactor]:
+        if isinstance(source, dict):
+            evidence_refs.extend(_as_list(source.get("evidence_refs")))
+
+    return TddRuntimeGate(
+        gate_status="completed" if not blockers else "blocked",
+        red_confirmed=red_ok,
+        green_confirmed=green_ok,
+        refactor_confirmed=refactor_ok,
+        blockers=_dedupe(blockers),
+        required_actions=_dedupe(required),
+        evidence_refs=_dedupe(evidence_refs),
+        can_mark_green=green_ok,
+        can_mark_refactor_safe=refactor_ok,
+        can_complete_tdd_cycle=bool(red_ok and green_ok and refactor_ok),
+    )
+
 def build_tdd_contract_sequence(
     *,
     feature_under_test: Any = "",

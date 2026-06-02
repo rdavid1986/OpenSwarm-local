@@ -135,6 +135,9 @@ def _safe_shell_policy() -> dict[str, Any]:
             "git diff --check",
             "git status --short",
         },
+        "allowed_command_templates": {
+            "python -m pytest -q <relative_test_path>",
+        },
         "blocked_patterns": {
             "rm -rf",
             "del /s",
@@ -148,6 +151,20 @@ def _safe_shell_policy() -> dict[str, Any]:
         "stdout_limit": 4000,
         "stderr_limit": 4000,
     }
+
+
+def _is_allowed_pytest_command(args: list[str]) -> bool:
+    """Allow only targeted pytest execution with -q and explicit relative paths."""
+    if args[:4] != ["python", "-m", "pytest", "-q"]:
+        return False
+    if len(args) < 5:
+        return False
+    for target in args[4:]:
+        if not target or target.startswith("-"):
+            return False
+        if any(token in target for token in (";", "|", ">", "<", "&", "`", "$(")):
+            return False
+    return True
 
 
 class ToolRuntime:
@@ -542,7 +559,8 @@ class ToolRuntime:
             if pattern.lower() in command.lower():
                 raise ValueError(f"blocked command pattern: {pattern}")
 
-        allowed = command in allowed_commands or command.startswith("python -m py_compile ")
+        args = shlex.split(command)
+        allowed = command in allowed_commands or command.startswith("python -m py_compile ") or _is_allowed_pytest_command(args)
         if not allowed:
             raise ValueError(f"command is not allowlisted: {command}")
 
@@ -550,10 +568,13 @@ class ToolRuntime:
         if not workspace.exists() or not workspace.is_dir():
             raise ValueError("safe shell requires an existing workspace directory")
 
-        args = shlex.split(command)
         if args[:3] == ["python", "-m", "py_compile"]:
             for target in args[3:]:
                 self._safe_workspace_path(str(workspace), target)
+        if _is_allowed_pytest_command(args):
+            for target in args[4:]:
+                path_part = target.split("::", 1)[0]
+                self._safe_workspace_path(str(workspace), path_part)
         completed = subprocess.run(
             args,
             cwd=str(workspace),

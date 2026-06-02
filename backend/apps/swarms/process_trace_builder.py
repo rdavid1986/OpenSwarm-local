@@ -1600,6 +1600,9 @@ def build_tdd_agent_process_trace_item(source: dict[str, Any]) -> dict[str, Any]
         "tdd_green_patch_candidate": "TDD green patch candidate",
         "tdd_refactor_contract": "TDD refactor contract",
         "tdd_evidence_report": "TDD evidence report",
+        "tdd_controlled_test_run_request": "TDD controlled test run request",
+        "tdd_controlled_test_run_result": "TDD controlled test run result",
+        "tdd_runtime_gate": "TDD runtime gate",
     }
     kind = "validation" if contract_kind in {"tdd_red_phase_contract", "tdd_evidence_report", "tdd_test_list_contract"} else "planning"
 
@@ -1647,6 +1650,18 @@ def build_tdd_agent_process_trace_item(source: dict[str, Any]) -> dict[str, Any]
             "diff_summary": data.get("diff_summary"),
             "regression_coverage": data.get("regression_coverage") if isinstance(data.get("regression_coverage"), list) else [],
             "evidence_status": evidence_status,
+            "execution_status": data.get("execution_status"),
+            "test_status": data.get("test_status"),
+            "exit_code": data.get("exit_code"),
+            "stdout": data.get("stdout"),
+            "stderr": data.get("stderr"),
+            "tool_error": data.get("tool_error"),
+            "red_confirmed": data.get("red_confirmed", False),
+            "green_confirmed": data.get("green_confirmed", False),
+            "refactor_confirmed": data.get("refactor_confirmed", False),
+            "gate_status": data.get("gate_status"),
+            "can_complete_tdd_cycle": data.get("can_complete_tdd_cycle", False),
+            "blockers": data.get("blockers") if isinstance(data.get("blockers"), list) else [],
             "required_actions": required_actions,
             "approval_required": approval_required,
             "policy_matrix_required": data.get("policy_matrix_required", True),

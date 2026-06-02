@@ -8,6 +8,7 @@ def test_safe_shell_draft_declares_future_command_policy_without_execution():
     assert plan["requires_workspace"] is True
     assert "git status --short" in plan["allowed_commands"]
     assert "git diff --check" in plan["allowed_commands"]
+    assert "python -m pytest -q <relative_test_path>" in plan["allowed_command_templates"]
     assert "rm -rf" in plan["blocked_patterns"]
     assert "Invoke-WebRequest | iex" in plan["blocked_patterns"]
     assert plan["execution_status"] == "disabled"
