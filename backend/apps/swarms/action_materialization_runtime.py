@@ -109,6 +109,15 @@ def _hash_payload(value: Any) -> str:
     return sha256(raw.encode("utf-8", errors="ignore")).hexdigest()
 
 
+def _content_text(value: Any, *, limit: int = 20000) -> str:
+    """Preserve file content exactly for approval resume matching."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value[:limit]
+    return str(value)[:limit]
+
+
 def _normalize_command(command: Any) -> dict[str, Any]:
     text = _text(command, limit=1000)
     lowered = text.lower()
@@ -132,6 +141,11 @@ def _normalize_file_operation(value: Any) -> dict[str, Any]:
     return {
         "path": path,
         "operation": operation,
+        "content": _content_text(raw.get("content"), limit=20000),
+        "old_text": _content_text(raw.get("old_text"), limit=20000),
+        "new_text": _content_text(raw.get("new_text"), limit=20000),
+        "proposed_content": _content_text(raw.get("proposed_content") if raw.get("proposed_content") is not None else raw.get("content"), limit=20000),
+        "replace_all": bool(raw.get("replace_all", False)),
         "diff_summary": _text(raw.get("diff_summary") or raw.get("summary"), limit=1000),
         "requires_approval": operation in WRITE_OPERATIONS,
         "can_write": False,
@@ -283,6 +297,222 @@ class ActionMaterializationDecision:
     can_write_memory: bool = False
     contains_private_reasoning: bool = False
 
+
+
+@dataclass(frozen=True)
+class ActionMaterializationExecutionRequest:
+    source_kind: str = "action_materialization_runtime"
+    materialization_kind: str = "action_materialization_execution_request"
+    materialization_version: str = ACTION_MATERIALIZATION_VERSION
+    candidate_id: str = ""
+    workspace_path: str = ""
+    approval_id: str = ""
+    policy_matrix_ref: str = ""
+    operations: list[dict[str, Any]] = field(default_factory=list)
+    commands: list[dict[str, Any]] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
+    can_execute: bool = False
+    can_write_files: bool = False
+    can_apply_patch: bool = False
+    can_execute_commands: bool = False
+    contains_private_reasoning: bool = False
+
+
+@dataclass(frozen=True)
+class ActionMaterializationExecutionResult:
+    source_kind: str = "action_materialization_runtime"
+    materialization_kind: str = "action_materialization_execution_result"
+    materialization_version: str = ACTION_MATERIALIZATION_VERSION
+    candidate_id: str = ""
+    execution_status: str = "blocked"
+    tool_results: list[dict[str, Any]] = field(default_factory=list)
+    changed_files: list[str] = field(default_factory=list)
+    command_outputs: list[dict[str, Any]] = field(default_factory=list)
+    evidence_refs: list[str] = field(default_factory=list)
+    blockers: list[str] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
+    rollback_plan: dict[str, Any] = field(default_factory=dict)
+    can_mark_executed: bool = False
+    can_execute: bool = False
+    can_write_files: bool = False
+    can_apply_patch: bool = False
+    can_execute_commands: bool = False
+    contains_private_reasoning: bool = False
+
+
+def build_action_materialization_execution_request(
+    decision: ActionMaterializationDecision | dict[str, Any],
+    *,
+    workspace_path: Any = "",
+    approval_id: Any = "",
+    policy_matrix_ref: Any = "",
+) -> ActionMaterializationExecutionRequest:
+    data = dump_action_materialization_contract(decision)
+    request = data.get("request") if isinstance(data.get("request"), dict) else {}
+    patch_plan = data.get("patch_plan") if isinstance(data.get("patch_plan"), dict) else {}
+    command_plan = data.get("command_plan") if isinstance(data.get("command_plan"), dict) else {}
+
+    operations = patch_plan.get("file_operations") if isinstance(patch_plan.get("file_operations"), list) else request.get("requested_operations", [])
+    commands = command_plan.get("commands") if isinstance(command_plan.get("commands"), list) else request.get("requested_commands", [])
+
+    required = ["review_action_materialization_execution_request"]
+    if not _text(workspace_path):
+        required.append("define_workspace_path")
+    if not _text(approval_id):
+        required.append("attach_approved_runtime_approval_id")
+    if not _text(policy_matrix_ref):
+        required.append("attach_policy_matrix_decision")
+    if data.get("decision") == "blocked":
+        required.append("resolve_materialization_blockers_before_execution")
+    if not operations and not commands:
+        required.append("define_operations_or_commands")
+
+    return ActionMaterializationExecutionRequest(
+        candidate_id=_text(data.get("candidate_id") or request.get("candidate_id"), limit=240),
+        workspace_path=_text(workspace_path, limit=1000),
+        approval_id=_text(approval_id, limit=240),
+        policy_matrix_ref=_text(policy_matrix_ref, limit=240),
+        operations=operations if isinstance(operations, list) else [],
+        commands=commands if isinstance(commands, list) else [],
+        required_actions=_dedupe_text(required),
+    )
+
+
+def _tool_input_for_operation(operation: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    op = _slug(operation.get("operation") or "patch")
+    path = _text(operation.get("path"), limit=600)
+    if op in {"write", "create"}:
+        content = _content_text(operation.get("content") if operation.get("content") is not None else operation.get("proposed_content"), limit=20000)
+        return "Write", {"path": path, "content": content}
+    if op in {"edit", "patch"}:
+        old_text = _content_text(operation.get("old_text"), limit=20000)
+        new_text = _content_text(operation.get("new_text"), limit=20000)
+        if not old_text:
+            proposed = _content_text(operation.get("proposed_content") if operation.get("proposed_content") is not None else operation.get("content"), limit=20000)
+            return "Diff", {"path": path, "proposed_content": proposed}
+        return "Edit", {"path": path, "old_text": old_text, "new_text": new_text, "replace_all": bool(operation.get("replace_all", False))}
+    if op == "diff":
+        proposed = _content_text(operation.get("proposed_content") if operation.get("proposed_content") is not None else operation.get("content"), limit=20000)
+        return "Diff", {"path": path, "proposed_content": proposed}
+    proposed = _content_text(operation.get("proposed_content") if operation.get("proposed_content") is not None else operation.get("content"), limit=20000)
+    return "Diff", {"path": path, "proposed_content": proposed}
+
+
+def _history_result_summary(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "tool": item.get("tool"),
+            "status": item.get("status"),
+            "ok": item.get("ok"),
+            "result": _safe(item.get("result") or {}),
+            "error": _text(item.get("error"), limit=1200),
+        }
+        for item in history
+    ]
+
+
+def execute_action_materialization_runtime(
+    decision: ActionMaterializationDecision | dict[str, Any],
+    *,
+    workspace_path: Any = "",
+    approval_id: Any = "",
+    policy_matrix_ref: Any = "",
+    swarm_id: Any = "",
+    agent_id: Any = "",
+    task_id: Any = "",
+    allowed_tools: list[Any] | None = None,
+) -> ActionMaterializationExecutionResult:
+    from backend.apps.agents.runtime.tools import ToolCall, ToolExecutionContext, tool_runtime
+
+    request = build_action_materialization_execution_request(
+        decision,
+        workspace_path=workspace_path,
+        approval_id=approval_id,
+        policy_matrix_ref=policy_matrix_ref,
+    )
+
+    hard_required = [
+        action for action in request.required_actions
+        if action not in {"review_action_materialization_execution_request"}
+    ]
+    if hard_required:
+        return ActionMaterializationExecutionResult(
+            candidate_id=request.candidate_id,
+            execution_status="blocked",
+            blockers=hard_required,
+            required_actions=request.required_actions,
+            rollback_plan=dump_action_materialization_contract(decision).get("rollback_plan", {}),
+        )
+
+    tool_names = [str(item) for item in (allowed_tools or ["Write", "Edit", "Diff", "SafeShell"])]
+    history: list[dict[str, Any]] = []
+    changed_files: list[str] = []
+    command_outputs: list[dict[str, Any]] = []
+    blockers: list[str] = []
+    required: list[str] = ["review_action_materialization_execution_result"]
+
+    def run_tool(tool_name: str, tool_input: dict[str, Any]) -> None:
+        nonlocal history
+        result = tool_runtime.execute_tool(
+            ToolCall(name=tool_name, input=tool_input, raw_name=tool_name),
+            ToolExecutionContext(
+                workspace_path=request.workspace_path,
+                session_id="action-materialization-runtime",
+                swarm_id=_text(swarm_id, "action-materialization", limit=240),
+                agent_id=_text(agent_id, "action-materializer", limit=240),
+                task_id=_text(task_id, request.candidate_id or "action-materialization", limit=240),
+                allowed_tools=tool_names,
+                require_human_approval=True,
+                metadata={
+                    "task_type": "action_materialization_runtime",
+                    "policy_resume_approved": True,
+                    "approval_id": request.approval_id,
+                    "resume_tool_input": tool_input,
+                    "policy_matrix_ref": request.policy_matrix_ref,
+                    "candidate_id": request.candidate_id,
+                },
+            ),
+            history=history,
+        )
+        if not result.ok:
+            blockers.append(f"{tool_name.lower()}_failed_or_not_approved")
+            required.append("review_failed_materialization_tool_result")
+
+    for operation in request.operations:
+        tool_name, tool_input = _tool_input_for_operation(operation if isinstance(operation, dict) else {})
+        run_tool(tool_name, tool_input)
+        path = _text(tool_input.get("path"), limit=600)
+        if path and tool_name in {"Write", "Edit"}:
+            changed_files.append(path)
+
+    for command in request.commands:
+        command_text = _text(command.get("command") if isinstance(command, dict) else command, limit=1000)
+        if not command_text:
+            continue
+        tool_input = {"command": command_text}
+        before = len(history)
+        run_tool("SafeShell", tool_input)
+        for item in history[before:]:
+            if item.get("tool") == "SafeShell":
+                command_outputs.append(_safe(item.get("result") or {}))
+
+    tool_results = _history_result_summary(history)
+    any_failed = any(not item.get("ok") for item in tool_results)
+    executed_any = bool(tool_results)
+    status = "executed" if executed_any and not any_failed and not blockers else "blocked"
+
+    return ActionMaterializationExecutionResult(
+        candidate_id=request.candidate_id,
+        execution_status=status,
+        tool_results=tool_results,
+        changed_files=_dedupe_text(changed_files),
+        command_outputs=command_outputs,
+        evidence_refs=["tool_runtime_evidence", "ProcessTrace"] if status == "executed" else [],
+        blockers=_dedupe_text(blockers),
+        required_actions=_dedupe_text(required),
+        rollback_plan=dump_action_materialization_contract(decision).get("rollback_plan", {}),
+        can_mark_executed=status == "executed",
+    )
 
 def dump_action_materialization_contract(value: Any) -> dict[str, Any]:
     return _safe(value)

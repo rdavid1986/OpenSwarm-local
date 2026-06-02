@@ -1517,6 +1517,8 @@ def build_action_materialization_process_trace_item(source: dict[str, Any]) -> d
         "action_materialization_evidence_plan": "Action materialization evidence plan",
         "action_rollback_plan": "Action rollback plan",
         "action_materialization_decision": "Action materialization decision",
+        "action_materialization_execution_request": "Action materialization execution request",
+        "action_materialization_execution_result": "Action materialization execution result",
     }
     kind = "action" if contract_kind in {"action_materialization_request", "action_materialization_decision"} else "validation"
 
@@ -1564,6 +1566,11 @@ def build_action_materialization_process_trace_item(source: dict[str, Any]) -> d
             "command_plan": data.get("command_plan") if isinstance(data.get("command_plan"), dict) else {},
             "evidence_plan": data.get("evidence_plan") if isinstance(data.get("evidence_plan"), dict) else {},
             "rollback_plan_detail": data.get("rollback_plan") if isinstance(data.get("rollback_plan"), dict) else {},
+            "execution_status": data.get("execution_status"),
+            "tool_results": data.get("tool_results") if isinstance(data.get("tool_results"), list) else [],
+            "changed_files": data.get("changed_files") if isinstance(data.get("changed_files"), list) else [],
+            "command_outputs": data.get("command_outputs") if isinstance(data.get("command_outputs"), list) else [],
+            "can_mark_executed": data.get("can_mark_executed", False),
             "approval_required": data.get("approval_required", True),
             "policy_matrix_required": data.get("policy_matrix_required", True),
             "safeshell_required": data.get("safeshell_required", True),
