@@ -454,6 +454,97 @@ function TraceGatePill({ label, value }: { label: string; value: unknown }) {
   );
 }
 
+
+function E2EHierarchyRail({ details, conditions }: { details: Record<string, unknown>; conditions: Record<string, unknown> }) {
+  const c = useClaudeTokens();
+  const materializationGate = nestedRecord(getDetailValue(details, 'materialization_gate'));
+  const materializationConditions = nestedRecord(materializationGate.completion_conditions);
+  const stages = [
+    {
+      id: 'sdd',
+      label: 'SDD',
+      value: getDetailValue(details, 'sdd_status') || conditions.sdd_completion_ok,
+      description: 'Spec completion',
+    },
+    {
+      id: 'tdd',
+      label: 'TDD',
+      value: getDetailValue(details, 'tdd_status') || conditions.tdd_runtime_ok,
+      description: 'Red/green/refactor',
+    },
+    {
+      id: 'materialization',
+      label: 'Materialization',
+      value: getDetailValue(details, 'materialization_status') || conditions.materialization_safe_ok,
+      description: 'Approved file/tool change',
+    },
+    {
+      id: 'post-validation',
+      label: 'Post-validation',
+      value: getDetailValue(details, 'post_validation_status', 'validation_status') || materializationGate.post_validation_status || materializationConditions.post_validation_ok,
+      description: 'Validation after change',
+    },
+    {
+      id: 'rollback',
+      label: 'Rollback',
+      value: getDetailValue(details, 'rollback_status', 'rollback_ready') || materializationGate.rollback_status || materializationGate.rollback_ready || materializationConditions.rollback_ready,
+      description: 'Recovery path ready',
+    },
+    {
+      id: 'complete',
+      label: 'Change complete',
+      value: getDetailValue(details, 'can_mark_change_completed'),
+      description: 'Global close gate',
+    },
+  ];
+
+  return (
+    <Box sx={{ display: 'grid', gap: 0.55 }}>
+      <Typography sx={{ color: c.text.ghost, fontSize: '0.62rem', fontWeight: 850, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        SDD / TDD / Materialization hierarchy
+      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'stretch', gap: 0.45, minWidth: 0, overflowX: 'auto', pb: 0.15 }}>
+        {stages.map((stage, index) => {
+          const positive = isPositiveGateValue(stage.value);
+          const negative = isNegativeGateValue(stage.value);
+          const tone = positive ? c.status.success : negative ? c.status.warning : c.text.tertiary;
+          return (
+            <React.Fragment key={stage.id}>
+              <Box
+                title={`${stage.label}: ${gateValueLabel(stage.value)} · ${stage.description}`}
+                sx={{
+                  display: 'grid',
+                  gap: 0.2,
+                  minWidth: 118,
+                  flex: '0 0 auto',
+                  px: 0.65,
+                  py: 0.55,
+                  borderRadius: 1.1,
+                  border: `1px solid ${tone}${positive || negative ? '66' : '33'}`,
+                  bgcolor: `${tone}${positive || negative ? '13' : '08'}`,
+                }}
+              >
+                <Typography noWrap sx={{ color: tone, fontSize: '0.64rem', fontWeight: 900 }}>
+                  {index + 1}. {stage.label}
+                </Typography>
+                <Typography noWrap sx={{ color: c.text.secondary, fontSize: '0.6rem', maxWidth: 130 }}>
+                  {gateValueLabel(stage.value)}
+                </Typography>
+                <Typography noWrap sx={{ color: c.text.ghost, fontSize: '0.56rem', maxWidth: 130 }}>
+                  {stage.description}
+                </Typography>
+              </Box>
+              {index < stages.length - 1 && (
+                <Box sx={{ alignSelf: 'center', width: 14, height: 1, flex: '0 0 auto', bgcolor: c.border.subtle }} />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </Box>
+    </Box>
+  );
+}
+
 function E2EGateSummaryCard({ item }: { item: ProcessTraceItem }) {
   const c = useClaudeTokens();
   const details = item.details || {};
@@ -481,6 +572,8 @@ function E2EGateSummaryCard({ item }: { item: ProcessTraceItem }) {
           {traceText(getDetailValue(details, 'gate_status', 'summary_status'), 'missing')}
         </Typography>
       </Box>
+
+      <E2EHierarchyRail details={details} conditions={conditions} />
 
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.45 }}>
         <TraceGatePill label="SDD" value={getDetailValue(details, 'sdd_status') || conditions.sdd_completion_ok} />
