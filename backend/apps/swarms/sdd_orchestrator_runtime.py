@@ -937,6 +937,237 @@ def build_sdd_runtime_9_12_sequence(
     )
     return [implementation, verification, evidence, delegation]
 
+
+@dataclass(frozen=True)
+class SddSpecDriftReport:
+    source_kind: str = "sdd_orchestrator_runtime"
+    sdd_contract_kind: str = "sdd_spec_drift_report"
+    sdd_version: str = SDD_ORCHESTRATOR_VERSION
+    candidate_id: str = ""
+    previous_spec_hash: str = ""
+    current_spec_hash: str = ""
+    drift_status: str = "unknown"
+    drift_severity: str = "medium"
+    changed_requirements: list[str] = field(default_factory=list)
+    changed_acceptance_criteria: list[str] = field(default_factory=list)
+    changed_design_refs: list[str] = field(default_factory=list)
+    affected_files: list[str] = field(default_factory=list)
+    return_stage: str = "spec_writer"
+    change_control_decision: str = "requires_review"
+    blockers: list[str] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
+    approval_required: bool = True
+    policy_matrix_required: bool = True
+    can_continue_without_spec_update: bool = False
+    can_execute: bool = False
+    can_write_files: bool = False
+    can_apply_patch: bool = False
+    can_execute_commands: bool = False
+    can_write_memory: bool = False
+    contains_private_reasoning: bool = False
+
+
+@dataclass(frozen=True)
+class SddCompletionGate:
+    source_kind: str = "sdd_orchestrator_runtime"
+    sdd_contract_kind: str = "sdd_completion_gate"
+    sdd_version: str = SDD_ORCHESTRATOR_VERSION
+    candidate_id: str = ""
+    gate_status: str = "blocked"
+    verification_status: str = "missing"
+    evidence_status: str = "missing"
+    materialization_status: str = "missing"
+    drift_status: str = "unknown"
+    completion_conditions: dict[str, bool] = field(default_factory=dict)
+    required_evidence: list[str] = field(default_factory=list)
+    blockers: list[str] = field(default_factory=list)
+    required_actions: list[str] = field(default_factory=list)
+    can_mark_completed: bool = False
+    can_execute: bool = False
+    can_write_files: bool = False
+    can_apply_patch: bool = False
+    can_execute_commands: bool = False
+    can_write_memory: bool = False
+    contains_private_reasoning: bool = False
+
+
+def build_sdd_spec_drift_report(
+    *,
+    candidate_id: Any = "",
+    previous_spec_hash: Any = "",
+    current_spec_hash: Any = "",
+    changed_requirements: list[Any] | None = None,
+    changed_acceptance_criteria: list[Any] | None = None,
+    changed_design_refs: list[Any] | None = None,
+    affected_files: list[Any] | None = None,
+) -> SddSpecDriftReport:
+    previous = _text(previous_spec_hash, limit=240)
+    current = _text(current_spec_hash, limit=240)
+    req_changes = _dedupe(_as_list(changed_requirements))
+    criteria_changes = _dedupe(_as_list(changed_acceptance_criteria))
+    design_changes = _dedupe(_as_list(changed_design_refs))
+    files = _dedupe(_as_list(affected_files))
+
+    blockers: list[str] = []
+    required: list[str] = ["review_sdd_spec_drift_report"]
+
+    if not previous or not current:
+        drift_status = "unknown"
+        severity = "medium"
+        blockers.append("missing_spec_hash")
+        required.append("attach_previous_and_current_spec_hash")
+        return_stage = "spec_writer"
+        decision = "requires_review"
+        can_continue = False
+    else:
+        drift_detected = previous != current or bool(req_changes or criteria_changes or design_changes)
+        if drift_detected:
+            drift_status = "drift_detected"
+            severity = "high" if req_changes or criteria_changes else "medium"
+            blockers.append("spec_drift_detected")
+            required.append("return_to_specwriter_or_designer")
+            return_stage = "spec_writer" if req_changes or criteria_changes else "designer"
+            decision = "return_to_design_or_spec"
+            can_continue = False
+        else:
+            drift_status = "no_drift"
+            severity = "low"
+            return_stage = "none"
+            decision = "continue"
+            can_continue = True
+
+    return SddSpecDriftReport(
+        candidate_id=_text(candidate_id, limit=240),
+        previous_spec_hash=previous,
+        current_spec_hash=current,
+        drift_status=drift_status,
+        drift_severity=severity,
+        changed_requirements=req_changes,
+        changed_acceptance_criteria=criteria_changes,
+        changed_design_refs=design_changes,
+        affected_files=files,
+        return_stage=return_stage,
+        change_control_decision=decision,
+        blockers=_dedupe(blockers),
+        required_actions=_dedupe(required if blockers else []),
+        approval_required=bool(blockers),
+        can_continue_without_spec_update=can_continue,
+    )
+
+
+def _contract_dict(value: Any) -> dict[str, Any]:
+    safe = _safe(value)
+    return safe if isinstance(safe, dict) else {}
+
+
+def build_sdd_completion_gate(
+    *,
+    candidate_id: Any = "",
+    verification_report: Any = None,
+    evidence_trace: Any = None,
+    materialization_decision: Any = None,
+    drift_report: Any = None,
+) -> SddCompletionGate:
+    verification = _contract_dict(verification_report)
+    evidence = _contract_dict(evidence_trace)
+    materialization = _contract_dict(materialization_decision)
+    drift = _contract_dict(drift_report)
+
+    verification_blockers = _as_list(verification.get("blockers"))
+    verification_ok = bool(verification.get("can_mark_verified") is True and not verification_blockers)
+
+    evidence_quality = _text(evidence.get("evidence_quality"), "missing").lower()
+    evidence_ok = bool(
+        evidence_quality in {"sufficient", "strong"}
+        and evidence.get("evidence_refs")
+        and evidence.get("validation_refs")
+        and evidence.get("materialization_refs")
+        and evidence.get("process_trace_refs")
+        and evidence.get("changed_files")
+    )
+
+    materialization_status = _text(
+        materialization.get("execution_status")
+        or materialization.get("status")
+        or materialization.get("decision"),
+        "missing",
+    ).lower()
+    materialization_ok = materialization_status in {"executed", "completed", "succeeded", "success", "evidence_attached"}
+
+    drift_status = _text(drift.get("drift_status"), "unknown").lower()
+    drift_ok = drift_status in {"no_drift", "accepted_drift", "approved_drift"}
+
+    conditions = {
+        "verification_ok": verification_ok,
+        "evidence_ok": evidence_ok,
+        "materialization_ok": materialization_ok,
+        "drift_ok": drift_ok,
+        "no_verification_blockers": not bool(verification_blockers),
+    }
+
+    blockers: list[str] = []
+    required: list[str] = []
+
+    if not verification_ok:
+        blockers.append("verification_not_confirmed")
+        required.append("attach_verified_sdd_verification_report")
+    if not evidence_ok:
+        blockers.append("evidence_insufficient")
+        required.append("attach_complete_sdd_evidence_trace")
+    if not materialization_ok:
+        blockers.append("materialization_not_confirmed")
+        required.append("attach_materialization_execution_evidence")
+    if not drift_ok:
+        blockers.append("spec_drift_not_cleared")
+        required.append("clear_or_approve_spec_drift")
+
+    can_complete = all(conditions.values()) and not blockers
+    gate_status = "completed" if can_complete else "blocked"
+
+    return SddCompletionGate(
+        candidate_id=_text(candidate_id or verification.get("candidate_id") or evidence.get("candidate_id"), limit=240),
+        gate_status=gate_status,
+        verification_status="verified" if verification_ok else "missing",
+        evidence_status=evidence_quality,
+        materialization_status=materialization_status,
+        drift_status=drift_status,
+        completion_conditions=conditions,
+        required_evidence=[
+            "verified_sdd_verification_report",
+            "sufficient_sdd_evidence_trace",
+            "materialization_execution_evidence",
+            "no_unapproved_spec_drift",
+            "ProcessTrace",
+        ],
+        blockers=_dedupe(blockers),
+        required_actions=_dedupe(required),
+        can_mark_completed=can_complete,
+    )
+
+
+def build_sdd_runtime_15_16_sequence(
+    *,
+    candidate_id: Any = "",
+    previous_spec_hash: Any = "",
+    current_spec_hash: Any = "",
+    verification_report: Any = None,
+    evidence_trace: Any = None,
+    materialization_decision: Any = None,
+) -> list[Any]:
+    drift = build_sdd_spec_drift_report(
+        candidate_id=candidate_id,
+        previous_spec_hash=previous_spec_hash,
+        current_spec_hash=current_spec_hash,
+    )
+    completion = build_sdd_completion_gate(
+        candidate_id=candidate_id,
+        verification_report=verification_report,
+        evidence_trace=evidence_trace,
+        materialization_decision=materialization_decision,
+        drift_report=drift,
+    )
+    return [drift, completion]
+
 def build_sdd_contract_sequence(
     *,
     objective: Any = "",
