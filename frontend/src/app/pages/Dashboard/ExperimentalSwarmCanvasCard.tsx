@@ -690,6 +690,93 @@ function getClaimGuardStatus(finalResult: any): string {
 }
 
 
+
+type RuntimeApprovalUxKind = 'rollback' | 'post_validation' | 'materialization' | 'tool';
+
+function compactRuntimeApprovalValue(value: any, fallback = 'not provided', limit = 220): string {
+  if (value == null) return fallback;
+  if (typeof value === 'string') return renderText(value, fallback, limit);
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return renderText(JSON.stringify(value), fallback, limit);
+  } catch {
+    return renderText(value, fallback, limit);
+  }
+}
+
+function approvalTextHaystack(approval: any): string {
+  const metadata = approval?.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
+  const toolInput = approval?.tool_input && typeof approval.tool_input === 'object' ? approval.tool_input : {};
+  return [
+    approval?.id,
+    approval?.approval_id,
+    approval?.status,
+    approval?.tool_name,
+    approval?.reason,
+    approval?.task_id,
+    approval?.agent_id,
+    metadata.task_type,
+    metadata.action_type,
+    metadata.materialization_kind,
+    metadata.candidate_id,
+    metadata.policy_matrix_ref,
+    toolInput.command,
+    toolInput.path,
+    toolInput.file_path,
+  ].map((item) => renderText(item, '', 260).toLowerCase()).join(' ');
+}
+
+function classifyRuntimeApprovalKind(approval: any): RuntimeApprovalUxKind {
+  const haystack = approvalTextHaystack(approval);
+  if (haystack.includes('rollback')) return 'rollback';
+  if (haystack.includes('post_validation') || haystack.includes('post-validation') || haystack.includes('post validation')) return 'post_validation';
+  if (haystack.includes('materialization') || haystack.includes('write') || haystack.includes('edit') || haystack.includes('safeshell')) return 'materialization';
+  return 'tool';
+}
+
+function runtimeApprovalKindLabel(kind: RuntimeApprovalUxKind): string {
+  if (kind === 'rollback') return 'Rollback approval';
+  if (kind === 'post_validation') return 'Post-validation approval';
+  if (kind === 'materialization') return 'Materialization approval';
+  return 'Tool approval';
+}
+
+function runtimeApprovalKindTone(kind: RuntimeApprovalUxKind, c: any): string {
+  if (kind === 'rollback') return c.status.warning;
+  if (kind === 'post_validation') return c.status.info;
+  if (kind === 'materialization') return c.accent.primary;
+  return c.text.tertiary;
+}
+
+function buildRuntimeApprovalUxModel(approval: any) {
+  const metadata = approval?.metadata && typeof approval.metadata === 'object' ? approval.metadata : {};
+  const toolInput = approval?.tool_input && typeof approval.tool_input === 'object' ? approval.tool_input : {};
+  const kind = classifyRuntimeApprovalKind(approval);
+  const toolName = renderText(approval?.tool_name || approval?.tool || 'Tool', 'Tool', 80);
+  const taskType = renderText(metadata.task_type || approval?.task_type || 'runtime approval', 'runtime approval', 90);
+  const policyRef = renderText(metadata.policy_matrix_ref || metadata.policy_ref || approval?.policy_matrix_ref || '', '', 90);
+  const candidateId = renderText(metadata.candidate_id || toolInput.candidate_id || approval?.candidate_id || '', '', 90);
+  const preview = compactRuntimeApprovalValue(
+    toolInput.command || toolInput.path || toolInput.file_path || toolInput.query || toolInput,
+    'no tool input preview',
+    260,
+  );
+
+  return {
+    kind,
+    label: runtimeApprovalKindLabel(kind),
+    toolName,
+    taskType,
+    policyRef,
+    candidateId,
+    preview,
+    isMaterializationFlow: kind !== 'tool',
+    allowLabel: kind === 'rollback' ? 'Approve rollback' : kind === 'post_validation' ? 'Approve validation' : 'Allow',
+    denyLabel: kind === 'rollback' ? 'Deny rollback' : kind === 'post_validation' ? 'Deny validation' : 'Deny',
+    resumeLabel: kind === 'rollback' ? 'Resume rollback' : kind === 'post_validation' ? 'Run validation' : kind === 'materialization' ? 'Resume action' : 'Resume',
+  };
+}
+
 type SwarmFinalAuditStatus = 'ready' | 'passed' | 'warning' | 'blocked' | 'failed' | 'unknown';
 
 type SwarmFinalAuditModel = {
@@ -3922,7 +4009,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             const approvalId = approval.id || approval.approval_id;
             const status = String(approval.status || '').toLowerCase();
             const canDecide = approvalId && ['pending', 'requested', 'requires_approval'].includes(status);
-            const canResume = approvalId && ['allowed', 'approved', 'denied'].includes(status);
+            const canResume = approvalId && ['allowed', 'approved'].includes(status);
+            const approvalUx = buildRuntimeApprovalUxModel(approval);
+            const approvalTone = runtimeApprovalKindTone(approvalUx.kind, c);
 
             return (
               <Box
@@ -3937,10 +4026,30 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               >
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.75 }}>
                   <Typography sx={{ fontSize: '0.78rem', fontWeight: 650, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {renderText(approval.tool_name, 'Tool approval')}
+                    {approvalUx.label}
                   </Typography>
-                  <Chip size="small" label={humanizeStatus(approval.status, 'pending')} sx={{ height: 20, fontSize: '0.68rem' }} />
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.45, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <Chip size="small" label={approvalUx.toolName} sx={{ height: 20, maxWidth: 160, fontSize: '0.64rem', color: approvalTone, bgcolor: `${approvalTone}14`, border: `1px solid ${approvalTone}44` }} />
+                    <Chip size="small" label={humanizeStatus(approval.status, 'pending')} sx={{ height: 20, fontSize: '0.68rem' }} />
+                  </Box>
                 </Box>
+
+
+                {approvalUx.isMaterializationFlow && (
+                  <Box sx={{ mb: 0.75, p: 0.75, borderRadius: 1.1, border: `1px solid ${approvalTone}33`, bgcolor: `${approvalTone}0D` }}>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.45, mb: 0.45 }}>
+                      <Chip size="small" label={approvalUx.taskType} sx={{ height: 19, maxWidth: 180, fontSize: '0.6rem', color: c.text.secondary, bgcolor: c.bg.secondary }} />
+                      {approvalUx.policyRef && <Chip size="small" label={`policy:${approvalUx.policyRef}`} sx={{ height: 19, maxWidth: 190, fontSize: '0.6rem', color: c.text.tertiary, bgcolor: c.bg.secondary }} />}
+                      {approvalUx.candidateId && <Chip size="small" label={`candidate:${approvalUx.candidateId}`} sx={{ height: 19, maxWidth: 190, fontSize: '0.6rem', color: c.text.tertiary, bgcolor: c.bg.secondary }} />}
+                    </Box>
+                    <Typography sx={{ color: c.text.secondary, fontSize: '0.68rem', lineHeight: 1.35, overflowWrap: 'anywhere' }}>
+                      Resume will still pass through PolicyRuntime using approval_id and exact resume_tool_input.
+                    </Typography>
+                    <Typography sx={{ mt: 0.35, color: c.text.ghost, fontSize: '0.65rem', lineHeight: 1.35, overflowWrap: 'anywhere' }}>
+                      {approvalUx.preview}
+                    </Typography>
+                  </Box>
+                )}
 
                 {approval.reason && (
                   <Typography sx={{ color: c.text.muted, fontSize: '0.72rem', mb: 0.75, lineHeight: 1.45 }}>
@@ -3959,7 +4068,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                           onClick={() => handleApprovalAction(approvalId, 'allow')}
                           sx={{ minHeight: 26, px: 1, py: 0.25, fontSize: '0.72rem', textTransform: 'none' }}
                         >
-                          Allow
+                          {approvalUx.allowLabel}
                         </Button>
                         <Button
                           size="small"
@@ -3968,7 +4077,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                           onClick={() => handleApprovalAction(approvalId, 'deny')}
                           sx={{ minHeight: 26, px: 1, py: 0.25, fontSize: '0.72rem', textTransform: 'none' }}
                         >
-                          Deny
+                          {approvalUx.denyLabel}
                         </Button>
                       </>
                     )}
@@ -3980,7 +4089,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                         onClick={() => handleApprovalAction(approvalId, 'resume')}
                         sx={{ minHeight: 26, px: 1, py: 0.25, fontSize: '0.72rem', textTransform: 'none' }}
                       >
-                        Resume
+                        {approvalUx.resumeLabel}
                       </Button>
                     )}
                   </Box>
