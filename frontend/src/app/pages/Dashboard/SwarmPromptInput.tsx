@@ -7,7 +7,7 @@ import InputBase from '@mui/material/InputBase';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
-import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
+import StopIcon from '@mui/icons-material/Stop';
 import AdsClickOutlinedIcon from '@mui/icons-material/AdsClickOutlined';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import MicNoneIcon from '@mui/icons-material/MicNone';
@@ -78,6 +78,8 @@ interface Props {
   onModeChange: (mode: SwarmMode) => void;
   loading?: boolean;
   disabled?: boolean;
+  canStop?: boolean;
+  onStop?: () => void;
   canContinue?: boolean;
   customIntakeMode?: boolean;
   embedded?: boolean;
@@ -100,6 +102,8 @@ const SwarmPromptInput: React.FC<Props> = ({
   onModeChange,
   loading = false,
   disabled = false,
+  canStop = false,
+  onStop,
   canContinue = false,
   customIntakeMode = false,
   embedded = false,
@@ -130,7 +134,9 @@ const SwarmPromptInput: React.FC<Props> = ({
   const selectedModel = model || modelLabel || '';
   const selectedElements = elementSelection?.elementsByOwner?.[composerOwnerId] ?? [];
   const voiceState = useMemo(() => createDisabledVoiceState(), []);
+  const stopAvailable = loading && canStop && Boolean(onStop);
   const submitDisabled = disabled || loading || (!value.trim() && !canContinue);
+  const actionButtonDisabled = stopAvailable ? false : submitDisabled;
   const placeholder = placeholderOverride || (customIntakeMode ? 'Escribí tu respuesta personalizada…' : modeOption.placeholder);
   const contextRefs = useMemo(() => (
     [
@@ -182,7 +188,7 @@ const SwarmPromptInput: React.FC<Props> = ({
     selected_ui_elements: selectionRefs,
     voice: voiceState,
     can_submit: !submitDisabled,
-    can_stop: false,
+    can_stop: stopAvailable,
     pending_action_capability: 'disabled',
     evidence_refs: [],
     trace_refs: [],
@@ -295,18 +301,18 @@ const SwarmPromptInput: React.FC<Props> = ({
       sx={{
         maxWidth: embedded ? '100%' : 860,
         mx: embedded ? 0 : 'auto',
+        position: 'relative',
         border: `1px solid ${c.border.subtle}`,
         borderRadius: '16px',
         bgcolor: c.bg.surface,
-        boxShadow: embedded ? 'none' : c.shadow.md,
+        boxShadow: c.shadow.md,
         transition: 'border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease',
-        position: 'relative',
       }}
       data-composer-surface={unifiedComposerState.source_surface}
       data-composer-owner-id={unifiedComposerState.owner_id}
     >
       <CommandPicker trigger={picker.trigger} filter={picker.filter} visible={picker.open} surface="swarm" onSelect={handlePickerSelect} onClose={() => setPicker((p) => ({ ...p, open: false }))} />
-      <Box onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} sx={{ px: 1.5, pt: 1.25, pb: 0.25 }}>
+      <Box onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} sx={{ px: 1.5, pt: embedded ? 1.25 : 1.25, pb: 0.25, position: 'relative' }}>
         <InputBase
           multiline
           fullWidth
@@ -343,6 +349,14 @@ const SwarmPromptInput: React.FC<Props> = ({
           <Box sx={{ flexShrink: 0 }}><SwarmModePicker mode={mode} onChange={onModeChange} disabled={disabled || loading} /></Box>
           {selectedModel && (
             <Box sx={{ minWidth: 0, flex: '1 1 auto', overflow: 'hidden' }}><ModelPicker model={selectedModel} onModelChange={(nextModel) => onModelChange?.(nextModel)} disabled={disabled || loading || !onModelChange} compact /></Box>
+          )}
+          {contextEstimate && (
+            <ContextRing
+              used={contextEstimate.used}
+              limit={contextEstimate.limit}
+              accentColor={c.accent.primary}
+              trackColor={c.border.subtle}
+            />
           )}
           <Tooltip title={isSelectingForThisSwarm ? 'Exit select mode' : 'Select UI element for this Swarm'}>
             <span>
@@ -402,36 +416,32 @@ const SwarmPromptInput: React.FC<Props> = ({
         <Box sx={{ flex: '0 0 8px' }} />
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0, flexWrap: 'nowrap' }}>
-          {contextEstimate && <ContextRing used={contextEstimate.used} limit={contextEstimate.limit} accentColor={c.accent.primary} trackColor={c.border.subtle} />}
-          <Typography sx={{ color: c.text.tertiary, fontSize: '0.72rem', display: { xs: 'none', sm: 'block' } }}>
-            Shift+Enter
-          </Typography>
           <IconButton
+            data-send-button-style="blue-circle"
             size="small"
-            onClick={handleSubmit}
-            disabled={submitDisabled}
+            onClick={stopAvailable ? onStop : handleSubmit}
+            disabled={actionButtonDisabled}
             sx={{
-              bgcolor: c.accent.primary,
-              color: c.text.inverse,
-              p: 0.5,
-              width: 26,
-              height: 26,
-              '&:hover': { bgcolor: c.accent.hover },
-              '&.Mui-disabled': { bgcolor: c.bg.secondary, color: c.text.ghost },
+              bgcolor: stopAvailable ? c.status.error : '#0A84FF',
+              color: '#FFFFFF',
+              p: 0,
+              width: 32,
+              height: 32,
+              borderRadius: '999px',
+              boxShadow: stopAvailable ? 'none' : '0 0 0 1px rgba(255,255,255,0.05)',
+              '&:hover': {
+                bgcolor: stopAvailable ? c.status.error : '#0077E6',
+                opacity: stopAvailable ? 0.85 : 1,
+              },
+              '&.Mui-disabled': {
+                bgcolor: 'rgba(255,255,255,0.08)',
+                color: 'rgba(255,255,255,0.28)',
+                boxShadow: 'none',
+              },
+              transition: c.transition,
             }}
           >
-            {loading ? (
-              <HourglassEmptyIcon
-                sx={{
-                  fontSize: 16,
-                  animation: 'swarmComposerHourglassClockwise 1.1s linear infinite',
-                  '@keyframes swarmComposerHourglassClockwise': {
-                    '0%': { transform: 'rotate(0deg)' },
-                    '100%': { transform: 'rotate(360deg)' },
-                  },
-                }}
-              />
-            ) : <ArrowUpwardIcon sx={{ fontSize: 16 }} />}
+            {stopAvailable ? <StopIcon sx={{ fontSize: 16 }} /> : <ArrowUpwardIcon sx={{ fontSize: 18 }} />}
           </IconButton>
         </Box>
       </Box>

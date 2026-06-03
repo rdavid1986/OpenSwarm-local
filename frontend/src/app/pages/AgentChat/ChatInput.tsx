@@ -29,11 +29,6 @@ import CircularProgress from '@mui/material/CircularProgress';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import AdsClickIcon from '@mui/icons-material/AdsClick';
 import CommandPicker, { CommandPickerItem, getToolGroupIcon } from '@/app/components/CommandPicker';
-import ComposerContextPreview from '@/app/components/ComposerContextPreview';
-import ChatDebugContextView from '@/app/components/ChatDebugContextView';
-import ProjectMemoryContextPanel from '@/app/components/ProjectMemoryContextPanel';
-import PromptSkillAuthoringPanel from '@/app/components/PromptSkillAuthoringPanel';
-import ComposerResearchSourceControl from '@/app/components/ComposerResearchSourceControl';
 import ModelPicker from '@/app/components/ModelPicker';
 import { SlashCommandPreview, buildSlashCommandPreview, type SlashCommandPreviewModel } from '@/app/pages/Dashboard/SlashCommandPalette';
 import { useElementSelection, SelectedElement } from '@/app/components/ElementSelectionContext';
@@ -130,7 +125,6 @@ interface Props {
   embedded?: boolean;
   autoFocus?: boolean;
   sessionId?: string;
-  queueLength?: number;
   thinkingLevel?: 'off' | 'low' | 'medium' | 'high' | 'auto';
   onThinkingLevelChange?: (level: 'off' | 'low' | 'medium' | 'high' | 'auto') => void;
 }
@@ -256,7 +250,7 @@ function sortModelsForPicker<T extends { label: string }>(models: T[]): T[] {
   });
 }
 
-const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, onModeChange, model, onModelChange, provider, onProviderChange, isRunning, onStop, autoRunMode, contextEstimate, embedded, autoFocus, sessionId, queueLength = 0, thinkingLevel = 'auto', onThinkingLevelChange }, ref) => {
+const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, onModeChange, model, onModelChange, provider, onProviderChange, isRunning, onStop, autoRunMode, contextEstimate, embedded, autoFocus, sessionId, thinkingLevel = 'auto', onThinkingLevelChange }, ref) => {
   const c = useClaudeTokens();
   const editorRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1204,21 +1198,6 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
       )}
 
       <SlashCommandPreview preview={slashPreview} />
-      <ComposerContextPreview state={unifiedComposerState} compact />
-      <ChatDebugContextView title="Composer debug" state={unifiedComposerState} compact />
-      <ProjectMemoryContextPanel state={unifiedComposerState} compact />
-      <PromptSkillAuthoringPanel title="Composer authoring" state={unifiedComposerState} compact />
-      <ComposerResearchSourceControl
-        sources={researchSources}
-        visible={showResearchSources}
-        onToggleSource={(id) => {
-          setResearchOverrides((prev) => {
-            const source = researchSources.find((item) => item.id === id);
-            if (!source || source.state === 'disabled' || source.state === 'not_configured' || source.state === 'unsupported') return prev;
-            return { ...prev, [id]: source.state === 'selected' ? 'available' : 'selected' };
-          });
-        }}
-      />
 
       <Box sx={{ px: 1.5, pt: hasAttachments ? 0.5 : 1.25, pb: 0.25, position: 'relative' }}>
         <div
@@ -1267,7 +1246,7 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
               userSelect: 'none',
             }}
           >
-            {disabled ? 'Agent is working...' : autoRunMode ? 'Describe what data to generate…' : isRunning ? (queueLength > 0 ? `${queueLength} queued — type another or wait…` : 'Agent is working — messages will queue…') : `${modeConf.label}, / commands, # context, @ tools`}
+            {disabled ? 'Agent is working...' : autoRunMode ? 'Describe what data to generate…' : isRunning ? 'Agent is working — stop or wait…' : `${modeConf.label}, / commands, # context, @ tools`}
           </div>
         )}
       </Box>
@@ -1517,64 +1496,56 @@ const ChatInput = forwardRef<ChatInputHandle, Props>(({ onSend, disabled, mode, 
             <AttachFileIcon sx={{ fontSize: 18 }} />
           </IconButton>
         </Tooltip>
+        <Tooltip title="Tools/actions selection only; no execution or MCP activation">
+          <span>
+            <IconButton
+              size="small"
+              disabled={disabled}
+              onClick={() => setPicker((p) => ({ ...p, visible: !(p.visible && p.trigger === '@'), trigger: '@', filter: '' }))}
+              sx={{
+                color: c.text.tertiary,
+                p: 0.5,
+                '&:hover': { color: c.text.secondary, bgcolor: 'rgba(0,0,0,0.04)' },
+                '&.Mui-disabled': { color: c.text.ghost },
+              }}
+            >
+              <TuneOutlinedIcon sx={{ fontSize: 18 }} />
+            </IconButton>
+          </span>
+        </Tooltip>
         {!autoRunMode && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            {hasContent && (
-              <Tooltip title={isRunning ? 'Queue message' : 'Send message'}>
+            <Tooltip title={isRunning ? 'Stop agent' : hasContent ? 'Send message' : 'Write a message to send'}>
+              <span>
                 <IconButton
+                  data-send-button-style="blue-circle"
                   size="small"
-                  onClick={handleSend}
-                  disabled={disabled}
+                  onClick={isRunning ? onStop : handleSend}
+                  disabled={isRunning ? !onStop : disabled || !hasContent}
                   sx={{
-                    bgcolor: c.accent.primary,
-                    color: c.text.inverse,
-                    p: 0.5,
-                    width: 26,
-                    height: 26,
-                    '&:hover': { bgcolor: c.accent.hover },
-                    '&.Mui-disabled': { bgcolor: c.bg.secondary, color: c.text.ghost },
+                    bgcolor: isRunning ? c.status.error : '#0A84FF',
+                    color: '#FFFFFF',
+                    p: 0,
+                    width: 32,
+                    height: 32,
+                    borderRadius: '999px',
+                    boxShadow: isRunning ? 'none' : '0 0 0 1px rgba(255,255,255,0.05)',
+                    '&:hover': {
+                      bgcolor: isRunning ? c.status.error : '#0077E6',
+                      opacity: isRunning ? 0.85 : 1,
+                    },
+                    '&.Mui-disabled': {
+                      bgcolor: 'rgba(255,255,255,0.08)',
+                      color: 'rgba(255,255,255,0.28)',
+                      boxShadow: 'none',
+                    },
                     transition: c.transition,
                   }}
                 >
-                  <ArrowUpwardIcon sx={{ fontSize: 16 }} />
+                  {isRunning ? <StopIcon sx={{ fontSize: 16 }} /> : <ArrowUpwardIcon sx={{ fontSize: 18 }} />}
                 </IconButton>
-              </Tooltip>
-            )}
-            {isRunning ? (
-              <Tooltip title="Stop agent">
-                <IconButton
-                  size="small"
-                  onClick={onStop}
-                  sx={{
-                    bgcolor: c.status.error,
-                    color: c.text.inverse,
-                    p: 0.5,
-                    width: 26,
-                    height: 26,
-                    '&:hover': { bgcolor: c.status.error, opacity: 0.85 },
-                    transition: c.transition,
-                  }}
-                >
-                  <StopIcon sx={{ fontSize: 16 }} />
-                </IconButton>
-              </Tooltip>
-            ) : !hasContent ? (
-              <Tooltip title={voiceState.disabled_reason?.message || 'Voice input disabled'}>
-                <span>
-                  <IconButton
-                    size="small"
-                    disabled
-                    sx={{
-                      color: c.text.tertiary,
-                      p: 0.5,
-                      '&.Mui-disabled': { color: c.text.ghost },
-                    }}
-                  >
-                    <MicNoneOutlinedIcon sx={{ fontSize: 18 }} />
-                  </IconButton>
-                </span>
-              </Tooltip>
-            ) : null}
+              </span>
+            </Tooltip>
           </Box>
         )}
       </Box>

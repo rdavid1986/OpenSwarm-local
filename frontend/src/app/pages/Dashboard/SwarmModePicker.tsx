@@ -53,7 +53,7 @@ const FALLBACK_SWARM_MODE_OPTIONS: SwarmModeOption[] = [
     shortDescription: 'Chat normal; no inicia intake.',
     placeholder: 'Ask Swarm…',
     color: '#3b82f6',
-    icon: <ChatBubbleOutlineIcon sx={{ fontSize: 16 }} />,
+    icon: <ChatBubbleOutlineIcon sx={{ fontSize: 14 }} />,
   },
   {
     id: 'plan',
@@ -61,7 +61,7 @@ const FALLBACK_SWARM_MODE_OPTIONS: SwarmModeOption[] = [
     shortDescription: 'Plan liviano, sin implementación.',
     placeholder: 'Describe qué querés planificar…',
     color: '#8b5cf6',
-    icon: <FactCheckOutlinedIcon sx={{ fontSize: 16 }} />,
+    icon: <FactCheckOutlinedIcon sx={{ fontSize: 14 }} />,
   },
   {
     id: 'app_builder',
@@ -69,7 +69,7 @@ const FALLBACK_SWARM_MODE_OPTIONS: SwarmModeOption[] = [
     shortDescription: 'Inicia el intake actual de app.',
     placeholder: 'Describe la app que querés construir…',
     color: '#10b981',
-    icon: <AppsOutlinedIcon sx={{ fontSize: 16 }} />,
+    icon: <AppsOutlinedIcon sx={{ fontSize: 14 }} />,
   },
   {
     id: 'skill_builder',
@@ -77,7 +77,7 @@ const FALLBACK_SWARM_MODE_OPTIONS: SwarmModeOption[] = [
     shortDescription: 'Borrador de skill; sin AgentManager.',
     placeholder: 'Describe la skill o agente que querés diseñar…',
     color: '#f59e0b',
-    icon: <ExtensionOutlinedIcon sx={{ fontSize: 16 }} />,
+    icon: <ExtensionOutlinedIcon sx={{ fontSize: 14 }} />,
   },
   {
     id: 'debug',
@@ -85,12 +85,12 @@ const FALLBACK_SWARM_MODE_OPTIONS: SwarmModeOption[] = [
     shortDescription: 'Diagnóstico orientado a estado/logs.',
     placeholder: 'Describe el error o síntoma a diagnosticar…',
     color: '#ef4444',
-    icon: <BugReportOutlinedIcon sx={{ fontSize: 16 }} />,
+    icon: <BugReportOutlinedIcon sx={{ fontSize: 14 }} />,
   },
 ];
 
 function modeIcon(icon?: string | null): React.ReactNode {
-  const sx = { fontSize: 16 };
+  const sx = { fontSize: 14 };
   switch (icon) {
     case 'map':
       return <FactCheckOutlinedIcon sx={sx} />;
@@ -177,19 +177,31 @@ const SwarmModePicker: React.FC<Props> = ({ mode, onChange, disabled = false }) 
         onClick={(event) => setAnchorEl(event.currentTarget)}
         disabled={disabled}
         startIcon={selected.icon}
-        endIcon={<ExpandMoreIcon sx={{ fontSize: 16 }} />}
+        endIcon={<ExpandMoreIcon sx={{ fontSize: 14 }} />}
+        data-swarm-mode-picker-style="agent-like"
         sx={{
-          minHeight: 28,
+          minWidth: 'auto',
+          minHeight: 'auto',
+          height: 'auto',
           px: 1,
-          py: 0.25,
-          borderRadius: 999,
+          py: 0.375,
+          gap: 0.5,
+          borderRadius: '999px',
           color: selected.color,
           bgcolor: `${selected.color}14`,
-          border: `1px solid ${selected.color}44`,
+          border: 'none',
           textTransform: 'none',
-          fontSize: '0.74rem',
-          fontWeight: 650,
+          fontSize: '0.82rem',
+          fontWeight: 600,
+          lineHeight: 1,
+          cursor: disabled ? 'default' : 'pointer',
+          userSelect: 'none',
+          transition: 'background 0.15s',
           '&:hover': { bgcolor: `${selected.color}22` },
+          '& .MuiButton-startIcon': { m: 0, mr: 0 },
+          '& .MuiButton-endIcon': { m: 0, ml: 0 },
+          '& .MuiButton-startIcon svg': { fontSize: 14 },
+          '& .MuiButton-endIcon svg': { fontSize: 14, opacity: 0.7 },
         }}
       >
         {selected.label}

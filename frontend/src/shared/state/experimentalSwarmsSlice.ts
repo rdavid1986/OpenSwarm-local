@@ -132,6 +132,17 @@ export const startExperimentalImplementation = createAsyncThunk(
   },
 );
 
+export const cancelExperimentalSwarm = createAsyncThunk(
+  'experimentalSwarms/cancel',
+  async ({ swarmId }: { swarmId: string }) => {
+    const res = await fetch(`${SWARMS_API}/${swarmId}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    return await readJson(res);
+  },
+);
+
 export const createOutputBridgeFromSwarm = createAsyncThunk(
   'experimentalSwarms/createOutputBridge',
   async ({ swarmId, name, description }: { swarmId: string; name?: string; description?: string }) => {
@@ -292,8 +303,15 @@ const experimentalSwarmsSlice = createSlice({
         state.approvals = action.payload.approvals.approvals || [];
         state.pendingCount = action.payload.approvals.pending_count || 0;
       })
+      .addCase(chatExperimentalSwarm.pending, (state, action) => {
+        state.actionLoading = true;
+        state.error = null;
+        if (action.meta.arg.swarmId) state.selectedSwarmId = action.meta.arg.swarmId;
+      })
       .addCase(chatExperimentalSwarm.fulfilled, (state, action) => {
         if (action.meta.arg.swarmId && state.selectedSwarmId && state.selectedSwarmId !== action.meta.arg.swarmId) return;
+        state.actionLoading = false;
+        state.error = null;
         state.selectedSwarmId = action.meta.arg.swarmId;
         state.swarm = action.payload;
         state.events = action.payload.events || [];
@@ -301,6 +319,10 @@ const experimentalSwarmsSlice = createSlice({
         state.messages = action.payload.messages || [];
         state.approvals = action.payload.experimental_approvals || [];
         state.pendingCount = (action.payload.experimental_approvals || []).filter((approval: any) => approval.status === 'pending').length;
+      })
+      .addCase(chatExperimentalSwarm.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.error.message || 'Failed to chat with experimental swarm';
       })
       .addCase(startExperimentalImplementation.fulfilled, (state, action) => {
         const payload = action.payload || {};
@@ -319,6 +341,33 @@ const experimentalSwarmsSlice = createSlice({
         if (Array.isArray(payload.artifacts)) {
           state.artifacts = payload.artifacts;
         }
+      })
+      .addCase(cancelExperimentalSwarm.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(cancelExperimentalSwarm.fulfilled, (state, action) => {
+        const payload = action.payload || {};
+        state.actionLoading = false;
+        state.error = null;
+        state.swarm = mergeSwarmPreservingImplementation(state.swarm, payload);
+        if (Array.isArray(payload.messages)) {
+          state.messages = payload.messages;
+        }
+        if (Array.isArray(payload.events)) {
+          state.events = payload.events;
+        }
+        if (Array.isArray(payload.artifacts)) {
+          state.artifacts = payload.artifacts;
+        }
+        if (Array.isArray(payload.experimental_approvals)) {
+          state.approvals = payload.experimental_approvals;
+          state.pendingCount = payload.experimental_approvals.filter((approval: any) => approval.status === 'pending').length;
+        }
+      })
+      .addCase(cancelExperimentalSwarm.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.error.message || 'Failed to cancel experimental swarm';
       })
       .addCase(updateOrchestrationNodePosition.fulfilled, (state, action) => {
         state.swarm = action.payload;

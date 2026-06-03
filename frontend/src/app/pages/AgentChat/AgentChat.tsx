@@ -39,7 +39,6 @@ import ApprovalBar, { BatchApprovalBar } from './ApprovalBar';
 import ChatInput, { ChatInputHandle } from './ChatInput';
 import ContextDrawer from './ContextDrawer';
 import { ErrorSlime } from '@/app/components/ErrorSlime';
-import TaskQueuePanel from '@/app/components/TaskQueuePanel';
 import LongRunningTaskMonitor from '@/app/components/LongRunningTaskMonitor';
 import ChatDebugContextView from '@/app/components/ChatDebugContextView';
 import ProjectMemoryContextPanel from '@/app/components/ProjectMemoryContextPanel';
@@ -202,14 +201,6 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
 
   const wsRef = useRef<ReturnType<typeof createSessionWs> | null>(null);
   const initialContextApplied = useRef(false);
-  const messageQueueRef = useRef<QueuedMessage[]>([]);
-  const [queueLength, setQueueLength] = useState(0);
-  const [queueExpanded, setQueueExpanded] = useState(false);
-  const [editingQueueIdx, setEditingQueueIdx] = useState<number | null>(null);
-  const [editingQueueText, setEditingQueueText] = useState('');
-  const [dragIdx, setDragIdx] = useState<number | null>(null);
-  const [dropTargetIdx, setDropTargetIdx] = useState<number | null>(null);
-
   const isDraft = session?.status === 'draft';
 
   useEffect(() => {
@@ -305,7 +296,6 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
     const prev = prevStatusRef.current;
     const curr = session?.status;
     prevStatusRef.current = curr;
-    let didDispatchQueued = false;
 
     const wasActive = prev === 'running' || prev === 'waiting_approval';
     const isTerminal = curr === 'completed' || curr === 'stopped' || curr === 'error';
@@ -316,15 +306,8 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
         setTimeout(() => dispatch(clearGlowingBrowserCards(id)), 2800);
       }
 
-      const nextQueued = messageQueueRef.current.shift();
-      if (nextQueued) {
-        setQueueLength(messageQueueRef.current.length);
-        dispatchMessage(nextQueued);
-        didDispatchQueued = true;
-      } else {
-        if (curr === 'stopped') {
-          setShowResumeBubble(true);
-        }
+      if (curr === 'stopped') {
+        setShowResumeBubble(true);
       }
 
       const currentMode = modesMap[mode];
@@ -338,10 +321,10 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
     if (curr === 'running') {
       setShowResumeBubble(false);
     }
-    if (curr !== 'draft' && !didDispatchQueued) {
+    if (curr !== 'draft') {
       setAwaitingResponse(false);
     }
-  }, [session?.status, mode, modesMap, id, isDraft, dispatch, dispatchMessage]);
+  }, [session?.status, mode, modesMap, id, isDraft, dispatch]);
 
   // Idle reconcile: if the session has been 'running' for 5s with no
   // WebSocket activity (no new messages, no streaming updates), do a
@@ -448,11 +431,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
     // the response. Force-scroll to bottom regardless of isAtBottomRef.
     scrollToBottom();
     const msg: QueuedMessage = { prompt, images, contextPaths, forcedTools, attachedSkills, selectedBrowserIds };
-    if (agentBusy) {
-      messageQueueRef.current.push(msg);
-      setQueueLength(messageQueueRef.current.length);
-      return;
-    }
+    if (agentBusy) return;
     dispatchMessage(msg);
   };
 
@@ -612,45 +591,6 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
   }, [activeBranchMessages, session?.system_prompt, session?.streamingMessage?.content, model, modelsByProvider]);
 
   const sessionRunning = session?.status === 'running' || session?.status === 'waiting_approval';
-
-  const queuedTaskItems = useMemo(() => messageQueueRef.current.map((msg, idx) => ({
-    id: `queued-${idx}-${msg.prompt.slice(0, 24)}`,
-    prompt: msg.prompt,
-    status: 'queued' as const,
-    meta: [
-      msg.contextPaths?.length ? `${msg.contextPaths.length} context` : null,
-      msg.images?.length ? `${msg.images.length} images` : null,
-      msg.forcedTools?.length ? `${msg.forcedTools.length} tools` : null,
-      msg.attachedSkills?.length ? `${msg.attachedSkills.length} skills` : null,
-    ].filter(Boolean).join(' / '),
-  })), [queueLength]);
-
-  const clearQueuedMessages = useCallback(() => {
-    messageQueueRef.current = [];
-    setQueueLength(0);
-    setQueueExpanded(false);
-    setEditingQueueIdx(null);
-  }, []);
-
-  const removeQueuedMessage = useCallback((idx: number) => {
-    messageQueueRef.current.splice(idx, 1);
-    setQueueLength(messageQueueRef.current.length);
-    if (messageQueueRef.current.length === 0) setQueueExpanded(false);
-  }, []);
-
-  const editQueuedMessage = useCallback((idx: number, prompt: string) => {
-    if (!messageQueueRef.current[idx]) return;
-    messageQueueRef.current[idx] = { ...messageQueueRef.current[idx], prompt };
-    setQueueLength(messageQueueRef.current.length);
-  }, []);
-
-  const moveQueuedMessage = useCallback((fromIdx: number, toIdx: number) => {
-    const queue = messageQueueRef.current;
-    if (fromIdx < 0 || toIdx < 0 || fromIdx >= queue.length || toIdx >= queue.length || fromIdx === toIdx) return;
-    const [item] = queue.splice(fromIdx, 1);
-    queue.splice(toIdx, 0, item);
-    setQueueLength(queue.length);
-  }, []);
 
   const latestAgentActivity = session?.turn_label?.label
     || (session?.streamingMessage?.role ? `Streaming ${session.streamingMessage.role}` : null)
@@ -1484,32 +1424,15 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
           </Box>
         ) : (
           <Box>
-            <TaskQueuePanel
-            items={queuedTaskItems}
-            expanded={queueExpanded}
-            onExpandedChange={setQueueExpanded}
-            editingIndex={editingQueueIdx}
-            editingText={editingQueueText}
-            onEditingIndexChange={setEditingQueueIdx}
-            onEditingTextChange={setEditingQueueText}
-            dragIndex={dragIdx}
-            dropTargetIndex={dropTargetIdx}
-            onDragIndexChange={setDragIdx}
-            onDropTargetIndexChange={setDropTargetIdx}
-            onClear={clearQueuedMessages}
-            onRemove={removeQueuedMessage}
-            onEdit={editQueuedMessage}
-            onMove={moveQueuedMessage}
-          />
           <LongRunningTaskMonitor
-            visible={agentBusy || queueLength > 0}
+            visible={agentBusy}
             title="Chat task monitor"
             status={session?.status === 'waiting_approval' ? 'waiting_approval' : agentBusy ? 'running' : 'idle'}
             surfaceLabel="AgentChat"
             sessionId={id}
             mode={mode}
             model={model}
-            queueCount={queueLength}
+            queueCount={0}
             pendingApprovalsCount={session?.pending_approvals?.length || 0}
             traceCount={Object.keys(session?.tool_group_meta || {}).length}
             latestActivity={latestAgentActivity}
@@ -1524,7 +1447,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
               status: session.status,
               mode,
               model,
-              queueCount: queueLength,
+              queueCount: 0,
               pendingApprovalsCount: session.pending_approvals.length,
               traceCount: activeBranchMessages.filter((m: any) => m.process_trace_turn || m.process_trace_turn_container || m.trace_turn || m.turnTrace || m.traceItems || m.process_trace_items).length,
               evidenceCount: activeBranchMessages.filter((m: any) => m.evidence_refs || m.evidenceRefs || m.sources || m.citations).length,
@@ -1553,20 +1476,20 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
               mode,
               approvalsCount: session.pending_approvals.length,
               connectionState: session.connection_state || 'local_visible',
-              progressLabel: agentBusy ? 'running' : queueLength > 0 ? 'queued' : 'idle',
+              progressLabel: agentBusy ? 'running' : 'idle',
             }}
             compact
           />
           <ChatSurfaceAuditPanel
             snapshot={{
               surfaceLabel: 'AgentChat',
-              actions: ['copy', 'edit user message', 'regenerate assistant response', 'branch chat', 'stop when running', 'queue edit/remove/reorder'],
+              actions: ['copy', 'edit user message', 'regenerate assistant response', 'branch chat', 'stop when running', 'stop when running'],
               disabledActions: ['pin without persistence handler', 'pause/convert without scheduler'],
               contextCount: 0,
               traceCount: activeBranchMessages.filter((m: any) => m.process_trace_turn || m.process_trace_turn_container || m.trace_turn || m.turnTrace || m.traceItems || m.process_trace_items).length,
               evidenceCount: activeBranchMessages.filter((m: any) => m.evidence_refs || m.evidenceRefs || m.sources || m.citations).length,
-              queueCount: queueLength,
-              monitorVisible: agentBusy || queueLength > 0,
+              queueCount: 0,
+              monitorVisible: agentBusy,
               accessibilityNotes: ['collapsed panels use labelled toggles', 'disabled actions explain missing handlers'],
               densityNotes: ['compact chips', 'collapsed by default'],
               performanceNotes: ['no full prompt dumps', 'bounded refs and trace counts'],
@@ -1627,7 +1550,6 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                 onModelChange={handleModelChange}
                 isRunning={agentBusy}
                 onStop={handleStop}
-                queueLength={queueLength}
                 contextEstimate={contextEstimate}
                 sessionId={id}
                 autoFocus={autoFocus}

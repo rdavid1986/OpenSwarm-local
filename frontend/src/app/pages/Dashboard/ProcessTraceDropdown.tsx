@@ -7,7 +7,6 @@ import Typography from '@mui/material/Typography';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
-import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import PauseCircleOutlineIcon from '@mui/icons-material/PauseCircleOutline';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
@@ -46,6 +45,8 @@ import {
   getTemporalStatusLabel,
   isTemporalDurationSlow,
 } from './temporalDisplay';
+
+const SWARM_VSCODE_BLUE = '#007ACC';
 
 export type ProcessTraceStatus =
   | 'planned'
@@ -120,6 +121,7 @@ type ProcessTraceDropdownProps = {
   compact?: boolean;
   showRawDetails?: boolean;
   bare?: boolean;
+  summaryOnly?: boolean;
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -396,7 +398,7 @@ function isRuntimeE2ETraceItem(item: ProcessTraceItem): boolean {
     || getDetailValue(details, 'can_mark_runtime_e2e_complete', 'can_start_runtime_e2e') !== undefined;
 }
 
-function RuntimeE2EIntegrationCard({ item }: { item: ProcessTraceItem }) {
+function RuntimeE2EIntegrationCard({ item, summaryOnly = false }: { item: ProcessTraceItem; summaryOnly?: boolean }) {
   const c = useClaudeTokens();
   const details = item.details || {};
   const conditions = nestedRecord(getDetailValue(details, 'completion_conditions'));
@@ -404,6 +406,7 @@ function RuntimeE2EIntegrationCard({ item }: { item: ProcessTraceItem }) {
   const required = getDetailValue(details, 'required_actions');
   const refs = getDetailValue(details, 'process_trace_refs');
   const stage = traceText(getDetailValue(details, 'stage'), 'blocked').replace(/_/g, ' ');
+  const [runtimeE2EDetailsOpen, setRuntimeE2EDetailsOpen] = useState(false);
   const stages = [
     { id: 'request', label: 'Request', value: Boolean(conditions.request_has_candidate && conditions.request_has_workspace && conditions.request_has_policy && conditions.request_has_approval), description: 'candidate/workspace/policy/approval' },
     { id: 'sdd', label: 'SDD', value: conditions.sdd_ok, description: 'spec completion gate' },
@@ -414,6 +417,87 @@ function RuntimeE2EIntegrationCard({ item }: { item: ProcessTraceItem }) {
     { id: 'safe', label: 'Safe', value: conditions.materialization_safe, description: 'materialization safe gate' },
     { id: 'complete', label: 'E2E complete', value: conditions.e2e_ok || getDetailValue(details, 'can_mark_runtime_e2e_complete'), description: 'global runtime close' },
   ];
+
+  if (summaryOnly) {
+    return (
+      <Box
+        sx={{
+          display: 'grid',
+          gap: 0.55,
+          p: 0.75,
+          borderRadius: 1.25,
+          border: `1px solid ${SWARM_VSCODE_BLUE}55`,
+          bgcolor: `${SWARM_VSCODE_BLUE}0F`,
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, minWidth: 0 }}>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography sx={{ color: c.text.secondary, fontSize: '0.72rem', fontWeight: 850, letterSpacing: '0.02em' }}>
+              Runtime E2E integration
+            </Typography>
+            <Typography sx={{ color: c.text.ghost, fontSize: '0.61rem', mt: 0.15 }}>
+              Estado: {stage}
+            </Typography>
+          </Box>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => setRuntimeE2EDetailsOpen((value) => !value)}
+            sx={{ minHeight: 22, px: 0.7, py: 0.1, fontSize: '0.61rem', textTransform: 'none', flexShrink: 0, color: SWARM_VSCODE_BLUE, borderColor: `${SWARM_VSCODE_BLUE}66`, bgcolor: `${SWARM_VSCODE_BLUE}10` }}
+          >
+            {runtimeE2EDetailsOpen ? 'Ocultar gates' : 'Ver gates'}
+          </Button>
+        </Box>
+
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.4 }}>
+          <TraceGatePill label="Can start" value={getDetailValue(details, 'can_start_runtime_e2e')} />
+          <TraceGatePill label="Can complete" value={getDetailValue(details, 'can_mark_runtime_e2e_complete')} />
+          <TraceGatePill label="Stage" value={getDetailValue(details, 'stage')} />
+        </Box>
+
+        {(blockers || required) && (
+          <Box sx={{ display: 'grid', gap: 0.18, minWidth: 0 }}>
+            {blockers && <Typography sx={{ color: SWARM_VSCODE_BLUE, fontSize: '0.61rem', overflowWrap: 'anywhere' }}>Falta: {compactTraceList(blockers, 2)}</Typography>}
+            {required && <Typography sx={{ color: c.text.ghost, fontSize: '0.61rem', overflowWrap: 'anywhere' }}>Acción: {compactTraceList(required, 2)}</Typography>}
+          </Box>
+        )}
+
+        <Collapse in={runtimeE2EDetailsOpen} timeout={140}>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'stretch', gap: 0.35, minWidth: 0, maxWidth: '100%', overflow: 'hidden', pt: 0.35 }}>
+            {stages.map((stageItem, index) => {
+              const positive = isPositiveGateValue(stageItem.value);
+              const negative = isNegativeGateValue(stageItem.value);
+              const tone = positive ? SWARM_VSCODE_BLUE : negative ? SWARM_VSCODE_BLUE : c.text.tertiary;
+              return (
+                <Box
+                  key={stageItem.id}
+                  title={`${stageItem.label}: ${gateValueLabel(stageItem.value)} · ${stageItem.description}`}
+                  sx={{
+                    display: 'grid',
+                    gap: 0.15,
+                    minWidth: 0,
+                    flex: '1 1 78px',
+                    px: 0.45,
+                    py: 0.45,
+                    borderRadius: 1,
+                    border: `1px solid ${tone}${positive || negative ? '55' : '26'}`,
+                    bgcolor: `${tone}${positive || negative ? '10' : '06'}`,
+                  }}
+                >
+                  <Typography noWrap sx={{ color: tone, fontSize: '0.58rem', fontWeight: 850 }}>
+                    {index + 1}. {stageItem.label}
+                  </Typography>
+                  <Typography noWrap sx={{ color: c.text.secondary, fontSize: '0.55rem' }}>
+                    {gateValueLabel(stageItem.value)}
+                  </Typography>
+                </Box>
+              );
+            })}
+          </Box>
+        </Collapse>
+      </Box>
+    );
+  }
 
   return (
     <Box
@@ -435,11 +519,11 @@ function RuntimeE2EIntegrationCard({ item }: { item: ProcessTraceItem }) {
         </Typography>
       </Box>
 
-      <Box sx={{ display: 'flex', alignItems: 'stretch', gap: 0.45, minWidth: 0, overflowX: 'auto', pb: 0.15 }}>
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'stretch', gap: 0.35, minWidth: 0, maxWidth: '100%', overflow: 'hidden', pb: 0.05 }}>
         {stages.map((stageItem, index) => {
           const positive = isPositiveGateValue(stageItem.value);
           const negative = isNegativeGateValue(stageItem.value);
-          const tone = positive ? c.status.success : negative ? c.status.warning : c.text.tertiary;
+          const tone = positive ? SWARM_VSCODE_BLUE : negative ? SWARM_VSCODE_BLUE : c.text.tertiary;
           return (
             <React.Fragment key={stageItem.id}>
               <Box
@@ -447,9 +531,9 @@ function RuntimeE2EIntegrationCard({ item }: { item: ProcessTraceItem }) {
                 sx={{
                   display: 'grid',
                   gap: 0.2,
-                  minWidth: 124,
-                  flex: '0 0 auto',
-                  px: 0.65,
+                  minWidth: 0,
+                  flex: '1 1 82px',
+                  px: 0.5,
                   py: 0.55,
                   borderRadius: 1.1,
                   border: `1px solid ${tone}${positive || negative ? '66' : '33'}`,
@@ -466,9 +550,6 @@ function RuntimeE2EIntegrationCard({ item }: { item: ProcessTraceItem }) {
                   {stageItem.description}
                 </Typography>
               </Box>
-              {index < stages.length - 1 && (
-                <Box sx={{ alignSelf: 'center', width: 14, height: 1, flex: '0 0 auto', bgcolor: c.border.subtle }} />
-              )}
             </React.Fragment>
           );
         })}
@@ -480,11 +561,10 @@ function RuntimeE2EIntegrationCard({ item }: { item: ProcessTraceItem }) {
         <TraceGatePill label="Stage" value={getDetailValue(details, 'stage')} />
       </Box>
 
-      {(refs || blockers || required) && (
-        <Box sx={{ display: 'grid', gap: 0.25 }}>
-          {refs && <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem' }}>ProcessTrace refs: {compactTraceList(refs, 4)}</Typography>}
-          {blockers && <Typography sx={{ color: c.status.warning, fontSize: '0.66rem' }}>Blockers: {compactTraceList(blockers, 4)}</Typography>}
-          {required && <Typography sx={{ color: c.text.ghost, fontSize: '0.66rem' }}>Required: {compactTraceList(required, 4)}</Typography>}
+      {(blockers || required) && (
+        <Box sx={{ display: 'grid', gap: 0.22, minWidth: 0 }}>
+          {blockers && <Typography sx={{ color: SWARM_VSCODE_BLUE, fontSize: '0.62rem', overflowWrap: 'anywhere' }}>Falta: {compactTraceList(blockers, 2)}</Typography>}
+          {required && <Typography sx={{ color: c.text.ghost, fontSize: '0.62rem', overflowWrap: 'anywhere' }}>Acción: {compactTraceList(required, 2)}</Typography>}
         </Box>
       )}
     </Box>
@@ -534,7 +614,7 @@ function TraceGatePill({ label, value }: { label: string; value: unknown }) {
   const c = useClaudeTokens();
   const positive = isPositiveGateValue(value);
   const negative = isNegativeGateValue(value);
-  const color = positive ? c.status.success : negative ? c.status.warning : c.text.tertiary;
+  const color = positive ? c.status.success : negative ? SWARM_VSCODE_BLUE : c.text.tertiary;
   return (
     <Box
       title={`${label}: ${gateValueLabel(value)}`}
@@ -609,11 +689,11 @@ function E2EHierarchyRail({ details, conditions }: { details: Record<string, unk
       <Typography sx={{ color: c.text.ghost, fontSize: '0.62rem', fontWeight: 850, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
         SDD / TDD / Materialization hierarchy
       </Typography>
-      <Box sx={{ display: 'flex', alignItems: 'stretch', gap: 0.45, minWidth: 0, overflowX: 'auto', pb: 0.15 }}>
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'stretch', gap: 0.35, minWidth: 0, overflow: 'hidden', pb: 0.05 }}>
         {stages.map((stage, index) => {
           const positive = isPositiveGateValue(stage.value);
           const negative = isNegativeGateValue(stage.value);
-          const tone = positive ? c.status.success : negative ? c.status.warning : c.text.tertiary;
+          const tone = positive ? c.status.success : negative ? SWARM_VSCODE_BLUE : c.text.tertiary;
           return (
             <React.Fragment key={stage.id}>
               <Box
@@ -621,8 +701,8 @@ function E2EHierarchyRail({ details, conditions }: { details: Record<string, unk
                 sx={{
                   display: 'grid',
                   gap: 0.2,
-                  minWidth: 118,
-                  flex: '0 0 auto',
+                  minWidth: 0,
+                  flex: '1 1 82px',
                   px: 0.65,
                   py: 0.55,
                   borderRadius: 1.1,
@@ -640,9 +720,6 @@ function E2EHierarchyRail({ details, conditions }: { details: Record<string, unk
                   {stage.description}
                 </Typography>
               </Box>
-              {index < stages.length - 1 && (
-                <Box sx={{ alignSelf: 'center', width: 14, height: 1, flex: '0 0 auto', bgcolor: c.border.subtle }} />
-              )}
             </React.Fragment>
           );
         })}
@@ -691,7 +768,7 @@ function E2EGateSummaryCard({ item }: { item: ProcessTraceItem }) {
       {(refs || blockers || required) && (
         <Box sx={{ display: 'grid', gap: 0.25 }}>
           {refs && <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem' }}>ProcessTrace refs: {compactTraceList(refs, 4)}</Typography>}
-          {blockers && <Typography sx={{ color: c.status.warning, fontSize: '0.66rem' }}>Blockers: {compactTraceList(blockers, 4)}</Typography>}
+          {blockers && <Typography sx={{ color: SWARM_VSCODE_BLUE, fontSize: '0.66rem' }}>Blockers: {compactTraceList(blockers, 4)}</Typography>}
           {required && <Typography sx={{ color: c.text.ghost, fontSize: '0.66rem' }}>Required: {compactTraceList(required, 4)}</Typography>}
         </Box>
       )}
@@ -737,7 +814,7 @@ function ActionMaterializationEvidenceCard({ item }: { item: ProcessTraceItem })
       {(changedFiles || blockers || required) && (
         <Box sx={{ display: 'grid', gap: 0.25 }}>
           {changedFiles && <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem' }}>Changed: {compactTraceList(changedFiles, 4)}</Typography>}
-          {blockers && <Typography sx={{ color: c.status.warning, fontSize: '0.66rem' }}>Blockers: {compactTraceList(blockers, 4)}</Typography>}
+          {blockers && <Typography sx={{ color: SWARM_VSCODE_BLUE, fontSize: '0.66rem' }}>Blockers: {compactTraceList(blockers, 4)}</Typography>}
           {required && <Typography sx={{ color: c.text.ghost, fontSize: '0.66rem' }}>Required: {compactTraceList(required, 4)}</Typography>}
         </Box>
       )}
@@ -898,11 +975,11 @@ function SddRoleFlowCard({ item }: { item: ProcessTraceItem }) {
                 px: 0.55,
                 py: 0.3,
                 borderRadius: 999,
-                border: `1px solid ${state.active ? c.status.info : c.border.subtle}`,
-                bgcolor: state.active ? `${c.status.info}18` : `${c.text.primary}08`,
+                border: `1px solid ${state.active ? SWARM_VSCODE_BLUE : c.border.subtle}`,
+                bgcolor: state.active ? `${SWARM_VSCODE_BLUE}18` : `${c.text.primary}08`,
               }}
             >
-              <Typography noWrap sx={{ color: state.active ? c.status.info : c.text.tertiary, fontSize: '0.62rem', fontWeight: 800 }}>
+              <Typography noWrap sx={{ color: state.active ? SWARM_VSCODE_BLUE : c.text.tertiary, fontSize: '0.62rem', fontWeight: 800 }}>
                 {role.label}
               </Typography>
               <Typography noWrap sx={{ color: c.text.ghost, fontSize: '0.58rem', maxWidth: 72 }}>
@@ -919,7 +996,7 @@ function SddRoleFlowCard({ item }: { item: ProcessTraceItem }) {
           {nextRole && <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem' }}>Next role: {nextRole}</Typography>}
           {evidenceQuality && <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem' }}>Evidence: {evidenceQuality}</Typography>}
           {materializationDecision && <Typography sx={{ color: c.text.tertiary, fontSize: '0.66rem' }}>Materialization: {materializationDecision}</Typography>}
-          {blockers && <Typography sx={{ color: c.status.warning, fontSize: '0.66rem' }}>Blockers: {compactTraceList(blockers, 4)}</Typography>}
+          {blockers && <Typography sx={{ color: SWARM_VSCODE_BLUE, fontSize: '0.66rem' }}>Blockers: {compactTraceList(blockers, 4)}</Typography>}
         </Box>
       )}
     </Box>
@@ -1350,20 +1427,7 @@ function StatusIcon({ status, color }: { status: ProcessTraceStatus; color: stri
   if (status === 'completed') return null;
   if (status === 'failed') return <ErrorOutlineIcon sx={sx} />;
   if (status === 'blocked' || status === 'warning') return <WarningAmberIcon sx={sx} />;
-  if (status === 'running') {
-    return (
-      <HourglassEmptyIcon
-        sx={{
-          ...sx,
-          animation: 'processTraceHourglassClockwise 1.1s linear infinite',
-          '@keyframes processTraceHourglassClockwise': {
-            '0%': { transform: 'rotate(0deg)' },
-            '100%': { transform: 'rotate(360deg)' },
-          },
-        }}
-      />
-    );
-  }
+  if (status === 'running') return null;
   if (status === 'cancelled' || status === 'skipped') return <PauseCircleOutlineIcon sx={sx} />;
   return <RadioButtonUncheckedIcon sx={sx} />;
 }
@@ -1528,6 +1592,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
   compact = false,
   showRawDetails = false,
   bare = false,
+  summaryOnly = false,
 }) => {
   const c = useClaudeTokens();
   const cardTokens = buildCardVisualTokens(c);
@@ -1535,6 +1600,11 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
   const [debugExpanded, setDebugExpanded] = useState(showRawDetails);
 
   const shouldHideTraceItem = item.internal_only || item.visible_to_user === false;
+
+
+  if (summaryOnly && isE2EGateTraceItem(item)) {
+    return <RuntimeE2EIntegrationCard item={item} summaryOnly />;
+  }
 
   const status = normalizeStatus(item.status);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -1563,7 +1633,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
   const statusColor = useMemo(() => {
     if (status === 'completed') return c.status.success;
     if (status === 'failed') return c.status.error;
-    if (status === 'blocked' || status === 'warning') return c.status.warning;
+    if (status === 'blocked' || status === 'warning') return SWARM_VSCODE_BLUE;
     if (status === 'running') return c.accent.primary;
     return c.text.tertiary;
   }, [c, status]);
@@ -1733,7 +1803,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
             <Typography
               noWrap
               sx={{
-                color: c.status.warning,
+                color: SWARM_VSCODE_BLUE,
                 fontSize: '0.68rem',
                 fontWeight: 700,
                 mt: 0.35,
@@ -1746,7 +1816,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
             <Typography
               noWrap
               sx={{
-                color: c.status.warning,
+                color: SWARM_VSCODE_BLUE,
                 fontSize: '0.68rem',
                 fontWeight: 700,
                 mt: 0.35,
@@ -1809,7 +1879,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
             bgcolor: cardTokens.trace.expandedBackground,
           }}
         >
-          {!isDebugJsonTrace && (
+          {!summaryOnly && !isDebugJsonTrace && (
             <Typography
               sx={{
                 color: c.text.secondary,
@@ -1826,7 +1896,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
 
           {!isDebugJsonTrace && <RichTraceSections item={item} />}
 
-          {isDebugJsonTrace && hasDebugDetails && (
+          {!summaryOnly && isDebugJsonTrace && hasDebugDetails && (
             <Typography
               component="pre"
               sx={{
@@ -1848,7 +1918,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
             </Typography>
           )}
 
-          {!isDebugJsonTrace && detailRows.length > 0 && (
+          {!summaryOnly && !isDebugJsonTrace && detailRows.length > 0 && (
             <Box sx={{ display: 'grid', gap: 0.45 }}>
               {detailRows.map(([label, value]) => (
                 <Box
@@ -1883,9 +1953,9 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
             </Box>
           )}
 
-          {!isDebugJsonTrace && <TemporalDebugPanel item={item} temporal={temporal} />}
+          {!summaryOnly && !isDebugJsonTrace && <TemporalDebugPanel item={item} temporal={temporal} />}
 
-          {!isDebugJsonTrace && (detailRows.length > 0 || summary) && (
+          {!summaryOnly && !isDebugJsonTrace && (detailRows.length > 0 || summary) && (
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 0.85 }}>
               <Box
                 component="button"
@@ -1915,7 +1985,7 @@ export const ProcessTraceDropdown: React.FC<ProcessTraceDropdownProps> = ({
             </Box>
           )}
 
-          {!isDebugJsonTrace && hasDebugDetails && (
+          {!summaryOnly && !isDebugJsonTrace && hasDebugDetails && (
             <Box sx={{ mt: detailRows.length > 0 ? 0.9 : 0 }}>
               <Box
                 component="button"
@@ -2036,7 +2106,7 @@ export const ProcessTraceTurnDropdown: React.FC<ProcessTraceTurnDropdownProps> =
   const statusColor = useMemo(() => {
     if (normalizedStatus === 'completed') return c.status.success;
     if (normalizedStatus === 'failed') return c.status.error;
-    if (normalizedStatus === 'blocked' || normalizedStatus === 'warning') return c.status.warning;
+    if (normalizedStatus === 'blocked' || normalizedStatus === 'warning') return SWARM_VSCODE_BLUE;
     if (normalizedStatus === 'running') return c.accent.primary;
     return c.text.tertiary;
   }, [c, normalizedStatus]);
