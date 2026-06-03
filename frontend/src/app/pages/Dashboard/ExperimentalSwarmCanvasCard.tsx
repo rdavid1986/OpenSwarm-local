@@ -42,6 +42,7 @@ import { useAppDispatch, useAppSelector } from '@/shared/hooks';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import type { CardType } from './useDashboardSelection';
 import SwarmPromptInput from './SwarmPromptInput';
+import MessageActionBar from '@/app/pages/AgentChat/MessageActionBar';
 import { DEFAULT_SWARM_MODE, getSwarmModeOption } from './SwarmModePicker';
 import type { SwarmMode } from '@/shared/state/dashboardLayoutSlice';
 import type { UnifiedComposerSubmitPayload } from '@/shared/types/unifiedComposer';
@@ -2766,6 +2767,38 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     }
   }, [activeSwarm?.intent, activeSwarmId, activeSwarmModel, dashboardId, dispatch, ensureSkillWorkspace, lastSubmittedPrompt, onAddCandidatePreview, onSwarmBound, pendingPreviewRefinementDraft, prompt, swarmCardId]);
 
+  const handleEditSwarmUserMessage = useCallback((text: string) => {
+    const cleanText = text.trim();
+    if (!cleanText) return;
+    setPrompt(cleanText);
+    setCustomIntakeMode(false);
+    window.setTimeout(() => promptInputRef.current?.focus(), 0);
+  }, []);
+
+  const handleRegenerateSwarmAssistantMessage = useCallback(async (assistantIndex: number) => {
+    if (!activeSwarmId || swarmState.actionLoading) return;
+
+    const previousUserMessage = [...chatMessages.slice(0, assistantIndex)].reverse().find((candidate: any) => {
+      const candidateRole = getSwarmMessageRole(candidate);
+      return candidateRole === 'user' || candidateRole === 'human';
+    });
+    const previousUserText = previousUserMessage
+      ? getVisibleSwarmMessageText(getSwarmMessageText(previousUserMessage)).trim()
+      : '';
+
+    if (!previousUserText) return;
+
+    const requestedMode = getSwarmModeOption(activeSwarmModeRef.current).id;
+    setLastSubmittedPrompt(previousUserText);
+    await dispatch(chatExperimentalSwarm({
+      swarmId: activeSwarmId,
+      message: previousUserText,
+      swarmMode: requestedMode,
+      model: activeSwarmModel,
+    }));
+    dispatch(fetchExperimentalSwarm(activeSwarmId));
+  }, [activeSwarmId, activeSwarmModel, chatMessages, dispatch, swarmState.actionLoading]);
+
   useEffect(() => {
     const intakeStatus = (activeSwarm as any)?.project_intake_state?.status;
     const finalRoute = (activeSwarm as any)?.final_result?.route;
@@ -3444,6 +3477,15 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                     items: message.traceItems || message.process_trace_items,
                   } : null),
                 ) : null;
+                const previousUserMessage = !isUser
+                  ? [...chatMessages.slice(0, idx)].reverse().find((candidate: any) => {
+                      const candidateRole = getSwarmMessageRole(candidate);
+                      return candidateRole === 'user' || candidateRole === 'human';
+                    })
+                  : null;
+                const previousUserText = previousUserMessage
+                  ? getVisibleSwarmMessageText(getSwarmMessageText(previousUserMessage)).trim()
+                  : '';
 
                 return (
                   <Box
@@ -3460,6 +3502,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                       borderRadius: isUser ? 0.85 : 0,
                       px: isUser ? 1.5 : 0.5,
                       py: isUser ? 1.15 : 1.25,
+                      '&:hover .msg-actions': { opacity: 1 },
                     }}
                   >
                     {!isUser && (
@@ -3490,6 +3533,13 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                     </Typography>
                     <ChangeReviewPanel source={{ ...message, refinement_execution_trace: refinementExecutionTrace, targetOutputId: metadata.targetOutputId }} compact />
                     <SourceEvidencePanel message={message} compact />
+                    <MessageActionBar
+                      role={isUser ? 'user' : 'assistant'}
+                      onCopy={() => { void navigator.clipboard.writeText(body); }}
+                      onEdit={isUser ? () => handleEditSwarmUserMessage(body) : undefined}
+                      onRegenerate={!isUser && previousUserText ? () => { void handleRegenerateSwarmAssistantMessage(idx); } : undefined}
+                      showPreparedPin={false}
+                    />
                     {shouldShowIntakeTrace && (
                       <Box
                         sx={{

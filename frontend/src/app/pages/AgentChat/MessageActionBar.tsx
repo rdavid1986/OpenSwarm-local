@@ -27,6 +27,7 @@ interface Props {
   onRegenerate?: () => void;
   onBranch?: () => void;
   branchNav?: BranchNavProps;
+  showPreparedPin?: boolean;
 }
 
 const btnSx = (c: ReturnType<typeof useClaudeTokens>) => ({
@@ -43,6 +44,7 @@ const MessageActionBar: React.FC<Props> = ({
   onRegenerate,
   onBranch,
   branchNav,
+  showPreparedPin = true,
 }) => {
   const c = useClaudeTokens();
   const [copied, setCopied] = useState(false);
@@ -72,13 +74,15 @@ const MessageActionBar: React.FC<Props> = ({
     >
       {isUser ? (
         <>
-          <Tooltip title="Pin is prepared; no persistence handler is connected yet." arrow>
-            <span>
-              <IconButton size="small" disabled sx={btnSx(c)}>
-                <BookmarkBorderIcon sx={{ fontSize: 16 }} />
-              </IconButton>
-            </span>
-          </Tooltip>
+          {showPreparedPin && (
+            <Tooltip title="Pin is prepared; no persistence handler is connected yet." arrow>
+              <span>
+                <IconButton size="small" disabled sx={btnSx(c)}>
+                  <BookmarkBorderIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
           <Tooltip title={copied ? 'Copied!' : 'Copy'} arrow>
             <IconButton size="small" onClick={handleCopy} sx={btnSx(c)}>
               {copied ? <CheckIcon sx={{ fontSize: 16 }} /> : <ContentCopyIcon sx={{ fontSize: 16 }} />}
