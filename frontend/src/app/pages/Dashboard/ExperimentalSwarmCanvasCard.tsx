@@ -129,8 +129,6 @@ const MIN_W = 520;
 const MIN_H = 380;
 const EDGE_THICKNESS = 6;
 const CORNER_SIZE = 14;
-const MIN_SIDE_W = 220;
-const MAX_SIDE_W = 520;
 const DEFAULT_SWARM_CONTEXT_LIMIT = 32_000;
 
 const PREVIEW_REFINEMENT_MARKER = 'quiero refinar la app generada desde esta preview';
@@ -2089,7 +2087,6 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     ow: number;
     oh: number;
   } | null>(null);
-  const sideResizeRef = useRef<{ sx: number; ow: number } | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const startImplementationInFlightRef = useRef(false);
@@ -2102,8 +2099,6 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [localPos, setLocalPos] = useState<{ x: number; y: number } | null>(null);
   const [localSize, setLocalSize] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  const [sideWidth, setSideWidth] = useState(280);
-  const [localSideWidth, setLocalSideWidth] = useState<number | null>(null);
   const [prompt, setPrompt] = useState('');
   const [customIntakeMode, setCustomIntakeMode] = useState(false);
   const promptInputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
@@ -2112,6 +2107,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const [lastOutputBridgeOutputId, setLastOutputBridgeOutputId] = useState<string | null>(null);
   const [seenPreviewOutputId, setSeenPreviewOutputId] = useState<string | null>(previewOutputId || null);
   const [openMiniAgentInspectorIds, setOpenMiniAgentInspectorIds] = useState<Record<string, boolean>>({});
+  const [controlCenterOpen, setControlCenterOpen] = useState(false);
 
   const [openPanelSections, setOpenPanelSections] = useState<Record<string, boolean>>({
     tasks: false,
@@ -3086,11 +3082,6 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       const result = computeResize(e);
       if (result) setLocalSize(result);
     }
-
-    if (sideResizeRef.current) {
-      const next = sideResizeRef.current.ow - (e.clientX - sideResizeRef.current.sx) / zoom;
-      setLocalSideWidth(Math.max(MIN_SIDE_W, Math.min(MAX_SIDE_W, next)));
-    }
   }, [computeResize, onDragMove, zoom]);
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
@@ -3123,14 +3114,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       setLocalSize(null);
     }
 
-    if (sideResizeRef.current && localSideWidth != null) {
-      setSideWidth(localSideWidth);
-      sideResizeRef.current = null;
-      setLocalSideWidth(null);
-    }
-
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
-  }, [dispatch, localSideWidth, localSize, onDragEnd, onSwarmBound, swarmCardId, zoom]);
+  }, [dispatch, localSize, onDragEnd, onSwarmBound, swarmCardId, zoom]);
 
   const handleResizeDown = useCallback((dir: ResizeDir) => (e: React.PointerEvent) => {
     if (e.button !== 0) return;
@@ -3148,21 +3133,12 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   }, [cardX, cardY, cardWidth, cardHeight]);
 
-  const handleSideResizeDown = useCallback((e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    e.stopPropagation();
-    sideResizeRef.current = { sx: e.clientX, ow: localSideWidth ?? sideWidth };
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-  }, [localSideWidth, sideWidth]);
-
   const mdDx = isSelected && multiDragDelta ? multiDragDelta.dx : 0;
   const mdDy = isSelected && multiDragDelta ? multiDragDelta.dy : 0;
   const displayX = localSize?.x ?? localPos?.x ?? (cardX + mdDx);
   const displayY = localSize?.y ?? localPos?.y ?? (cardY + mdDy);
   const displayW = localSize?.w ?? cardWidth;
   const displayH = collapsed ? 64 : (localSize?.h ?? cardHeight);
-  const displaySideW = localSideWidth ?? sideWidth;
 
   const togglePanelSection = useCallback((section: string) => {
     setOpenPanelSections((prev) => ({ ...prev, [section]: !prev[section] }));
@@ -3379,7 +3355,11 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
 
         <IconButton
           size="small"
-          onClick={(e) => e.stopPropagation()}
+          aria-label="Open Swarm Control Center"
+          onClick={(e) => {
+            e.stopPropagation();
+            setControlCenterOpen(true);
+          }}
           onPointerDown={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
         >
@@ -3403,8 +3383,8 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
         sx={{
           flex: 1,
           overflow: 'hidden',
-          display: 'grid',
-          gridTemplateColumns: `minmax(0, 1fr) 8px ${displaySideW}px`,
+          display: 'flex',
+          flexDirection: 'column',
           borderTop: `1px solid ${cardTokens.polish.divider}`,
         }}
       >
@@ -4219,19 +4199,17 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
           </Box>
         </Box>
 
-        <Box
-          onPointerDown={handleSideResizeDown}
-          sx={{
-            width: 8,
-            ml: '-4px',
-            cursor: 'ew-resize',
-            zIndex: 20,
-            bgcolor: 'transparent',
-            '&:hover': { bgcolor: `${c.accent.primary}22` },
-          }}
-        />
-
-        <Box sx={{ borderLeft: `1px solid ${cardTokens.surface.border}`, bgcolor: cardTokens.surface.background, overflow: 'auto', p: cardTokens.density.sidebarPadding }}>
+        <Dialog
+          open={controlCenterOpen}
+          onClose={() => setControlCenterOpen(false)}
+          maxWidth="lg"
+          fullWidth
+        >
+          <DialogTitle sx={{ fontSize: '0.95rem', fontWeight: 850 }}>
+            Swarm Control Center
+          </DialogTitle>
+          <DialogContent dividers sx={{ bgcolor: cardTokens.surface.bodyBackground }}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
           <Typography sx={{ color: c.text.muted, fontSize: '0.72rem', mb: 1 }}>
             Swarm {activeSwarmId ? `· ${activeSwarmId}` : '· not started'}
           </Typography>
@@ -4871,7 +4849,14 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
               </Typography>
             </Box>
           )}
-        </Box>
+            </Box>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button size="small" variant="outlined" onClick={() => setControlCenterOpen(false)}>
+              Close
+            </Button>
+          </DialogActions>
+        </Dialog>
       </Box>
       )}
 
