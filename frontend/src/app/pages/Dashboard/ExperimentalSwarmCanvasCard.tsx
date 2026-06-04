@@ -3209,9 +3209,20 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
         border: `1px solid ${isSelected ? cardTokens.surface.selectedBorder : cardTokens.surface.border}`,
         borderRadius: cardTokens.surface.radius,
         overflow: 'hidden',
-        boxShadow: isHighlighted ? cardTokens.surface.highlightedShadow : cardTokens.surface.shadow,
+        transition: cardTokens.surface.transition,
+        boxShadow: isHighlighted
+          ? cardTokens.surface.highlightedShadow
+          : isDragging
+            ? cardTokens.surface.highlightedShadow
+            : isSelected
+              ? `0 0 0 1px ${cardTokens.surface.selectedBorder}, ${cardTokens.surface.shadow}`
+              : cardTokens.surface.subtleShadow,
         display: 'flex',
         flexDirection: 'column',
+        '&:hover': {
+          boxShadow: cardTokens.surface.shadow,
+          borderColor: isSelected ? cardTokens.surface.selectedBorder : c.border.strong,
+        },
       }}
     >
       {isDragging && (
@@ -3261,11 +3272,12 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
         onPointerCancel={handlePointerUp}
         sx={{
           px: cardTokens.surface.headerPaddingX,
-          py: cardTokens.surface.headerPaddingY,
+          pt: cardTokens.surface.headerPaddingY,
+          pb: 1.5,
           display: 'flex',
           alignItems: 'center',
           gap: 1,
-          borderBottom: collapsed ? 'none' : `1px solid ${cardTokens.surface.border}`,
+          borderBottom: 'none',
           cursor: isDragging ? 'grabbing' : 'grab',
           touchAction: 'none',
           userSelect: 'none',
@@ -3393,6 +3405,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
           overflow: 'hidden',
           display: 'grid',
           gridTemplateColumns: `minmax(0, 1fr) 8px ${displaySideW}px`,
+          borderTop: `1px solid ${cardTokens.polish.divider}`,
         }}
       >
         <Box sx={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', bgcolor: cardTokens.surface.bodyBackground, overflow: 'hidden' }}>
