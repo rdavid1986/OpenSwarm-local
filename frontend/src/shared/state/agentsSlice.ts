@@ -1105,7 +1105,33 @@ const agentsSlice = createSlice({
           state.trackedNotificationIds.push(action.payload.id);
         }
       })
-      .addCase(launchAndSendFirstMessage.fulfilled, (state, action) => {
+      .addCase(launchAndSendFirstMessage.pending, (state, action) => {
+      const { draftId, prompt } = action.meta.arg;
+      const session = state.sessions[draftId];
+      const text = String(prompt || '').trim();
+      if (!session || !text) return;
+
+      const alreadyPending = session.messages.some(
+        (message) =>
+          message.role === 'user' &&
+          message.optimistic_status === 'pending' &&
+          String(message.content || '').trim() === text,
+      );
+      if (alreadyPending) return;
+
+      const clientMessageId = `local-launch-${draftId}-${Date.now()}`;
+      session.messages.push({
+        id: `optimistic-${clientMessageId}`,
+        role: 'user',
+        content: text,
+        timestamp: new Date().toISOString(),
+        branch_id: session.current_branch_id || 'main',
+        client_message_id: clientMessageId,
+        optimistic_status: 'pending',
+      });
+      session.status = 'running';
+    })
+    .addCase(launchAndSendFirstMessage.fulfilled, (state, action) => {
         const { draftId, session } = action.payload;
         const shouldExpand = action.meta.arg.expand !== false;
         delete state.sessions[draftId];

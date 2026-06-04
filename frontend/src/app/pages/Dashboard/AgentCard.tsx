@@ -33,7 +33,6 @@ import { parseMcpToolName, getMcpShortAction } from '@/app/pages/AgentChat/ToolC
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
 import { useDashboardActive } from '@/shared/hooks/useDashboardActive';
 import { useOverlayScrollPassthrough } from './useOverlayScrollPassthrough';
-import ProcessTraceDropdown, { ProcessTraceItem } from './ProcessTraceDropdown';
 import { buildCardVisualTokens } from './cardVisualTokens';
 
 // ---------------------------------------------------------------------------
@@ -76,16 +75,17 @@ const GoogleServiceIcon: React.FC<{ service: string; size?: number }> = ({ servi
 };
 
 function fmtDurationMs(durationMs: number): string {
-  const safeMs = Math.max(0, Math.round(durationMs));
-  const seconds = safeMs / 1000;
-  if (seconds < 60) return `${seconds.toFixed(2)}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds - minutes * 60;
-  if (minutes < 60) return `${minutes}m ${remainingSeconds.toFixed(2)}s`;
+  if (!durationMs || durationMs <= 0) return '';
+  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
   const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
+  const remainingMinutes = minutes - hours * 60;
   return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }
+
 
 function getAgentWorkTime(
   messages: Array<{ role: string; timestamp: string; elapsed_ms?: number; hidden?: boolean }>,
@@ -170,144 +170,6 @@ function humanizeAgentStatusLabel(status: string): string {
   if (normalized === 'error' || normalized === 'failed') return 'Failed';
   if (normalized === 'stopped' || normalized === 'cancelled') return 'Stopped';
   return normalized ? normalized.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ') : 'Ready';
-}
-
-function buildAgentCardProcessTraceItems(
-  session: AgentSession,
-  lastDurationMs: number,
-  isStreaming: boolean,
-  pendingApprovalCount: number,
-): ProcessTraceItem[] {
-  const visibleMessages = (session.messages || []).filter((message: AgentMessage) => !message.hidden);
-  const thinkingMessages = visibleMessages.filter((message) => message.role === 'thinking');
-  const toolCallMessages = visibleMessages.filter((message) => message.role === 'tool_call');
-  const toolResultMessages = visibleMessages.filter((message) => message.role === 'tool_result');
-  const assistantMessages = visibleMessages.filter((message) => message.role === 'assistant');
-  const userMessages = visibleMessages.filter((message) => message.role === 'user');
-
-  const lastThinking = thinkingMessages[thinkingMessages.length - 1];
-  const thinkingElapsedMs = typeof lastThinking?.elapsed_ms === 'number' ? lastThinking.elapsed_ms : null;
-  const thinkingTokens = typeof lastThinking?.tokens === 'number' ? lastThinking.tokens : null;
-  const inputTokens = typeof lastThinking?.input_tokens === 'number' ? lastThinking.input_tokens : null;
-
-  const status: ProcessTraceItem['status'] =
-    session.status === 'error'
-      ? 'failed'
-      : session.status === 'stopped'
-        ? 'cancelled'
-        : session.status === 'waiting_approval'
-          ? 'blocked'
-          : session.status === 'running'
-            ? 'running'
-            : session.status === 'completed'
-              ? 'completed'
-              : 'planned';
-
-  const items: ProcessTraceItem[] = [
-    {
-      trace_id: `agent-session-${session.id}`,
-      kind: 'summary',
-      subsystem: 'TraceCore',
-      title: 'Agent session',
-      summary: `${humanizeAgentStatusLabel(session.status)} · ${visibleMessages.length} visible messages`,
-      status,
-      duration_ms: lastDurationMs,
-      icon_id: 'TraceCore',
-      badge: humanizeAgentStatusLabel(session.status),
-      related_agent_id: session.id,
-      details: {
-        mode: session.mode,
-        provider: session.provider,
-        model: session.model,
-        user_messages: userMessages.length,
-        assistant_messages: assistantMessages.length,
-        thinking_messages: thinkingMessages.length,
-      },
-    },
-  ];
-
-  if (thinkingMessages.length > 0 || isStreaming) {
-    items.push({
-      trace_id: `agent-thinking-${session.id}`,
-      kind: 'metric',
-      subsystem: 'MetricCore',
-      title: isStreaming ? 'Thinking live' : 'Latest thinking',
-      summary: thinkingElapsedMs != null
-        ? `Thinking duration captured from elapsed_ms.`
-        : isStreaming
-          ? 'Agent is currently thinking.'
-          : 'Thinking event recorded without persisted duration.',
-      status: isStreaming ? 'running' : 'completed',
-      duration_ms: thinkingElapsedMs,
-      icon_id: 'MetricCore',
-      badge: isStreaming ? 'thinking' : 'thought',
-      related_agent_id: session.id,
-      details: {
-        thinking_events: thinkingMessages.length,
-        output_tokens: thinkingTokens,
-        input_tokens: inputTokens,
-        tool_count: lastThinking?.tool_count ?? null,
-      },
-    });
-  }
-
-  if (toolCallMessages.length > 0 || toolResultMessages.length > 0) {
-    items.push({
-      trace_id: `agent-tools-${session.id}`,
-      kind: 'tool',
-      subsystem: 'ActionCore',
-      title: 'Tools and actions',
-      summary: `${toolCallMessages.length} tool calls · ${toolResultMessages.length} results`,
-      status: session.status === 'error' ? 'failed' : toolCallMessages.length === toolResultMessages.length ? 'completed' : 'running',
-      icon_id: 'ActionCore',
-      badge: 'tools',
-      related_agent_id: session.id,
-      details: {
-        tool_calls: toolCallMessages.length,
-        tool_results: toolResultMessages.length,
-      },
-    });
-  }
-
-  if (pendingApprovalCount > 0) {
-    items.push({
-      trace_id: `agent-approvals-${session.id}`,
-      kind: 'validation',
-      subsystem: 'ReviewCore',
-      title: 'Pending approval',
-      summary: `${pendingApprovalCount} approval${pendingApprovalCount === 1 ? '' : 's'} waiting for review.`,
-      status: 'blocked',
-      icon_id: 'ReviewCore',
-      badge: 'review',
-      related_agent_id: session.id,
-      details: {
-        pending_approvals: pendingApprovalCount,
-      },
-    });
-  }
-
-  if (session.tokens && (session.tokens.input > 0 || session.tokens.output > 0)) {
-    items.push({
-      trace_id: `agent-model-${session.id}`,
-      kind: 'model',
-      subsystem: 'ModelCore',
-      title: 'Model usage',
-      summary: `${session.model || 'selected model'} · ${session.provider || 'provider'}`,
-      status: session.status === 'error' ? 'failed' : 'completed',
-      icon_id: 'ModelCore',
-      badge: 'model',
-      related_agent_id: session.id,
-      details: {
-        provider: session.provider,
-        model: session.model,
-        input_tokens: session.tokens.input,
-        output_tokens: session.tokens.output,
-        cache_read_tokens: session.cache_read_tokens ?? null,
-      },
-    });
-  }
-
-  return items;
 }
 
 function summarizeToolInput(toolName: string, toolInput: Record<string, any>): string {
@@ -504,9 +366,9 @@ const AgentCard: React.FC<Props> = ({
   const accentHover = c.accent.hover;
 
   const STATUS_COLORS: Record<string, { color: string; bg: string }> = {
-    running: { color: c.status.success, bg: c.status.successBg },
+    running: { color: c.status.info, bg: `${c.status.info}16` },
     waiting_approval: { color: c.status.warning, bg: c.status.warningBg },
-    completed: { color: c.text.tertiary, bg: c.bg.secondary },
+    completed: { color: c.status.success, bg: c.status.successBg },
     error: { color: c.status.error, bg: c.status.errorBg },
     stopped: { color: c.text.tertiary, bg: c.bg.secondary },
     draft: { color: c.accent.primary, bg: c.bg.secondary },
@@ -711,26 +573,14 @@ const AgentCard: React.FC<Props> = ({
 
   const safeMessages = Array.isArray(session.messages) ? session.messages : [];
   const safePendingApprovals = Array.isArray(session.pending_approvals) ? session.pending_approvals : [];
-  const lastMessage = safeMessages[safeMessages.length - 1];
-  const isStreaming = !!session.streamingMessage;
-  const previewContent = isStreaming
-    ? (session.streamingMessage!.role === 'tool_call'
-        ? `[${getToolDisplayName(session.streamingMessage!.tool_name || '')}] ${session.streamingMessage!.content}`
-        : session.streamingMessage!.content
-      ).slice(0, 120)
-    : lastMessage && typeof lastMessage.content === 'string'
-      ? lastMessage.content.slice(0, 120)
-      : '';
   const hasPending = safePendingApprovals.length > 0;
-  const pendingReq = safePendingApprovals[0];
-  const statusStyle = STATUS_COLORS[session.status] || { color: c.text.tertiary, bg: c.bg.secondary };
-  const statusLabel = humanizeAgentStatusLabel(session.status);
-  const agentWorkTime = getAgentWorkTime(safeMessages, session.status);
-  const processTraceItems = useMemo(
-    () => buildAgentCardProcessTraceItems({ ...session, messages: safeMessages, pending_approvals: safePendingApprovals }, agentWorkTime.lastMs, isStreaming, safePendingApprovals.length),
-    [session, safeMessages, safePendingApprovals, agentWorkTime.lastMs, isStreaming],
-  );
-
+  const hasPendingOptimisticAgentMessage = safeMessages.some((message: any) => message?.optimistic_status === 'pending');
+  const agentVisualStatus = hasPendingOptimisticAgentMessage
+    ? 'running'
+    : session.status;
+  const statusStyle = STATUS_COLORS[agentVisualStatus] || { color: c.text.tertiary, bg: c.bg.secondary };
+  const statusLabel = humanizeAgentStatusLabel(agentVisualStatus);
+  const agentWorkTime = getAgentWorkTime(safeMessages, agentVisualStatus);
   const noTransition = isDragging || isResizing || (isSelected && !!multiDragDelta);
 
   const mdDx = (!isDragging && isSelected && multiDragDelta) ? multiDragDelta.dx : 0;
@@ -1081,6 +931,15 @@ const AgentCard: React.FC<Props> = ({
                 bgcolor: statusStyle.bg,
                 color: statusStyle.color,
                 border: `1px solid ${statusStyle.color}45`,
+                ...(agentVisualStatus === 'running' || agentVisualStatus === 'waiting_approval'
+                  ? {
+                      animation: 'agent-status-pulse 1.6s ease-in-out infinite',
+                      '@keyframes agent-status-pulse': {
+                        '0%, 100%': { boxShadow: `0 0 0 0 ${statusStyle.color}22` },
+                        '50%': { boxShadow: `0 0 0 4px ${statusStyle.color}10` },
+                      },
+                    }
+                  : {}),
                 fontWeight: 650,
                 fontSize: '0.68rem',
                 height: 22,
@@ -1158,209 +1017,7 @@ const AgentCard: React.FC<Props> = ({
         </Box>
       )}
 
-      {/* Collapsed: preview + approval */}
-      {!expanded && (
-        <>
-          {previewContent && (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: hasPending ? 1.5 : 0 }}>
-              {isStreaming && (
-                <Box
-                  sx={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: '50%',
-                    bgcolor: c.accent.primary,
-                    flexShrink: 0,
-                    animation: 'pulse-dot 1.4s ease-in-out infinite',
-                    '@keyframes pulse-dot': {
-                      '0%, 100%': { opacity: 0.4, transform: 'scale(0.8)' },
-                      '50%': { opacity: 1, transform: 'scale(1.2)' },
-                    },
-                  }}
-                />
-              )}
-              <Typography
-                variant="body2"
-                sx={{
-                  color: isStreaming ? c.text.secondary : c.text.muted,
-                  fontSize: '0.8rem',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  flex: 1,
-                }}
-              >
-                {previewContent}
-              </Typography>
-            </Box>
-          )}
-
-          {processTraceItems.length > 0 && (
-            <Box
-              onClick={(e) => e.stopPropagation()}
-              sx={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 0.75,
-                mb: hasPending ? 1.5 : 0,
-              }}
-            >
-              {processTraceItems.slice(0, 3).map((item) => (
-                <ProcessTraceDropdown
-                  key={item.trace_id || `${item.kind}-${item.title}`}
-                  item={item}
-                  compact
-                  defaultExpanded={item.status === 'running' || item.status === 'blocked'}
-                />
-              ))}
-            </Box>
-          )}
-
-          {hasPending && pendingReq && pendingReq.tool_name === 'AskUserQuestion' ? (
-            <Box onClick={(e) => e.stopPropagation()}>
-              <QuestionForm
-                compact
-                request={pendingReq}
-                onApprove={(requestId, updatedInput) =>
-                  dispatch(handleApproval({ requestId, behavior: 'allow', updatedInput }))
-                }
-                onDeny={(requestId) =>
-                  dispatch(handleApproval({ requestId, behavior: 'deny' }))
-                }
-              />
-            </Box>
-          ) : hasPending ? (
-            <Box onClick={(e) => e.stopPropagation()} sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-              {pendingReq && (
-                <Box
-                  sx={{
-                    bgcolor: c.status.warningBg,
-                    border: `1px solid rgba(128,92,31,0.2)`,
-                    borderRadius: 2,
-                    p: 1,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                  }}
-                >
-                  <Box sx={{ minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    {(() => {
-                      const mcp = parseMcpToolName(pendingReq.tool_name);
-                      if (mcp.isMcp && mcp.service) return <GoogleServiceIcon service={mcp.service} size={18} />;
-                      return <TerminalIcon sx={{ fontSize: 16, color: c.status.warning, flexShrink: 0, opacity: 0.8 }} />;
-                    })()}
-                    <Box sx={{ minWidth: 0, flex: 1 }}>
-                      <Typography sx={{ color: c.status.warning, fontSize: '0.75rem', fontWeight: 600 }}>
-                        {getToolDisplayName(pendingReq.tool_name)}
-                      </Typography>
-                      <Typography
-                        sx={{
-                          color: c.text.muted,
-                          fontSize: '0.7rem',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {summarizeToolInput(pendingReq.tool_name, pendingReq.tool_input)}
-                      </Typography>
-                    </Box>
-                  </Box>
-                  {safePendingApprovals.length === 1 && (
-                    <Box sx={{ display: 'flex', gap: 0.5, ml: 1 }}>
-                      <Tooltip title="Approve">
-                        <IconButton
-                          size="small"
-                          onClick={() => dispatch(handleApproval({ requestId: pendingReq.id, behavior: 'allow' }))}
-                          sx={{ color: c.status.success }}
-                        >
-                          <CheckCircleIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Deny">
-                        <IconButton
-                          size="small"
-                          onClick={() => dispatch(handleApproval({ requestId: pendingReq.id, behavior: 'deny' }))}
-                          sx={{ color: c.status.error }}
-                        >
-                          <CancelIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    </Box>
-                  )}
-                </Box>
-              )}
-              {safePendingApprovals.length > 1 && (
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1,
-                    bgcolor: c.status.warningBg,
-                    border: `1px solid rgba(128,92,31,0.2)`,
-                    borderRadius: 2,
-                    px: 1.25,
-                    py: 0.75,
-                  }}
-                >
-                  <Typography sx={{ fontSize: '0.75rem', fontWeight: 700, color: c.status.warning, flex: 1 }}>
-                    {safePendingApprovals.length} pending approvals
-                  </Typography>
-                  <Button
-                    variant="contained"
-                    size="small"
-                    startIcon={<CheckIcon sx={{ fontSize: '14px !important' }} />}
-                    onClick={() => {
-                      for (const req of session.pending_approvals) {
-                        if (req.tool_name !== 'AskUserQuestion') dispatch(handleApproval({ requestId: req.id, behavior: 'allow' }));
-                      }
-                    }}
-                    sx={{
-                      bgcolor: c.status.success,
-                      '&:hover': { bgcolor: '#1e4d15' },
-                      fontWeight: 600,
-                      fontSize: '0.72rem',
-                      textTransform: 'none',
-                      borderRadius: 1.5,
-                      px: 1.25,
-                      py: 0.25,
-                      minHeight: 26,
-                      minWidth: 0,
-                    }}
-                  >
-                    Approve All
-                  </Button>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    startIcon={<CloseIcon sx={{ fontSize: '14px !important' }} />}
-                    onClick={() => {
-                      for (const req of session.pending_approvals) {
-                        if (req.tool_name !== 'AskUserQuestion') dispatch(handleApproval({ requestId: req.id, behavior: 'deny' }));
-                      }
-                    }}
-                    sx={{
-                      borderColor: c.status.error,
-                      color: c.status.error,
-                      '&:hover': { borderColor: '#8f2828', bgcolor: 'rgba(181,51,51,0.04)' },
-                      fontWeight: 600,
-                      fontSize: '0.72rem',
-                      textTransform: 'none',
-                      borderRadius: 1.5,
-                      px: 1.25,
-                      py: 0.25,
-                      minHeight: 26,
-                      minWidth: 0,
-                    }}
-                  >
-                    Deny All
-                  </Button>
-                </Box>
-              )}
-            </Box>
-          ) : null}
-        </>
-      )}
+      {!expanded && null}
     </Box>
     </motion.div>
   );

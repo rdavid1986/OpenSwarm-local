@@ -209,7 +209,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
 
   const contentBounds = useMemo(() => {
     const allRects = [
-      ...Object.values(cards).map((c) => ({ x: c.x, y: c.y, w: c.width, h: c.height })),
+      ...Object.values(cards).map((c) => ({ x: c.x, y: c.y, w: c.width, h: expandedSessionIds.includes(c.session_id) ? Math.max(EXPANDED_CARD_MIN_H, c.height) : c.height })),
       ...Object.values(viewCards).map((c) => ({ x: c.x, y: c.y, w: c.width, h: c.height })),
       ...Object.values(browserCards).map((c) => ({ x: c.x, y: c.y, w: c.width, h: c.height })),
       ...Object.values(plansCards).filter((c) => !c.hidden).map((c) => ({ x: c.x, y: c.y, w: c.width, h: c.height })),
@@ -461,7 +461,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     if (type === 'agent') {
       const card = layoutState.cards[id];
       if (!card) return undefined;
-      return { x: card.x, y: card.y, width: card.width, height: card.height };
+      return { x: card.x, y: card.y, width: card.width, height: expandedSessionIds.includes(id) ? Math.max(EXPANDED_CARD_MIN_H, card.height) : card.height };
     } else if (type === 'view') {
       const vc = layoutState.viewCards[id];
       if (!vc) return undefined;

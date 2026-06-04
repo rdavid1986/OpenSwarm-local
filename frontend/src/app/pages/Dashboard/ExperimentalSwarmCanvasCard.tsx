@@ -55,7 +55,8 @@ import ProjectMemoryContextPanel from '@/app/components/ProjectMemoryContextPane
 import AgentHandoffPanel from '@/app/components/AgentHandoffPanel';
 import RemoteTaskStateContractPanel from '@/app/components/RemoteTaskStateContractPanel';
 import ChatSurfaceAuditPanel from '@/app/components/ChatSurfaceAuditPanel';
-import ProcessTraceDropdown, { ProcessTraceItem, ProcessTraceTurnDropdown, normalizeProcessTraceTurnContainer } from './ProcessTraceDropdown';
+import ProcessTraceDropdown, { ProcessTraceItem, normalizeProcessTraceTurnContainer } from './ProcessTraceDropdown';
+import LightweightThinkingRow from '@/app/components/LightweightThinkingRow';
 import { buildCardVisualTokens } from './cardVisualTokens';
 
 type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
@@ -125,8 +126,8 @@ interface Props {
   dashboardId?: string;
 }
 
-const MIN_W = 520;
-const MIN_H = 380;
+const MIN_W = 480;
+const MIN_H = 120;
 const EDGE_THICKNESS = 6;
 const CORNER_SIZE = 14;
 const DEFAULT_SWARM_CONTEXT_LIMIT = 32_000;
@@ -757,6 +758,14 @@ function getClaimGuardStatus(finalResult: any): string {
 
 
 type RuntimeApprovalUxKind = 'rollback' | 'post_validation' | 'materialization' | 'tool';
+
+function formatSwarmMessageTime(value: any): string {
+  const raw = value?.created_at || value?.createdAt || value?.timestamp || value?.sent_at || value?.sentAt;
+  if (!raw) return '';
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
 function compactRuntimeApprovalValue(value: any, fallback = 'not provided', limit = 220): string {
   if (value == null) return fallback;
@@ -2038,6 +2047,23 @@ const HANDLE_DEFS: { dir: ResizeDir; sx: Record<string, any> }[] = [
   { dir: 'se', sx: { bottom: -EDGE_THICKNESS / 2, right: -EDGE_THICKNESS / 2, width: CORNER_SIZE, height: CORNER_SIZE } },
 ];
 
+function getSwarmHeaderStatusVisual(statusLabel: string, isRunning: boolean, c: any): { color: string; bg: string; border: string; animated: boolean } {
+  const normalized = String(statusLabel || '').trim().toLowerCase();
+  if (isRunning || normalized.includes('running') || normalized.includes('thinking') || normalized.includes('implementation')) {
+    return { color: c.status.info, bg: `${c.status.info}16`, border: `${c.status.info}45`, animated: true };
+  }
+  if (normalized === 'completed' || normalized === 'complete' || normalized === 'done' || normalized === 'success') {
+    return { color: c.status.success, bg: c.status.successBg, border: `${c.status.success}45`, animated: false };
+  }
+  if (normalized.includes('failed') || normalized.includes('error')) {
+    return { color: c.status.error, bg: c.status.errorBg, border: `${c.status.error}45`, animated: false };
+  }
+  if (normalized.includes('warning') || normalized.includes('blocked') || normalized.includes('approval')) {
+    return { color: c.status.warning, bg: c.status.warningBg, border: `${c.status.warning}45`, animated: false };
+  }
+  return { color: c.text.tertiary, bg: c.bg.secondary, border: c.border.subtle, animated: false };
+}
+
 const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   swarmCardId,
   swarmId,
@@ -2232,9 +2258,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   });
   const implementationStateMeta: Record<ImplementationVisualState, { label: string; color: string; message: string }> = {
     ready: {
-      label: activeSwarmId ? 'Listo' : 'Nuevo',
+      label: activeSwarmId ? 'Completed' : 'New',
       color: c.text.tertiary,
-      message: activeSwarmId ? 'Listo para iniciar implementación.' : 'Creá o vinculá un swarm para implementar.',
+      message: activeSwarmId ? 'Completed and ready.' : 'Create or link a swarm to start.',
     },
     running: {
       label: 'Ejecutando',
@@ -2290,6 +2316,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const [swarmActionStartedAt, setSwarmActionStartedAt] = useState<number | null>(null);
   const [swarmActionElapsedMs, setSwarmActionElapsedMs] = useState(0);
   const [lastSwarmActionDurationMs, setLastSwarmActionDurationMs] = useState<number | null>(null);
+  const swarmThoughtDurationsByMessageKeyRef = useRef<Record<string, number>>({});
   const [lastSwarmActionWasImplementation, setLastSwarmActionWasImplementation] = useState(false);
   const isImplementationActionRunningRef = useRef(false);
 
@@ -2324,43 +2351,66 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   }, [swarmState.actionLoading]);
 
   const formatSwarmActionDuration = useCallback((durationMs: number): string => {
-    // UI displays a compact two-decimal label. Full precision remains in durationMs
-    // for future persisted metrics and audit comparisons.
-    const safeMs = Math.max(0, Math.round(durationMs));
-    const seconds = safeMs / 1000;
-    if (seconds < 60) return `${seconds.toFixed(2)}s`;
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds - minutes * 60;
-    return `${minutes}m ${remainingSeconds.toFixed(2)}s`;
+    const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
+    if (totalSeconds < 60) return `${totalSeconds}s`;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
   }, []);
 
   const swarmActionElapsedLabel = formatSwarmActionDuration(swarmActionElapsedMs);
   const swarmActionStatusLabel = isImplementationActionRunning ? 'Implementation running' : 'Thinking';
-  const lastSwarmActionLabel = lastSwarmActionDurationMs != null
-    ? `${lastSwarmActionWasImplementation ? 'Implementation ran' : 'Thought'} for ${formatSwarmActionDuration(lastSwarmActionDurationMs)}`
-    : null;
+  const swarmHeaderBusy = swarmState.actionLoading || swarmState.loading || isStartingImplementation;
+  const swarmHeaderStatusLabel = swarmHeaderBusy ? 'Running' : implementationMeta.label;
+  const swarmHeaderStatusVisual = getSwarmHeaderStatusVisual(swarmHeaderStatusLabel, swarmHeaderBusy, c);
 
-  const persistedChatMessages = hasLoadedActiveSwarm
+  const persistedChatMessages = (hasLoadedActiveSwarm || swarmState.actionLoading)
     ? (swarmState.messages || []).filter((message: any) => getVisibleSwarmMessageText(getSwarmMessageText(message)))
     : [];
-  const lastSubmittedAlreadyPersisted = !!activeSwarmId && !!lastSubmittedPrompt && persistedChatMessages.some((message: any) => {
+  const normalizeSubmittedText = (value: any) => getVisibleSwarmMessageText(renderText(value, '')).trim();
+  const normalizedLastSubmittedPrompt = normalizeSubmittedText(lastSubmittedPrompt);
+  const lastSubmittedAlreadyPersisted = !!activeSwarmId && !!normalizedLastSubmittedPrompt && persistedChatMessages.some((message: any) => {
     const role = getSwarmMessageRole(message);
-    return (role === 'user' || role === 'human') && getVisibleSwarmMessageText(getSwarmMessageText(message)) === lastSubmittedPrompt;
+    return (role === 'user' || role === 'human') && normalizeSubmittedText(getSwarmMessageText(message)) === normalizedLastSubmittedPrompt;
   });
-  const optimisticSubmittedMessage = !!lastSubmittedPrompt && swarmState.actionLoading && !lastSubmittedAlreadyPersisted
-    ? {
-        id: `optimistic-user-${activeSwarmId || 'new'}`,
-        role: 'user',
-        content: lastSubmittedPrompt,
-        message: lastSubmittedPrompt,
-        text: lastSubmittedPrompt,
-        created_at: new Date().toISOString(),
-        optimistic: true,
+  const dedupeSwarmVisibleChatMessages = (messages: any[]): any[] => {
+    const result: any[] = [];
+    const userMessageIndexByText = new Map<string, number>();
+
+    messages.forEach((message: any) => {
+      const role = getSwarmMessageRole(message);
+      const isUserMessage = role === 'user' || role === 'human';
+      const normalizedText = normalizeSubmittedText(getSwarmMessageText(message));
+
+      if (isUserMessage && normalizedText) {
+        const existingIndex = userMessageIndexByText.get(normalizedText);
+        if (existingIndex != null) {
+          const existingMessage = result[existingIndex];
+          const existingIsOptimistic = !!existingMessage?.optimistic || !!existingMessage?.optimistic_status || !!existingMessage?.__local_swarm_user_message;
+          const currentIsOptimistic = !!message?.optimistic || !!message?.optimistic_status || !!message?.__local_swarm_user_message;
+
+          if (existingIsOptimistic && !currentIsOptimistic) {
+            result[existingIndex] = message;
+          }
+          return;
+        }
+
+        userMessageIndexByText.set(normalizedText, result.length);
       }
-    : null;
-  const chatMessages = optimisticSubmittedMessage
-    ? [...persistedChatMessages, optimisticSubmittedMessage]
-    : persistedChatMessages;
+
+      result.push(message);
+    });
+
+    return result;
+  };
+  const chatMessages = dedupeSwarmVisibleChatMessages(persistedChatMessages);
+  const latestVisibleAssistantMessageIndex = chatMessages.reduce((latestIndex: number, message: any, messageIndex: number) => {
+    const role = getSwarmMessageRole(message);
+    const isUserMessage = role === 'user' || role === 'human';
+    const body = getVisibleSwarmMessageText(getSwarmMessageText(message));
+    return !isUserMessage && body ? messageIndex : latestIndex;
+  }, -1);
+
   const finalAuditModel = useMemo(
     () => buildSwarmFinalAuditModel({
       tasks,
@@ -2537,14 +2587,14 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     for (const message of chatMessages) {
       totalChars += getSwarmMessageContextText(message).length;
     }
-    if (lastSubmittedPrompt && !lastSubmittedAlreadyPersisted) {
-      totalChars += lastSubmittedPrompt.length;
+    if (normalizedLastSubmittedPrompt && !lastSubmittedAlreadyPersisted) {
+      totalChars += normalizedLastSubmittedPrompt.length;
     }
     return {
       used: Math.round(totalChars / 4),
       limit: getSwarmModelContextLimit(activeSwarmModel),
     };
-  }, [activeSwarmModel, chatMessages, lastSubmittedAlreadyPersisted, lastSubmittedPrompt]);
+  }, [activeSwarmModel, chatMessages, lastSubmittedAlreadyPersisted, normalizedLastSubmittedPrompt]);
 
 
   const stopImplementationPolling = useCallback(() => {
@@ -2620,6 +2670,9 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
     if (!cleanPrompt && !activeSwarmId) return;
 
     let messageToSend = cleanPrompt || lastSubmittedPrompt || 'Continue';
+    if (cleanPrompt) {
+      setLastSubmittedPrompt(cleanPrompt);
+    }
     let visibleSubmittedPrompt = messageToSend;
     let directPreviewCandidateToOpen: {
       outputId: string;
@@ -3138,7 +3191,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
   const displayX = localSize?.x ?? localPos?.x ?? (cardX + mdDx);
   const displayY = localSize?.y ?? localPos?.y ?? (cardY + mdDy);
   const displayW = localSize?.w ?? cardWidth;
-  const displayH = collapsed ? 64 : (localSize?.h ?? cardHeight);
+  const displayH = collapsed ? 96 : (localSize?.h ?? cardHeight);
 
   const togglePanelSection = useCallback((section: string) => {
     setOpenPanelSections((prev) => ({ ...prev, [section]: !prev[section] }));
@@ -3247,31 +3300,41 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         sx={{
-          px: cardTokens.surface.headerPaddingX,
-          pt: cardTokens.surface.headerPaddingY,
+          px: 2,
+          pt: 2,
           pb: 1.5,
           display: 'flex',
-          alignItems: 'center',
-          gap: 1,
+          flexDirection: 'column',
           borderBottom: 'none',
           cursor: isDragging ? 'grabbing' : 'grab',
           touchAction: 'none',
           userSelect: 'none',
+          flexShrink: 0,
         }}
       >
         <Box
-          className="drag-handle"
           sx={{
             display: 'flex',
             alignItems: 'center',
-            color: cardTokens.polish.mutedActionColor,
+            justifyContent: 'space-between',
+            mb: 1,
             flexShrink: 0,
+            width: '100%',
+            minWidth: 0,
           }}
         >
-          <DragIndicatorIcon sx={{ fontSize: 16 }} />
-        </Box>
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+          <Box
+            className="drag-handle"
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              mr: 0.5,
+              color: c.text.ghost,
+            }}
+          >
+            <DragIndicatorIcon sx={{ fontSize: 16 }} />
+          </Box>
+          <Box sx={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 0.75, borderRadius: 1 }}>
             <Typography sx={{ fontWeight: 650, fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: c.text.primary }}>
               Swarm
             </Typography>
@@ -3290,92 +3353,112 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             />
             <Chip
               size="small"
-              label={implementationMeta.label}
+              label={swarmHeaderStatusLabel}
               sx={{
                 height: 22,
                 fontSize: '0.68rem',
-                color: implementationMeta.color,
-                bgcolor: `${implementationMeta.color}18`,
-                border: `1px solid ${implementationMeta.color}55`,
+                color: swarmHeaderStatusVisual.color,
+                bgcolor: swarmHeaderStatusVisual.bg,
+                border: `1px solid ${swarmHeaderStatusVisual.border}`,
+                ...(swarmHeaderStatusVisual.animated
+                  ? {
+                      animation: 'swarm-status-pulse 1.6s ease-in-out infinite',
+                      '@keyframes swarm-status-pulse': {
+                        '0%, 100%': { boxShadow: `0 0 0 0 ${swarmHeaderStatusVisual.color}22` },
+                        '50%': { boxShadow: `0 0 0 4px ${swarmHeaderStatusVisual.color}10` },
+                      },
+                    }
+                  : {}),
                 fontWeight: 650,
                 flexShrink: 0,
               }}
             />
           </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, mt: 0.25, minWidth: 0 }}>
-            <Typography sx={{ color: c.text.tertiary, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {activeSwarmModel || 'No model selected'}
-            </Typography>
-            {swarmState.actionLoading && (
-              <Typography sx={{ color: c.text.tertiary, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                {swarmActionStatusLabel} · {swarmActionElapsedLabel}
-              </Typography>
-            )}
+          <Box
+            onPointerDown={(e) => e.stopPropagation()}
+            sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0, ml: 0.5 }}
+          >
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={!stableOutputBridgeOutputId && !canCreateOutputBridge}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleOpenOutputPreview();
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              sx={{
+                minHeight: 24,
+                px: 1,
+                py: 0,
+                borderRadius: cardTokens.trace.radius,
+                bgcolor: cardTokens.surface.background,
+                color: c.text.primary,
+                borderColor: shouldHighlightOpenPreview ? c.accent.primary : c.border.medium,
+                boxShadow: shouldHighlightOpenPreview ? `0 0 0 1px ${c.accent.primary}22, 0 0 10px ${c.accent.primary}12` : c.shadow.sm,
+                animation: shouldHighlightOpenPreview ? 'previewAttentionBreath 2.25s ease-in-out infinite' : 'none',
+                '@keyframes previewAttentionBreath': {
+                  '0%': { boxShadow: `0 0 0 1px ${c.accent.primary}10, 0 0 4px ${c.accent.primary}08` },
+                  '50%': { boxShadow: `0 0 0 1px ${c.accent.primary}77, 0 0 18px ${c.accent.primary}38` },
+                  '100%': { boxShadow: `0 0 0 1px ${c.accent.primary}10, 0 0 4px ${c.accent.primary}08` },
+                },
+                fontSize: '0.72rem',
+                fontWeight: 500,
+                textTransform: 'none',
+                flexShrink: 0,
+                cursor: stableOutputBridgeOutputId || canCreateOutputBridge ? 'pointer' : 'default',
+                opacity: stableOutputBridgeOutputId || canCreateOutputBridge ? 1 : 0.55,
+                '&:hover': {
+                  bgcolor: cardTokens.polish.hoverBackground,
+                  borderColor: cardTokens.surface.selectedBorder,
+                  boxShadow: cardTokens.surface.shadow,
+                },
+              }}
+            >
+              Preview
+            </Button>
+
+            <IconButton
+              size="small"
+              aria-label="Open Swarm Control Center"
+              onClick={(e) => {
+                e.stopPropagation();
+                setControlCenterOpen(true);
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              sx={{ color: cardTokens.polish.mutedActionColor, p: 0.5 }}
+            >
+              <MoreHorizIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+            <IconButton
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                dispatch(removeSwarmCard(swarmCardId));
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              sx={{
+                color: cardTokens.polish.mutedActionColor,
+                p: 0.5,
+                '&:hover': { color: c.status.error, bgcolor: `${c.status.errorBg}` },
+              }}
+            >
+              <CloseIcon sx={{ fontSize: 16 }} />
+            </IconButton>
           </Box>
         </Box>
-        <Button
-            size="small"
-            variant="outlined"
-            disabled={!stableOutputBridgeOutputId && !canCreateOutputBridge}
-            onClick={(e) => {
-              e.stopPropagation();
-              handleOpenOutputPreview();
-            }}
-            onPointerDown={(e) => e.stopPropagation()}
-            sx={{
-              minHeight: 28,
-              px: 1.2,
-              py: 0.25,
-              borderRadius: cardTokens.trace.radius,
-              bgcolor: cardTokens.surface.background,
-              color: c.text.primary,
-              borderColor: shouldHighlightOpenPreview ? c.accent.primary : c.border.medium,
-              boxShadow: shouldHighlightOpenPreview ? `0 0 0 1px ${c.accent.primary}22, 0 0 10px ${c.accent.primary}12` : c.shadow.sm,
-              animation: shouldHighlightOpenPreview ? 'previewAttentionBreath 2.25s ease-in-out infinite' : 'none',
-              '@keyframes previewAttentionBreath': {
-                '0%': { boxShadow: `0 0 0 1px ${c.accent.primary}10, 0 0 4px ${c.accent.primary}08` },
-                '50%': { boxShadow: `0 0 0 1px ${c.accent.primary}77, 0 0 18px ${c.accent.primary}38` },
-                '100%': { boxShadow: `0 0 0 1px ${c.accent.primary}10, 0 0 4px ${c.accent.primary}08` },
-              },
-              fontSize: '0.74rem',
-              fontWeight: 500,
-              textTransform: 'none',
-              flexShrink: 0,
-              cursor: stableOutputBridgeOutputId || canCreateOutputBridge ? 'pointer' : 'default',
-              opacity: stableOutputBridgeOutputId || canCreateOutputBridge ? 1 : 0.55,
-              '&:hover': {
-                bgcolor: cardTokens.polish.hoverBackground,
-                borderColor: cardTokens.surface.selectedBorder,
-                boxShadow: cardTokens.surface.shadow,
-              },
-            }}
-          >
-            Preview
-          </Button>
-
-        <IconButton
-          size="small"
-          aria-label="Open Swarm Control Center"
-          onClick={(e) => {
-            e.stopPropagation();
-            setControlCenterOpen(true);
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-          onDoubleClick={(e) => e.stopPropagation()}
-        >
-          <MoreHorizIcon fontSize="small" />
-        </IconButton>
-        <IconButton
-          size="small"
-          onClick={(e) => {
-            e.stopPropagation();
-            dispatch(removeSwarmCard(swarmCardId));
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-          onDoubleClick={(e) => e.stopPropagation()}
-        >
-          <CloseIcon fontSize="small" />
-        </IconButton>
+        <Box sx={{ display: 'flex', gap: 1.5, flexShrink: 0, width: '100%', minWidth: 0 }}>
+          <Typography variant="caption" sx={{ color: c.text.tertiary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {activeSwarmModel || 'No model selected'}
+          </Typography>
+          {swarmState.actionLoading && (
+            <Typography variant="caption" sx={{ color: c.text.tertiary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }}>
+              {swarmActionStatusLabel} · {swarmActionElapsedLabel}
+            </Typography>
+          )}
+        </Box>
       </Box>
 
       {!collapsed && (
@@ -3388,7 +3471,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
           borderTop: `1px solid ${cardTokens.polish.divider}`,
         }}
       >
-        <Box sx={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', bgcolor: cardTokens.surface.bodyBackground, overflow: 'hidden' }}>
+        <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', bgcolor: cardTokens.surface.bodyBackground, overflow: 'hidden' }}>
           <Box
             ref={chatScrollRef}
             onWheel={(e) => e.stopPropagation()}
@@ -3420,6 +3503,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 const role = getSwarmMessageRole(message);
                 const isUser = role === 'user' || role === 'human';
                 const body = getVisibleSwarmMessageText(getSwarmMessageText(message));
+                const messageTime = formatSwarmMessageTime(message);
                 const metadata = getSwarmMessageMetadata(message);
                 const contextClarification = !isUser ? getContextClarification(message) : { question: '', options: [], reason: '', creationType: '' };
                 const pendingRefinementAction = !isUser ? getPendingRefinementAction(message) : null;
@@ -3436,6 +3520,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 const shouldShowIntakeTrace = !isUser && intakeSkippedQuestions.length > 0 && !hasPreviousIntakeTrace;
                 const intakePolicyReason = renderText(projectIntake.state?.question_policy?.reason || projectIntake.state?.intake_profile?.reason, '').trim();
                 const isLatestChatMessage = idx === chatMessages.length - 1;
+              const isLatestVisibleAssistantMessage = idx === latestVisibleAssistantMessageIndex;
                 const currentProjectIntakeAction = !isUser && isLatestChatMessage && (activeSwarm as any)?.project_intake_action?.type === 'start_implementation'
                   ? (activeSwarm as any).project_intake_action
                   : projectIntake.action;
@@ -3455,6 +3540,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                   metadata.availableActions.length ? `actions: ${metadata.availableActions.join(', ')}` : '',
                 ].filter(Boolean).join(' · ');
                 const showMessageDebugMetadata = false;
+                const messageKey = String(message.id || idx);
                 const backendProcessTraceTurn = !isUser ? normalizeProcessTraceTurnContainer(
                   message.process_trace_turn
                   || message.process_trace_turn_container
@@ -3470,6 +3556,17 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                     items: message.traceItems || message.process_trace_items,
                   } : null),
                 ) : null;
+                const backendThoughtDurationMs = (backendProcessTraceTurn as any)?.duration_ms
+                  ?? (message as any)?.duration_ms
+                  ?? (message as any)?.thinking_duration_ms
+                  ?? (message as any)?.thought_duration_ms
+                  ?? null;
+                const swarmMessageThoughtDurationMs = backendThoughtDurationMs
+                  ?? swarmThoughtDurationsByMessageKeyRef.current[messageKey]
+                  ?? (!isUser && isLatestVisibleAssistantMessage ? lastSwarmActionDurationMs : null);
+                if (!isUser && swarmMessageThoughtDurationMs != null) {
+                  swarmThoughtDurationsByMessageKeyRef.current[messageKey] = swarmMessageThoughtDurationMs;
+                }
                 const previousUserMessage = !isUser
                   ? [...chatMessages.slice(0, idx)].reverse().find((candidate: any) => {
                       const candidateRole = getSwarmMessageRole(candidate);
@@ -3499,18 +3596,14 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                     }}
                   >
                     {!isUser && (
-                      <Typography sx={{ color: c.text.muted, fontSize: '0.7rem', mb: 0.5 }}>
-                        Swarm
-                      </Typography>
-                    )}
-                    {backendProcessTraceTurn && (
-                      <Box sx={{ mb: 1 }}>
-                        <ProcessTraceTurnDropdown
-                          container={backendProcessTraceTurn}
-                          compact
-                          defaultExpanded={backendProcessTraceTurn?.status === 'running' || backendProcessTraceTurn?.status === 'failed' || backendProcessTraceTurn?.status === 'warning'}
-                        />
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 1, mb: 0.5 }}>
                       </Box>
+                    )}
+                    {!isUser && swarmMessageThoughtDurationMs != null && (
+                      <LightweightThinkingRow
+                        variant="completed"
+                        durationMs={swarmMessageThoughtDurationMs}
+                      />
                     )}
                     <Typography
                       sx={{
@@ -3524,6 +3617,11 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                     >
                       {isLatestChatMessage ? renderAnimatedText(body) : body}
                     </Typography>
+                    {messageTime && (
+                      <Typography sx={{ color: c.text.ghost, fontSize: '0.66rem', mt: 0.45, textAlign: isUser ? 'right' : 'left' }}>
+                        {messageTime}
+                      </Typography>
+                    )}
                     <ChangeReviewPanel source={{ ...message, refinement_execution_trace: refinementExecutionTrace, targetOutputId: metadata.targetOutputId }} compact />
                     <SourceEvidencePanel message={message} compact />
                     <MessageActionBar
@@ -4028,11 +4126,17 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                 );
               })}
 
-              {lastSubmittedPrompt && !lastSubmittedAlreadyPersisted && (
+              {swarmState.actionLoading && normalizedLastSubmittedPrompt && !chatMessages.some((message: any) => {
+                const role = getSwarmMessageRole(message);
+                return (role === 'user' || role === 'human') && normalizeSubmittedText(getSwarmMessageText(message)) === normalizedLastSubmittedPrompt;
+              }) && (
                 <Box
                   sx={{
                     alignSelf: 'flex-end',
                     maxWidth: '78%',
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    mr: '15px',
                     bgcolor: 'transparent',
                     color: c.text.primary,
                     border: 'none',
@@ -4046,101 +4150,28 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
                       fontSize: '0.88rem',
                       lineHeight: 1.55,
                       whiteSpace: 'pre-wrap',
+                      overflowWrap: 'break-word',
+                      wordBreak: 'normal',
+                      maxWidth: '100%',
                     }}
                   >
-                    {renderAnimatedText(lastSubmittedPrompt)}
+                    {normalizedLastSubmittedPrompt}
                   </Typography>
-                </Box>
-              )}
-
-              {chatMessages.length === 0 && !lastSubmittedPrompt && events.slice(0, 4).map((event: any) => (
-                <Box key={event.id || `${humanizeEvent(event)}-${event.created_at}`} sx={{ alignSelf: 'flex-start', maxWidth: '86%', bgcolor: c.bg.surface, border: `1px solid ${c.border.subtle}`, borderRadius: 1.25, px: 1.5, py: 1 }}>
-                  <Typography sx={{ fontSize: '0.78rem', color: c.text.muted }}>
-                    {humanizeEvent(event)}
-                  </Typography>
-                </Box>
-              ))}
-
-              {lastSwarmActionLabel && !swarmState.actionLoading && (
-                <Box
-                  sx={{
-                    alignSelf: 'stretch',
-                    maxWidth: '100%',
-                    bgcolor: 'transparent',
-                    border: 'none',
-                    borderRadius: 0,
-                    px: 0.5,
-                    py: 0.35,
-                    display: 'flex',
-                    alignItems: 'center',
-                  }}
-                >
-                  <Typography sx={{ fontSize: '0.72rem', color: c.text.tertiary, fontStyle: 'italic' }}>
-                    {lastSwarmActionLabel}
-                  </Typography>
+                  {swarmActionStartedAt && (
+                    <Typography sx={{ color: c.text.ghost, fontSize: '0.66rem', mt: 0.45, textAlign: 'right' }}>
+                      {formatSwarmMessageTime({ created_at: new Date(swarmActionStartedAt).toISOString() })}
+                    </Typography>
+                  )}
                 </Box>
               )}
 
               {swarmState.actionLoading && (
-                <Box
-                  sx={{
-                    alignSelf: 'stretch',
-                    maxWidth: '100%',
-                    bgcolor: 'transparent',
-                    border: 'none',
-                    borderRadius: 0,
-                    px: 0.5,
-                    py: 0.75,
-                  }}
-                >
-                  <ProcessTraceTurnDropdown
-                    container={{
-                      turn_trace_kind: 'process_trace_turn_container',
-                      turn_trace_version: 'openswarm.process_trace_turn_container.v1',
-                      turn_trace_id: `swarm-live-turn-${activeSwarmId || swarmCardId}`,
-                      title: swarmActionStatusLabel === 'Thinking' ? 'Pensando' : swarmActionStatusLabel,
-                      status: 'running',
-                      duration_ms: swarmActionElapsedMs,
-                      default_collapsed_after_finish: false,
-                      default_expanded_while_running: true,
-                      child_trace_ids: [
-                        `swarm-live-reasoning-${activeSwarmId || swarmCardId}`,
-                        `swarm-live-model-${activeSwarmId || swarmCardId}`,
-                      ],
-                      related_task_ids: activeSwarmId ? [activeSwarmId] : [],
-                      items: [
-                        {
-                          trace_id: `swarm-live-reasoning-${activeSwarmId || swarmCardId}`,
-                          kind: 'reasoning',
-                          subsystem: 'ReasoningCore',
-                          icon_id: 'reasoning-core',
-                          title: 'Razonamiento operativo en curso',
-                          summary: lastSubmittedPrompt
-                            ? `Evaluando la solicitud visible: "${lastSubmittedPrompt.length > 180 ? `${lastSubmittedPrompt.slice(0, 180).trimEnd()}…` : lastSubmittedPrompt}".`
-                            : 'Evaluando el turno actual y preparando una respuesta útil.',
-                          status: 'running',
-                          duration_ms: swarmActionElapsedMs,
-                          badge: 'live',
-                          related_task_id: activeSwarmId || undefined,
-                        },
-                        {
-                          trace_id: `swarm-live-model-${activeSwarmId || swarmCardId}`,
-                          kind: 'model',
-                          subsystem: 'ModelCore',
-                          icon_id: 'model-core',
-                          title: 'Modelo generando respuesta',
-                          summary: `El modelo está trabajando en este turno. Se muestra un resumen operativo, no razonamiento privado paso a paso.`,
-                          status: 'running',
-                          duration_ms: swarmActionElapsedMs,
-                          badge: 'running',
-                          related_task_id: activeSwarmId || undefined,
-                        },
-                      ],
-                      metadata: { source: 'swarm_live_action' },
-                    }}
-                    defaultExpanded={false}
-                  />
-                </Box>
+                <LightweightThinkingRow
+                  variant="live"
+                  label={swarmActionStatusLabel}
+                  durationMs={swarmActionElapsedMs}
+                  seedKey={activeSwarmId || swarmCardId}
+                />
               )}
 
               {swarmState.error && (
@@ -4158,7 +4189,7 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
             </Box>
           </Box>
 
-          <Box sx={{ flexShrink: 0, p: cardTokens.density.inputPadding, borderTop: `1px solid ${cardTokens.surface.border}`, bgcolor: cardTokens.surface.background }}>
+          <Box sx={{ flexShrink: 0, px: cardTokens.density.inputPadding, pt: 0.75, pb: cardTokens.density.inputPadding, borderTop: 'none', bgcolor: cardTokens.surface.bodyBackground }}>
             {pendingPreviewRefinementDraft && (
               <Box
                 sx={{

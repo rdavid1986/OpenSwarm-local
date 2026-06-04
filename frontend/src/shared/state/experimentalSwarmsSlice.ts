@@ -31,6 +31,64 @@ const initialState: ExperimentalSwarmState = {
   error: null,
 };
 
+function normalizeSwarmMessageText(value: any): string {
+  return String(
+    value?.content
+      ?? value?.message
+      ?? value?.text
+      ?? value?.body
+      ?? value
+      ?? '',
+  ).trim();
+}
+
+function appendOptimisticUserMessage(state: ExperimentalSwarmState, text: string, scopeId: string): void {
+  const cleanText = normalizeSwarmMessageText(text);
+  if (!cleanText) return;
+  const alreadyExists = state.messages.some((message: any) => {
+    const role = String(message?.role ?? message?.type ?? message?.sender ?? message?.author ?? '').toLowerCase();
+    return (role === 'user' || role === 'human') && normalizeSwarmMessageText(message) === cleanText;
+  });
+  if (alreadyExists) return;
+  const createdAt = new Date().toISOString();
+  const clientMessageId = `swarm-local-${scopeId}-${Date.now()}`;
+  state.messages.push({
+    id: clientMessageId,
+    role: 'user',
+    type: 'user',
+    sender: 'user',
+    author: 'user',
+    content: cleanText,
+    message: cleanText,
+    text: cleanText,
+    body: cleanText,
+    created_at: createdAt,
+    timestamp: createdAt,
+    client_message_id: clientMessageId,
+    optimistic: true,
+    optimistic_status: 'pending',
+  });
+}
+
+function mergeMessagesPreservingOptimistic(currentMessages: any[], incomingMessages: any[]): any[] {
+  const nextMessages = Array.isArray(incomingMessages) ? incomingMessages : [];
+  const incomingUserTexts = new Set(
+    nextMessages
+      .filter((message: any) => {
+        const role = String(message?.role ?? message?.type ?? message?.sender ?? message?.author ?? '').toLowerCase();
+        return role === 'user' || role === 'human';
+      })
+      .map(normalizeSwarmMessageText)
+      .filter(Boolean),
+  );
+  const pendingOptimistic = currentMessages.filter((message: any) => {
+    if (message?.optimistic_status !== 'pending') return false;
+    const text = normalizeSwarmMessageText(message);
+    return !!text && !incomingUserTexts.has(text);
+  });
+  return pendingOptimistic.length ? [...nextMessages, ...pendingOptimistic] : nextMessages;
+}
+
 async function readJson(res: Response): Promise<any> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail || `Request failed: ${res.status}`);
@@ -270,9 +328,10 @@ const experimentalSwarmsSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
-      .addCase(createExperimentalSwarm.pending, (state) => {
+      .addCase(createExperimentalSwarm.pending, (state, action) => {
         state.actionLoading = true;
         state.error = null;
+        appendOptimisticUserMessage(state, action.meta.arg.userPrompt, 'create');
       })
       .addCase(createExperimentalSwarm.fulfilled, (state, action) => {
         state.actionLoading = false;
@@ -280,7 +339,7 @@ const experimentalSwarmsSlice = createSlice({
         state.swarm = action.payload;
         state.events = [];
         state.artifacts = [];
-        state.messages = [];
+        state.messages = mergeMessagesPreservingOptimistic(state.messages, []);
         state.approvals = [];
         state.pendingCount = 0;
       })
@@ -299,7 +358,7 @@ const experimentalSwarmsSlice = createSlice({
         state.swarm = mergeSwarmPreservingImplementation(state.swarm, action.payload.swarm);
         state.events = action.payload.events.events || [];
         state.artifacts = action.payload.artifacts.artifacts || [];
-        state.messages = action.payload.messages.messages || [];
+        state.messages = mergeMessagesPreservingOptimistic(state.messages, action.payload.messages.messages || []);
         state.approvals = action.payload.approvals.approvals || [];
         state.pendingCount = action.payload.approvals.pending_count || 0;
       })
@@ -307,6 +366,11 @@ const experimentalSwarmsSlice = createSlice({
         state.actionLoading = true;
         state.error = null;
         if (action.meta.arg.swarmId) state.selectedSwarmId = action.meta.arg.swarmId;
+        appendOptimisticUserMessage(
+          state,
+          action.meta.arg.composerPayload?.prompt || action.meta.arg.message,
+          action.meta.arg.swarmId || 'chat',
+        );
       })
       .addCase(chatExperimentalSwarm.fulfilled, (state, action) => {
         if (action.meta.arg.swarmId && state.selectedSwarmId && state.selectedSwarmId !== action.meta.arg.swarmId) return;
@@ -316,7 +380,7 @@ const experimentalSwarmsSlice = createSlice({
         state.swarm = action.payload;
         state.events = action.payload.events || [];
         state.artifacts = action.payload.artifacts || [];
-        state.messages = action.payload.messages || [];
+        state.messages = mergeMessagesPreservingOptimistic(state.messages, action.payload.messages || []);
         state.approvals = action.payload.experimental_approvals || [];
         state.pendingCount = (action.payload.experimental_approvals || []).filter((approval: any) => approval.status === 'pending').length;
       })

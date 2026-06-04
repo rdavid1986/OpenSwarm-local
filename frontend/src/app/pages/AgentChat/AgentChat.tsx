@@ -39,17 +39,12 @@ import ApprovalBar, { BatchApprovalBar } from './ApprovalBar';
 import ChatInput, { ChatInputHandle } from './ChatInput';
 import ContextDrawer from './ContextDrawer';
 import { ErrorSlime } from '@/app/components/ErrorSlime';
-import LongRunningTaskMonitor from '@/app/components/LongRunningTaskMonitor';
-import ChatDebugContextView from '@/app/components/ChatDebugContextView';
-import ProjectMemoryContextPanel from '@/app/components/ProjectMemoryContextPanel';
-import AgentHandoffPanel from '@/app/components/AgentHandoffPanel';
-import RemoteTaskStateContractPanel from '@/app/components/RemoteTaskStateContractPanel';
-import ChatSurfaceAuditPanel from '@/app/components/ChatSurfaceAuditPanel';
 import { ContextPath } from '@/app/components/DirectoryBrowser';
 import DiffViewer from './DiffViewer';
 import { setGlowingBrowserCards, fadeGlowingBrowserCards, clearGlowingBrowserCards } from '@/shared/state/dashboardLayoutSlice';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
-import { ProcessTraceTurnDropdown, normalizeProcessTraceTurnContainer } from '../Dashboard/ProcessTraceDropdown';
+import { normalizeProcessTraceTurnContainer } from '../Dashboard/ProcessTraceDropdown';
+import LightweightThinkingRow from '@/app/components/LightweightThinkingRow';
 
 const CONTEXT_WINDOWS: Record<string, number> = {
   sonnet: 200_000,
@@ -193,6 +188,10 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [showResumeBubble, setShowResumeBubble] = useState(false);
   const [awaitingResponse, setAwaitingResponse] = useState(false);
+  const [agentThinkingElapsedMs, setAgentThinkingElapsedMs] = useState(0);
+  const [lastAgentThinkingDurationMs, setLastAgentThinkingDurationMs] = useState<number | null>(null);
+  const agentThinkingStartedAtRef = useRef<number | null>(null);
+  const agentThinkingDurationsByMessageIdRef = useRef<Record<string, number>>({});
   const [activatingMcp, setActivatingMcp] = useState<string | null>(null);
   const [activateError, setActivateError] = useState<string | null>(null);
   const [activateStatus, setActivateStatus] = useState<string | null>(null);
@@ -290,6 +289,25 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
   }, [id, isDraft, mode, model, session?.system_prompt, session?.target_directory, dispatch]);
 
   const agentBusy = awaitingResponse || (!isDraft && (session?.status === 'running' || session?.status === 'waiting_approval'));
+  const agentThinkingLive = awaitingResponse || (!isDraft && session?.status === 'running' && !session.streamingMessage);
+  useEffect(() => {
+    if (!agentThinkingLive) {
+      if (agentThinkingStartedAtRef.current != null) {
+        setLastAgentThinkingDurationMs(Math.max(0, Date.now() - agentThinkingStartedAtRef.current));
+        agentThinkingStartedAtRef.current = null;
+      }
+      setAgentThinkingElapsedMs(0);
+      return undefined;
+    }
+    const startedAt = Date.now();
+    agentThinkingStartedAtRef.current = startedAt;
+    setAgentThinkingElapsedMs(0);
+    const timer = window.setInterval(() => {
+      setAgentThinkingElapsedMs(Math.max(0, Date.now() - startedAt));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [agentThinkingLive, session?.id]);
+
 
   const prevStatusRef = useRef(session?.status);
   useEffect(() => {
@@ -719,6 +737,11 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
     return null;
   }, [renderItems]);
 
+  useEffect(() => {
+    if (!lastAgentThinkingDurationMs || !latestAssistantMessageId) return;
+    agentThinkingDurationsByMessageIdRef.current[latestAssistantMessageId] = lastAgentThinkingDurationMs;
+  }, [lastAgentThinkingDurationMs, latestAssistantMessageId]);
+
   const groupMetaRequestedRef = useRef<Set<string>>(new Set());
   const groupMetaRefinedRef = useRef<Set<string>>(new Set());
 
@@ -805,8 +828,11 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
     );
   }
 
-  const isActive = session.status === 'running' || session.status === 'waiting_approval' || session.status === 'draft';
-  const statusStyle = STATUS_STYLES[session.status] || { color: c.text.tertiary, bg: c.bg.secondary };
+  const visualSessionStatus = agentBusy
+    ? (session.status === 'waiting_approval' ? 'waiting_approval' : 'running')
+    : session.status;
+  const isActive = visualSessionStatus === 'running' || visualSessionStatus === 'waiting_approval' || visualSessionStatus === 'draft';
+  const statusStyle = STATUS_STYLES[visualSessionStatus] || { color: c.text.tertiary, bg: c.bg.secondary };
 
   return (
     <Box sx={{ display: 'flex', height: '100%' }}>
@@ -829,7 +855,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                 <Typography noWrap sx={{ color: c.text.primary, fontWeight: 600 }}>{session.name}</Typography>
                 {!isDraft && statusStyle && (
                   <Chip
-                    label={session.status.replace('_', ' ')}
+                    label={visualSessionStatus.replace('_', ' ')}
                     size="small"
                     sx={{
                       bgcolor: statusStyle.bg,
@@ -1156,42 +1182,6 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                 return (
                   <React.Fragment key={item.id}>
                     <ToolCallBubble call={item.call} result={item.result} isPending={isPending} sessionId={session.id} />
-                    <Box sx={{ mt: 0.65, mb: 0.75 }}>
-                      <ProcessTraceTurnDropdown
-                        container={{
-                          turn_trace_kind: 'process_trace_turn_container',
-                          turn_trace_version: 'openswarm.process_trace_turn_container.v1',
-                          turn_trace_id: `agent-tool-turn-${item.id}`,
-                          title: isPending ? 'Ejecutando' : 'Ejecutado',
-                          status: isPending ? 'running' : 'completed',
-                          default_expanded_while_running: isPending,
-                          child_trace_ids: [`agent-tool-trace-${item.id}`],
-                          related_agent_ids: [session.id],
-                          items: [{
-                            trace_id: `agent-tool-trace-${item.id}`,
-                            kind: 'tool',
-                            subsystem: 'ToolCore',
-                            icon_id: 'tool-core',
-                            title: isPending ? 'Tool action live' : 'Tool action',
-                            summary: isPending ? `Running ${toolName}.` : `Tool ${toolName} completed or returned a result.`,
-                            status: isPending ? 'running' : 'completed',
-                            badge: isPending ? 'running' : 'tool',
-                            related_agent_id: session.id,
-                            related_action_id: toolName,
-                            details: {
-                              mode,
-                              model,
-                              tool: toolName,
-                              pending: isPending,
-                              result_available: item.result !== null,
-                              branch_id: (item.call as any)?.branch_id || null,
-                            },
-                          }],
-                          metadata: { source: 'agent_tool_pair' },
-                        }}
-                        defaultExpanded={isPending}
-                      />
-                    </Box>
                     {compactionChip}
                   </React.Fragment>
                 );
@@ -1219,19 +1209,22 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
                   } : null))
                 : null;
               const backendProcessTraceTurn = normalizeProcessTraceTurnContainer(rawProcessTraceTurn);
+              const agentMessageThoughtDurationMs = (backendProcessTraceTurn as any)?.duration_ms
+                ?? agentThinkingDurationsByMessageIdRef.current[msg.id]
+                ?? (msg.id === latestAssistantMessageId ? lastAgentThinkingDurationMs : null);
               return (
                 <Box key={msg.id} sx={{ '&:hover .msg-actions': { opacity: 1 } }}>
-                  {msg.role === 'assistant' && backendProcessTraceTurn && (
-                    <Box sx={{ mb: 0.75 }}>
-                      <ProcessTraceTurnDropdown
-                        container={backendProcessTraceTurn}
-                        bare
-                        defaultExpanded={backendProcessTraceTurn.status === 'running' || backendProcessTraceTurn.status === 'failed' || backendProcessTraceTurn.status === 'warning'}
-                      />
-                    </Box>
+                  {msg.role === 'assistant' && agentMessageThoughtDurationMs != null && (
+                    <LightweightThinkingRow
+                      variant="completed"
+                      durationMs={agentMessageThoughtDurationMs}
+                    />
                   )}
                   <MessageBubble
-                    message={msg}
+                    message={{
+                      ...msg,
+                      timestamp: msg.timestamp || (msg as any).created_at || (msg as any).createdAt || (msg as any).sent_at || (msg as any).sentAt,
+                    }}
                     editing={isEditing}
                     onSaveEdit={handleSaveEdit}
                     onCancelEdit={handleCancelEdit}
@@ -1300,37 +1293,12 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
               )
             )}
             {(awaitingResponse || (session.status === 'running' && !session.streamingMessage)) && (
-              <Box sx={{ my: 0.75 }}>
-                <ProcessTraceTurnDropdown
-                  title={session.turn_label?.label || 'Pensando'}
-                  status="running"
-                  defaultExpanded={false}
-                  items={[
-                    {
-                      trace_id: `agent-live-reasoning-${session.id}`,
-                      kind: 'reasoning',
-                      subsystem: 'ReasoningCore',
-                      icon_id: 'reasoning-core',
-                      title: 'Razonamiento operativo en curso',
-                      summary: `Evaluando el turno actual y preparando una respuesta en modo ${session.mode || 'chat'}.`,
-                      status: 'running',
-                      badge: 'live',
-                      related_agent_id: session.id,
-                    },
-                    {
-                      trace_id: `agent-live-thinking-${session.id}`,
-                      kind: 'thinking',
-                      subsystem: 'ModelCore',
-                      icon_id: 'model-core',
-                      title: 'Modelo generando respuesta',
-                      summary: `El modelo estÃ¡ trabajando. Se muestra un resumen operativo, no razonamiento privado paso a paso.`,
-                      status: 'running',
-                      badge: 'running',
-                      related_agent_id: session.id,
-                    },
-                  ]}
-                />
-              </Box>
+              <LightweightThinkingRow
+                variant="live"
+                label={session.turn_label?.label || 'Thinking'}
+                durationMs={agentThinkingElapsedMs}
+                seedKey={session.id}
+              />
             )}
             {showResumeBubble && session.status === 'stopped' && (
               <Box sx={{ display: 'flex', justifyContent: 'flex-start', my: 0.75 }}>
@@ -1424,78 +1392,6 @@ const AgentChat: React.FC<AgentChatProps> = ({ sessionId: sessionIdProp, onClose
           </Box>
         ) : (
           <Box>
-          <LongRunningTaskMonitor
-            visible={agentBusy}
-            title="Chat task monitor"
-            status={session?.status === 'waiting_approval' ? 'waiting_approval' : agentBusy ? 'running' : 'idle'}
-            surfaceLabel="AgentChat"
-            sessionId={id}
-            mode={mode}
-            model={model}
-            queueCount={0}
-            pendingApprovalsCount={session?.pending_approvals?.length || 0}
-            traceCount={Object.keys(session?.tool_group_meta || {}).length}
-            latestActivity={latestAgentActivity}
-            onStop={sessionRunning ? handleStop : undefined}
-            stopLabel="Stop"
-          />
-          <ChatDebugContextView
-            title="Agent debug context"
-            runtime={{
-              surfaceLabel: 'AgentChat',
-              sessionId: session.id,
-              status: session.status,
-              mode,
-              model,
-              queueCount: 0,
-              pendingApprovalsCount: session.pending_approvals.length,
-              traceCount: activeBranchMessages.filter((m: any) => m.process_trace_turn || m.process_trace_turn_container || m.trace_turn || m.turnTrace || m.traceItems || m.process_trace_items).length,
-              evidenceCount: activeBranchMessages.filter((m: any) => m.evidence_refs || m.evidenceRefs || m.sources || m.citations).length,
-              artifactCount: 0,
-              latestActivity: session.streamingMessage ? 'Streaming response' : (agentBusy ? 'Agent is running' : null),
-            }}
-            processTraceItems={activeBranchMessages.flatMap((m: any) => m.traceItems || m.process_trace_items || m.process_trace_turn?.items || m.process_trace_turn_container?.items || [])}
-            compact
-          />
-          <ProjectMemoryContextPanel
-            processTraceItems={activeBranchMessages.flatMap((m: any) => m.traceItems || m.process_trace_items || m.process_trace_turn?.items || m.process_trace_turn_container?.items || [])}
-            compact
-          />
-          <AgentHandoffPanel
-            processTraceItems={activeBranchMessages.flatMap((m: any) => m.traceItems || m.process_trace_items || m.process_trace_turn?.items || m.process_trace_turn_container?.items || [])}
-            compact
-          />
-          <RemoteTaskStateContractPanel
-            snapshot={{
-              surfaceLabel: 'AgentChat',
-              taskId: session.id,
-              status: session.status,
-              host: 'local',
-              provider: connectionMode,
-              model,
-              mode,
-              approvalsCount: session.pending_approvals.length,
-              connectionState: session.connection_state || 'local_visible',
-              progressLabel: agentBusy ? 'running' : 'idle',
-            }}
-            compact
-          />
-          <ChatSurfaceAuditPanel
-            snapshot={{
-              surfaceLabel: 'AgentChat',
-              actions: ['copy', 'edit user message', 'regenerate assistant response', 'branch chat', 'stop when running', 'stop when running'],
-              disabledActions: ['pin without persistence handler', 'pause/convert without scheduler'],
-              contextCount: 0,
-              traceCount: activeBranchMessages.filter((m: any) => m.process_trace_turn || m.process_trace_turn_container || m.trace_turn || m.turnTrace || m.traceItems || m.process_trace_items).length,
-              evidenceCount: activeBranchMessages.filter((m: any) => m.evidence_refs || m.evidenceRefs || m.sources || m.citations).length,
-              queueCount: 0,
-              monitorVisible: agentBusy,
-              accessibilityNotes: ['collapsed panels use labelled toggles', 'disabled actions explain missing handlers'],
-              densityNotes: ['compact chips', 'collapsed by default'],
-              performanceNotes: ['no full prompt dumps', 'bounded refs and trace counts'],
-            }}
-            compact
-          />
               {(() => {
                 // Proactive Haiku-overflow warning. Each connected MCP adds
                 // a sizeable tools-schema chunk to every Claude request;

@@ -1,20 +1,21 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { launchAndSendFirstMessage } from './agentsSlice';
 import { API_BASE } from '@/shared/config';
+export const DEFAULT_CARD_W = 480;
+export const DEFAULT_CARD_H = 280;
+export const EXPANDED_CARD_MIN_H = 620;
+export const DEFAULT_SWARM_CARD_W = DEFAULT_CARD_W;
+export const DEFAULT_SWARM_CARD_H = EXPANDED_CARD_MIN_H;
+
 
 const DASHBOARDS_API = `${API_BASE}/dashboards`;
 
-export const DEFAULT_CARD_W = 480;
-export const DEFAULT_CARD_H = 280;
 export const DEFAULT_VIEW_CARD_W = 1280;
 export const DEFAULT_VIEW_CARD_H = 800;
 export const DEFAULT_BROWSER_CARD_W = 1280;
 export const DEFAULT_BROWSER_CARD_H = 800;
 export const DEFAULT_PLANS_CARD_W = 720;
 export const DEFAULT_PLANS_CARD_H = 560;
-export const DEFAULT_SWARM_CARD_W = 900;
-export const DEFAULT_SWARM_CARD_H = 620;
-export const EXPANDED_CARD_MIN_H = 620;
 export const GRID_GAP = 24;
 const GRID_ORIGIN = { x: 40, y: 100 };
 const GRID_COLS_FALLBACK = 4;
@@ -496,7 +497,7 @@ const dashboardLayoutSlice = createSlice({
       const { swarmCardId, width, height } = action.payload;
       const card = state.swarmCards[swarmCardId];
       if (card) {
-        card.width = Math.max(460, width);
+        card.width = Math.max(DEFAULT_CARD_W, width);
         card.height = Math.max(360, height);
       }
     },
