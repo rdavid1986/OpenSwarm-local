@@ -22,3 +22,5 @@ __all__ = [
     "build_ide_theme_diagnostic_report",
     "build_ide_theme_source_adapter",
 ]
+
+from .api import theme_compat
