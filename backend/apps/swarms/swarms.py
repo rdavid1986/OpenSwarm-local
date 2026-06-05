@@ -1883,12 +1883,26 @@ def _project_intake_question_title(question_id: str) -> str:
     return str((question or {}).get("title") or question_id)
 
 
+def _project_intake_plan_value(plan: dict[str, Any], key: str, fallback: str = "no definido") -> str:
+    value = plan.get(key) if isinstance(plan, dict) else None
+    text = str(value).strip() if value is not None else ""
+    return text if text else fallback
+
+
 def _project_intake_inferred_decisions(state: dict[str, Any], plan: dict[str, Any]) -> list[tuple[str, Any]]:
     decisions: list[tuple[str, Any]] = []
+    title_overrides = {
+        "backend": "Backend deseado",
+        "database": "Base de datos",
+        "auth": "Autenticación",
+        "payments": "Pagos",
+    }
     for question_id in sorted(_project_intake_skipped_questions(state)):
         value = plan.get(question_id)
-        if value is not None:
-            decisions.append((_project_intake_question_title(question_id), value))
+        safe_value = _project_intake_plan_value({"value": value}, "value", fallback="")
+        if safe_value:
+            title = title_overrides.get(question_id, _project_intake_question_title(question_id))
+            decisions.append((title, safe_value))
     return decisions
 
 
@@ -1931,18 +1945,36 @@ def _project_intake_question_payload(state: dict[str, Any]) -> dict[str, Any]:
 async def _start_project_intake(swarm, user_message: str, model: str = "qwen2.5-coder:14b") -> tuple[str, dict[str, Any]]:
     now = _project_intake_now()
     fallback_profile = _infer_project_intake_profile(user_message)
-    # Temporary short intake for testing: avoid model policy latency.
-    policy = {
-        "source": "short_test_fallback",
-        "profile": fallback_profile.get("profile") or "quick_project",
-        "confidence": fallback_profile.get("confidence", 0.6),
-        "skipped_questions": [],
-        "question_overrides": {},
-        "reason": "Short test intake: fixed three-question App Builder flow; model policy disabled for faster local testing.",
-        "provider_health": None,
+    project_memory_source = {
+        "id": getattr(swarm, "id", None),
+        "dashboard_id": getattr(swarm, "dashboard_id", None),
+        "user_prompt": getattr(swarm, "user_prompt", None),
+        "project_intake_state": getattr(swarm, "project_intake_state", None),
+        "final_result": getattr(swarm, "final_result", None),
+        "artifacts": getattr(swarm, "artifacts", None),
+        "evidence": getattr(swarm, "evidence", None),
+        "final_evidence": getattr(swarm, "final_evidence", None),
+        "output_bridge": getattr(swarm, "output_bridge", None),
+        "implementation_state": getattr(swarm, "implementation_state", None),
     }
-    skipped_questions = []
-    question_overrides = {}
+    policy = await resolve_dynamic_intake_policy(
+        user_message=user_message,
+        questions=_project_intake_questions(),
+        fallback_profile=fallback_profile,
+        model=model,
+        project_memory_source=project_memory_source,
+        intent_brief=build_intent_brief(swarm, user_message=user_message),
+    )
+    skipped_questions = [
+        str(question_id)
+        for question_id in policy.get("skipped_questions", [])
+        if str(question_id).strip()
+    ]
+    question_overrides = (
+        dict(policy.get("question_overrides"))
+        if isinstance(policy.get("question_overrides"), dict)
+        else {}
+    )
     intake_profile = {
         "profile": policy.get("profile") or fallback_profile.get("profile"),
         "confidence": policy.get("confidence", fallback_profile.get("confidence")),
@@ -2047,15 +2079,15 @@ def _build_project_intake_message(state: dict[str, Any]) -> str:
             "Listo: ya tengo información suficiente para un plan preliminar.",
             "",
             "Plan preliminar:",
-            f"- Tipo: {plan.get('app_type', 'no definido')}",
-            f"- Objetivo: {plan.get('main_goal', 'no definido')}",
-            f"- Usuarios: {plan.get('target_users', 'no definido')}",
-            f"- Stack sugerido: {plan.get('frontend', 'no definido')} + {plan.get('backend', 'no definido')} + {plan.get('database', 'no definido')}",
-            f"- Autenticación: {plan.get('auth', 'no definido')}",
-            f"- Pagos: {plan.get('payments', 'no definido')}",
-            f"- Deploy: {plan.get('deploy', 'no definido')}",
-            f"- Prioridad MVP: {plan.get('mvp_priority', 'no definido')}",
-            f"- Fuera del MVP: {plan.get('out_of_scope', 'no definido')}",
+            f"- Tipo: {_project_intake_plan_value(plan, 'app_type')}",
+            f"- Objetivo: {_project_intake_plan_value(plan, 'main_goal')}",
+            f"- Usuarios: {_project_intake_plan_value(plan, 'target_users')}",
+            f"- Stack sugerido: {_project_intake_plan_value(plan, 'frontend')} + {_project_intake_plan_value(plan, 'backend')} + {_project_intake_plan_value(plan, 'database')}",
+            f"- Autenticación: {_project_intake_plan_value(plan, 'auth')}",
+            f"- Pagos: {_project_intake_plan_value(plan, 'payments')}",
+            f"- Deploy: {_project_intake_plan_value(plan, 'deploy')}",
+            f"- Prioridad MVP: {_project_intake_plan_value(plan, 'mvp_priority')}",
+            f"- Fuera del MVP: {_project_intake_plan_value(plan, 'out_of_scope')}",
         ]
 
         inferred_decisions = _project_intake_inferred_decisions(state, plan)
@@ -2065,7 +2097,8 @@ def _build_project_intake_message(state: dict[str, Any]) -> str:
                 "Decisiones inferidas por intake adaptado:",
             ])
             for title, value in inferred_decisions:
-                lines.append(f"- {title}: {value}")
+                safe_value = _project_intake_plan_value({"value": value}, "value")
+                lines.append(f"- {title}: {safe_value}")
 
             policy = state.get("question_policy") if isinstance(state.get("question_policy"), dict) else {}
             policy_reason = str(policy.get("reason") or "").strip()
