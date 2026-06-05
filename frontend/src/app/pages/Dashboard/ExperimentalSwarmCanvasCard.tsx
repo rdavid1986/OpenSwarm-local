@@ -1769,6 +1769,7 @@ function buildSwarmCardProcessTraceItems(params: {
   finalAuditModel?: SwarmFinalAuditModel | null;
   runtimeE2EIntegration?: any;
   chatMessageCount: number;
+  decisions?: any[];
 }): ProcessTraceItem[] {
   const status: ProcessTraceItem['status'] = params.actionLoading
     ? 'running'
@@ -1903,6 +1904,42 @@ function buildSwarmCardProcessTraceItems(params: {
         claim_guard_status: params.finalResult?.claim_guard?.status || null,
       },
     });
+  }
+
+  const subagentDecisionItems = (params.decisions || [])
+    .map((decision: any, index: number): ProcessTraceItem | null => {
+      const metadata = asPlainRecord(decision?.metadata);
+      const subagentDecision = asPlainRecord(metadata.subagent_decision);
+      if (!subagentDecision || subagentDecision.kind !== 'subagent_creation_decision') return null;
+      const createdRoles = Array.isArray(subagentDecision.created_roles) ? subagentDecision.created_roles : [];
+      const skippedRoles = Array.isArray(subagentDecision.skipped_roles) ? subagentDecision.skipped_roles : [];
+      return {
+        trace_id: `swarm-subagent-decision-${params.activeSwarmId || 'new'}-${index}`,
+        kind: 'subagent',
+        subsystem: 'MiniAgentCore',
+        title: 'Subagent creation decision',
+        summary: renderText(subagentDecision.reason, 'Subagent creation decision recorded.', 420),
+        status: normalizeStatusValue(decision?.status) === 'rejected' ? 'warning' : 'completed',
+        icon_id: 'miniagent-core',
+        badge: 'subagents',
+        related_task_id: params.activeSwarmId || '',
+        details: {
+          source_kind: 'dag_subagent_decision',
+          created_roles: createdRoles,
+          skipped_roles: skippedRoles,
+          task_count: subagentDecision.task_count ?? null,
+          backend_detected: subagentDecision.backend_detected ?? null,
+          database_detected: subagentDecision.database_detected ?? null,
+        },
+        metadata: {
+          source_kind: 'dag_subagent_decision',
+        },
+      };
+    })
+    .filter((item): item is ProcessTraceItem => Boolean(item));
+
+  for (const item of subagentDecisionItems.slice(-2)) {
+    items.push(item);
   }
 
   if (params.finalAuditModel && (params.activeSwarmId || params.finalAuditModel.counts.tasks || params.finalAuditModel.counts.events || params.finalAuditModel.counts.artifacts || params.finalAuditModel.counts.evidence || params.finalAuditModel.counts.approvals)) {
@@ -2463,12 +2500,14 @@ const ExperimentalSwarmCanvasCard: React.FC<Props> = ({
       finalAuditModel,
       runtimeE2EIntegration: (activeSwarm as any)?.runtime_e2e_integration,
       chatMessageCount: chatMessages.length,
+      decisions: Array.isArray((activeSwarm as any)?.decisions) ? (activeSwarm as any).decisions : [],
     }),
     [
       activeSwarm,
       activeSwarmId,
       activeSwarmMode,
       activeSwarmModel,
+      activeSwarm?.decisions,
       implementationMeta.label,
       implementationStatus,
       implementationVisualState,
