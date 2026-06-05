@@ -1,4 +1,4 @@
-﻿from copy import deepcopy
+from copy import deepcopy
 
 from backend.apps.runtime_timing import finish_runtime_timer, start_runtime_timer
 from backend.apps.swarms.agent_handoff import build_miniagent_handoff
@@ -582,3 +582,23 @@ def test_builder_from_miniagent_and_handoff_trace_sources():
     assert handoff_item["subsystem"] == "HandoffCore"
     assert handoff_item["related_task_id"] == "task2"
     assert handoff_item["artifact_refs"] == ["art1"]
+
+
+def test_builder_from_dag_subagent_decision_source():
+    source = {
+        "source_kind": "dag_subagent_decision",
+        "created_roles": ["ArchitectAgent", "DocumentationAgent"],
+        "skipped_roles": ["BackendAgent"],
+        "task_count": 6,
+        "backend_detected": False,
+        "database_detected": False,
+        "reason": "Backend role not required.",
+    }
+
+    item = build_process_trace_item_from_source(source)
+
+    assert normalize_process_trace_source_kind(source) == "dag_subagent_decision"
+    assert item["kind"] == "subagent"
+    assert item["subsystem"] == "MiniAgentCore"
+    assert item["details"]["task_count"] == 6
+    assert item["details"]["backend_detected"] is False

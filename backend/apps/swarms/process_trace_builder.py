@@ -256,6 +256,9 @@ def normalize_process_trace_source_kind(source: Any) -> str:
         return "tool_trace"
     if explicit_source in {"action_trace", "pending_action", "approval", "action_result"}:
         return "action_trace"
+    if explicit_source == "dag_subagent_decision":
+        return "dag_subagent_decision"
+
     if explicit_source in {"validation_trace", "structured_output_validation"}:
         return "validation_trace"
     if explicit_source in {"skill_trace", "skill_use", "skill_result"}:
@@ -581,6 +584,28 @@ def build_file_workspace_trace_item(data: dict[str, Any]) -> dict[str, Any]:
             "affected_paths": affected_paths,
             "file_operation_kind": data.get("file_operation_kind") or "unavailable",
         },
+    )
+
+
+def build_dag_subagent_decision_trace_item(data: dict[str, Any]) -> dict[str, Any]:
+    created = data.get("created_roles") if isinstance(data.get("created_roles"), list) else []
+    skipped = data.get("skipped_roles") if isinstance(data.get("skipped_roles"), list) else []
+
+    return build_process_trace_item(
+        trace_id=data.get("trace_id") or "dag_subagent_decision",
+        kind="subagent",
+        subsystem="MiniAgentCore",
+        title="Subagent creation decision",
+        summary=data.get("reason") or "Subagent creation decision recorded.",
+        status="completed",
+        details={
+            "created_roles": created,
+            "skipped_roles": skipped,
+            "task_count": data.get("task_count"),
+            "backend_detected": data.get("backend_detected"),
+            "database_detected": data.get("database_detected"),
+        },
+        visible_to_user=True,
     )
 
 
@@ -2677,6 +2702,9 @@ def build_process_trace_item_from_source(source: Any) -> dict[str, Any]:
         item = build_tool_trace_item(data)
     elif source_kind == "action_trace":
         item = build_action_trace_item(data)
+    elif source_kind == "dag_subagent_decision":
+        item = build_dag_subagent_decision_trace_item(data)
+
     elif source_kind == "validation_trace":
         item = build_process_trace_item(
             trace_id=data.get("trace_id") or data.get("id"),
