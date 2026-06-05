@@ -270,6 +270,14 @@ def test_app_builder_static_site_intake_skips_irrelevant_questions(monkeypatch, 
     assert state["intake_profile"]["profile"] == "static_site"
     assert set(state["skipped_questions"]) == {"backend", "database", "auth", "payments"}
 
+    envelope = state["task_envelope"]
+    assert envelope["mode"] == "app_builder"
+    assert envelope["creation_type"] == "web"
+    assert envelope["trace_context"]["source"] == "project_intake"
+    assert envelope["trace_context"]["intake_source"] == "swarm_app_builder_intake"
+    assert envelope["trace_context"]["intake_rebase_target"] == "task_envelope"
+    assert envelope["trace_context"]["needs_clarification"] is False
+
     seen_questions = [state["current_question_id"]]
     while body["project_intake_state"]["status"] != "ready_to_implement":
         current_id = body["project_intake_state"]["current_question_id"]
