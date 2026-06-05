@@ -96,6 +96,7 @@ from backend.apps.swarms.context_clarification import resolve_model_context_clar
 from backend.apps.swarms.dynamic_intake_policy import resolve_dynamic_intake_policy
 from backend.apps.swarms.dynamic_intake_plan import enrich_dynamic_intake_plan
 from backend.apps.swarms.task_envelope import build_task_envelope_from_swarm_input, dump_task_envelope
+from backend.apps.swarms.side_effect_policy import build_side_effect_policy_from_task_envelope, dump_side_effect_policy
 from backend.apps.swarms.intent_brief import build_intent_brief
 from backend.apps.swarms.model_response_contract import build_model_response_contract_prompt
 from backend.apps.swarms.state_context import build_state_context_payload, build_state_context_prompt
@@ -984,6 +985,30 @@ def _visible_refinement_chat_message(user_message: str) -> str:
     requested_change = str(refinement.get("requested_change") or "").strip()
     return requested_change or user_message
 
+
+
+
+def _attach_pending_action_side_effect_policy(swarm, resolution: dict[str, Any]) -> dict[str, Any]:
+    attached = dict(resolution)
+    final_result = getattr(swarm, "final_result", None)
+    project_intake_state = final_result.get("project_intake_state") if isinstance(final_result, dict) else None
+    task_envelope = project_intake_state.get("task_envelope") if isinstance(project_intake_state, dict) else None
+    if not isinstance(task_envelope, dict) or not task_envelope:
+        return attached
+    if not any(key in task_envelope for key in ("side_effect_policy", "task_id", "objective", "requested_outputs", "creation_type")):
+        return attached
+
+    side_effect_policy = dump_side_effect_policy(
+        build_side_effect_policy_from_task_envelope(
+            task_envelope,
+            approval_id=str(attached.get("approval_id") or "").strip() or None,
+            policy_matrix_ref=str(attached.get("policy_matrix_ref") or "").strip() or None,
+            tool_name=str(attached.get("tool_name") or attached.get("pending_action") or "").strip() or None,
+            tool_input=attached.get("tool_input") if isinstance(attached.get("tool_input"), dict) else None,
+        )
+    )
+    attached["side_effect_policy"] = side_effect_policy
+    return attached
 
 def _get_pending_refinement_request(swarm) -> dict[str, Any] | None:
     final_result = getattr(swarm, "final_result", None)
@@ -2736,7 +2761,7 @@ def _pending_refinement_payload(
         "route": "refinement_request",
         "swarm_mode": swarm_mode,
         "refinement_request": refinement_request,
-        "pending_action_resolution": resolution,
+        "pending_action_resolution": _attach_pending_action_side_effect_policy(swarm, resolution),
     }
     if prepare_metadata is not None:
         payload["prepare_output_refinement"] = {
