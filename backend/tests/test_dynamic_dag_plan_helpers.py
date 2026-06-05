@@ -143,3 +143,96 @@ def test_select_dag_template_static_label_with_real_database_stays_implementatio
     )
 
     assert SwarmOrchestrator._select_dag_template(plan) == "implementation_brief"
+
+
+def _task_types_for_topological_order(swarm):
+    from backend.apps.agents.runtime.experimental_dag_dependency_runner import ExperimentalDAGDependencyRunner
+    from backend.apps.agents.runtime.experimental_task_type_registry import classify_experimental_task
+
+    runner = ExperimentalDAGDependencyRunner()
+    ordered = runner._topological_sort(swarm)
+    return [classify_experimental_task(task) for task in ordered]
+
+
+def test_static_app_dag_topological_phase_order_keeps_consolidate_last(tmp_path):
+    orchestrator = SwarmOrchestrator()
+    orchestrator.store.root = tmp_path
+    swarm = orchestrator.create_swarm(
+        user_prompt="crear landing estatica",
+        dashboard_id="dashboard-test",
+        intent="chat",
+    )
+
+    updated = orchestrator.ensure_static_app_dag(
+        swarm_id=swarm.id,
+        generated_plan={
+            "app_type": "landing page",
+            "frontend": "HTML/CSS",
+            "backend": "no backend",
+            "database": "no database",
+        },
+    )
+
+    assert _task_types_for_topological_order(updated) == [
+        "architecture_plan_execute",
+        "frontend_plan_execute",
+        "backend_plan_execute",
+        "security_review_execute",
+        "create_static_app",
+        "review_static_app",
+        "validation_execute",
+        "consolidate_final",
+    ]
+
+
+def test_implementation_brief_dag_topological_phase_order_keeps_consolidate_last(tmp_path):
+    orchestrator = SwarmOrchestrator()
+    orchestrator.store.root = tmp_path
+    swarm = orchestrator.create_swarm(
+        user_prompt="crear app con backend",
+        dashboard_id="dashboard-test",
+        intent="chat",
+    )
+
+    updated = orchestrator.ensure_readme_dag(
+        swarm_id=swarm.id,
+        generated_plan={
+            "app_type": "web app",
+            "frontend": "React",
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        },
+    )
+
+    assert _task_types_for_topological_order(updated) == [
+        "architecture_plan_execute",
+        "frontend_plan_execute",
+        "backend_plan_execute",
+        "security_review_execute",
+        "create_readme",
+        "review_readme",
+        "validation_execute",
+        "consolidate_final",
+    ]
+
+
+def test_topological_phase_order_rejects_unknown_dependency(tmp_path):
+    from backend.apps.agents.runtime.experimental_dag_dependency_runner import ExperimentalDAGDependencyRunner
+
+    orchestrator = SwarmOrchestrator()
+    orchestrator.store.root = tmp_path
+    swarm = orchestrator.create_swarm(
+        user_prompt="crear app con backend",
+        dashboard_id="dashboard-test",
+        intent="chat",
+    )
+    updated = orchestrator.ensure_readme_dag(swarm_id=swarm.id)
+    updated.tasks[1].depends_on = ["missing-task"]
+
+    runner = ExperimentalDAGDependencyRunner()
+    try:
+        runner._topological_sort(updated)
+    except ValueError as exc:
+        assert "Unknown task dependencies" in str(exc)
+    else:
+        raise AssertionError("Expected unknown dependency to fail")
