@@ -247,6 +247,12 @@ def test_validated_template_dag_pipeline_records_accepted_decision():
     assert materialized.decisions[-1]["kind"] == "dag_proposal_validation"
     assert materialized.decisions[-1]["status"] == "accepted"
     assert materialized.decisions[-1]["metadata"]["template"] == "implementation_brief"
+
+    decision = materialized.decisions[-1]["metadata"]["subagent_decision"]
+    assert decision["kind"] == "subagent_creation_decision"
+    assert decision["backend_detected"] is True
+    assert decision["database_detected"] is True
+
     assert [task.id for task in materialized.tasks][-2:] == ["validation", "consolidate"]
 
 
@@ -409,6 +415,11 @@ def test_validated_model_dag_proposal_accepts_valid_model_output_without_mutatin
     assert materialized.decisions[-1]["source"] == "model_dag_proposal"
     assert materialized.decisions[-1]["status"] == "accepted"
     assert materialized.decisions[-1]["metadata"]["parse_status"] == "accepted"
+
+    decision = materialized.decisions[-1]["metadata"]["subagent_decision"]
+    assert decision["kind"] == "subagent_creation_decision"
+    assert "ArchitectAgent" in decision["created_roles"]
+    assert "DocumentationAgent" in decision["created_roles"]
 
 
 def test_validated_model_dag_proposal_rejects_parse_error_without_tasks():

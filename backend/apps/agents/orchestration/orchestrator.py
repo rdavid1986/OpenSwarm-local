@@ -1120,6 +1120,79 @@ class SwarmOrchestrator:
 
         return errors
 
+    def _build_subagent_decision_metadata(
+        self,
+        *,
+        proposal_tasks: list[dict],
+        generated_plan: dict | None = None,
+        validation_errors: list[dict] | None = None,
+    ) -> dict:
+        normalized_plan = self._normalize_generated_plan(generated_plan)
+        backend = normalized_plan.get("backend", "").lower()
+        database = normalized_plan.get("database", "").lower()
+        no_backend_signals = {"", "none", "no backend", "sin backend", "static", "backend not defined"}
+        no_database_signals = {"", "none", "no database", "sin database", "static", "database not defined"}
+        backend_detected = backend not in no_backend_signals
+        database_detected = database not in no_database_signals
+
+        all_roles = [
+            "CoordinatorAgent",
+            "PlannerAgent",
+            "ArchitectAgent",
+            "BackendAgent",
+            "FrontendAgent",
+            "TesterAgent",
+            "ReviewerAgent",
+            "SecurityAgent",
+            "DocumentationAgent",
+        ]
+        created_roles = []
+        for item in proposal_tasks:
+            role = str(item.get("role") or "")
+            if role and role not in created_roles:
+                created_roles.append(role)
+
+        skipped_roles = [role for role in all_roles if role not in created_roles]
+        task_types = [str(item.get("task_type") or "") for item in proposal_tasks]
+        validation_error_codes = [
+            str(item.get("error") or "")
+            for item in (validation_errors or [])
+            if isinstance(item, dict) and item.get("error")
+        ]
+
+        reason_parts = []
+        if not proposal_tasks:
+            reason_parts.append("No proposal tasks were available, so no specialized subagent contracts could be inferred.")
+        else:
+            reason_parts.append(
+                f"The DAG proposal uses {len(created_roles)} specialized role(s) for {len(proposal_tasks)} task(s)."
+            )
+        if backend_detected:
+            reason_parts.append("Backend requirements were detected, so backend planning/review roles remain eligible.")
+        else:
+            reason_parts.append("No real backend requirement was detected, so backend implementation subagents are not created unless a task requires them.")
+        if database_detected:
+            reason_parts.append("Database requirements were detected, so database-aware backend planning remains eligible.")
+        else:
+            reason_parts.append("No real database requirement was detected.")
+        if skipped_roles:
+            reason_parts.append("Skipped roles were not assigned because no DAG task required those specialized contracts.")
+        if validation_error_codes:
+            reason_parts.append("Validation errors are present, so the proposal is not materialized as executable swarm work.")
+
+        return {
+            "kind": "subagent_creation_decision",
+            "strategy": "dag_task_role_mapping",
+            "created_roles": created_roles,
+            "skipped_roles": skipped_roles,
+            "task_count": len(proposal_tasks),
+            "task_types": task_types,
+            "backend_detected": backend_detected,
+            "database_detected": database_detected,
+            "validation_error_codes": validation_error_codes,
+            "reason": " ".join(reason_parts),
+        }
+
     def _build_validated_model_dag_proposal_state(
         self,
         *,
@@ -1153,6 +1226,11 @@ class SwarmOrchestrator:
         ]
         proposal_tasks = [item for item in ((proposal or {}).get("tasks") or []) if isinstance(item, dict)]
         normalized_plan = self._normalize_generated_plan(generated_plan)
+        subagent_decision = self._build_subagent_decision_metadata(
+            proposal_tasks=proposal_tasks,
+            generated_plan=generated_plan,
+            validation_errors=validation_errors,
+        )
         materialized = self._record_dag_proposal_decision(
             swarm=materialized,
             source="model_dag_proposal",
@@ -1168,6 +1246,7 @@ class SwarmOrchestrator:
                 "task_ids": [str(item.get("id") or "") for item in proposal_tasks],
                 "task_types": [str(item.get("task_type") or "") for item in proposal_tasks],
                 "roles": [str(item.get("role") or "") for item in proposal_tasks],
+                "subagent_decision": subagent_decision,
             },
         )
         return materialized, validation_errors
@@ -1445,6 +1524,11 @@ class SwarmOrchestrator:
         materialized = self._materialize_dag_proposal_state(base_swarm=base_swarm, proposal=proposal)
         validation_errors = self._validate_dag_proposal_state(materialized)
         proposal_tasks = [item for item in (proposal.get("tasks") or []) if isinstance(item, dict)]
+        subagent_decision = self._build_subagent_decision_metadata(
+            proposal_tasks=proposal_tasks,
+            generated_plan=generated_plan,
+            validation_errors=validation_errors,
+        )
         materialized = self._record_dag_proposal_decision(
             swarm=materialized,
             source="template_pipeline",
@@ -1456,6 +1540,7 @@ class SwarmOrchestrator:
                 "task_ids": [str(item.get("id") or "") for item in proposal_tasks],
                 "task_types": [str(item.get("task_type") or "") for item in proposal_tasks],
                 "roles": [str(item.get("role") or "") for item in proposal_tasks],
+                "subagent_decision": subagent_decision,
             },
         )
         return materialized, validation_errors
