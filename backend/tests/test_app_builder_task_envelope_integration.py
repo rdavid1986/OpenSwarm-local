@@ -37,6 +37,8 @@ def test_app_builder_start_intake_attaches_task_envelope(monkeypatch, tmp_path):
     assert envelope["side_effect_policy"] == "none"
     assert envelope["autonomy_level"] == "direct"
     assert envelope["trace_context"]["source"] == "project_intake"
+    assert envelope["trace_context"]["intake_source"] == "swarm_app_builder_intake"
+    assert envelope["trace_context"]["intake_rebase_target"] == "task_envelope"
     assert envelope["trace_context"]["swarm_id"] == str(swarm.id)
     assert "preview" in envelope["requested_outputs"]
     assert body["final_result"]["project_intake_state"]["task_envelope"]["mode"] == "app_builder"
@@ -83,3 +85,5 @@ def test_app_builder_advance_preserves_or_backfills_task_envelope(monkeypatch, t
     assert second_envelope["mode"] == "app_builder"
     assert second_envelope["creation_type"] == first_envelope["creation_type"]
     assert second_envelope["trace_context"]["source"] == "project_intake"
+    assert second_envelope["trace_context"]["intake_source"] == "swarm_app_builder_intake"
+    assert second_envelope["trace_context"]["intake_rebase_target"] == "task_envelope"

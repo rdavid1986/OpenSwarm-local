@@ -1934,6 +1934,8 @@ def _build_project_intake_task_envelope(
             requested_outputs=["preview", "implementation_plan"],
             trace_context={
                 "source": "project_intake",
+                "intake_source": "swarm_app_builder_intake",
+                "intake_rebase_target": "task_envelope",
                 "swarm_id": str(getattr(swarm, "id", "") or ""),
                 "model": model,
             },
