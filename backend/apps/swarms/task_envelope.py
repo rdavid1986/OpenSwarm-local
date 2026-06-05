@@ -19,6 +19,7 @@ from typing import Any
 from backend.apps.modes.mode_ids import normalize_mode_id
 from backend.apps.swarms.context_clarification import infer_creation_type, resolve_context_clarification
 
+from backend.apps.swarms.model_assignment import build_phase_model_requirement, dump_phase_model_requirement
 
 KNOWN_INPUT_MODALITIES = {"text", "image", "file", "multimodal", "unknown"}
 KNOWN_RISK_PROFILES = {"low", "medium", "high", "unknown"}
@@ -215,6 +216,33 @@ def build_task_envelope_from_swarm_input(
 
     clarification_budget = max(0, min(clarification_budget, 5))
 
+    phase_model_requirement = build_phase_model_requirement(
+        phase=mode,
+        risk_profile=risk_profile,
+        side_effect_policy=side_effect_policy,
+        available_context=context,
+        requested_model=_as_text(
+            context.get("selected_model")
+            or context.get("preferred_model")
+            or context.get("default_model")
+            or context.get("model"),
+            fallback="",
+        ) or None,
+        fallback_model=_as_text(context.get("fallback_model") or context.get("model"), fallback="") or None,
+        trace_context=trace_context,
+    )
+
+    explicit_model_requirements = _clean_dict(model_requirements or context.get("model_requirements"))
+    if explicit_model_requirements:
+        model_requirements_payload = explicit_model_requirements
+    else:
+        model_requirements_payload = {
+            "phase_model_requirement": dump_phase_model_requirement(phase_model_requirement),
+            "suggested_model": phase_model_requirement.suggested_model,
+            "fallback_model": phase_model_requirement.fallback_model,
+            "selected_model": phase_model_requirement.selected_model,
+        }
+
     envelope_trace_context = {
         "source": "task_envelope",
         "mode": mode,
@@ -236,7 +264,7 @@ def build_task_envelope_from_swarm_input(
         autonomy_level=autonomy_level,
         requested_outputs=_clean_list(requested_outputs or context.get("requested_outputs")),
         constraints=_clean_list(constraints or context.get("constraints")),
-        model_requirements=_clean_dict(model_requirements or context.get("model_requirements")),
+        model_requirements=model_requirements_payload,
         trace_context=envelope_trace_context,
         clarification=clarification,
     )
