@@ -191,6 +191,7 @@ _KIND_TO_SUBSYSTEM = {
     "evidence": "EvidenceCore",
     "handoff": "HandoffCore",
     "miniagent": "MiniAgentCore",
+    "subagent": "MiniAgentCore",
     "metric": "MetricCore",
     "review": "ReviewCore",
     "browser": "BrowserCore",

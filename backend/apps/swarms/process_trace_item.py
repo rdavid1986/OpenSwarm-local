@@ -36,6 +36,7 @@ ALLOWED_KINDS = {
     "evidence",
     "handoff",
     "miniagent",
+    "subagent",
     "metric",
     "review",
     "browser",

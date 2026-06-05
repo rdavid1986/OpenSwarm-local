@@ -1428,7 +1428,7 @@ def build_project_orientation_process_trace_item(source: dict[str, Any]) -> dict
         kind = "model"
     elif source_kind == "project_orientation_agent_blueprint":
         subsystem = "SwarmCore"
-        kind = "miniagent"
+        kind = "subagent"
 
     return build_process_trace_item(
         trace_id=data.get("trace_id") or contract_kind,
