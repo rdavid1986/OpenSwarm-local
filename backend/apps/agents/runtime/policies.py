@@ -126,6 +126,26 @@ class PolicyRuntime:
                 tool_name=spec_name,
             )
 
+        side_effect_policy = metadata.get("side_effect_policy")
+        if isinstance(side_effect_policy, dict):
+            side_effect_requires_approval = bool(side_effect_policy.get("requires_approval"))
+            side_effect_blocked = bool(side_effect_policy.get("blocked"))
+            side_effect_decision = str(side_effect_policy.get("decision") or "").strip().lower()
+            if side_effect_blocked or side_effect_decision == "blocked":
+                return PolicyDecision(
+                    status="denied",
+                    allowed=False,
+                    reason="side effect policy blocks this tool call",
+                    tool_name=spec_name,
+                )
+            if side_effect_requires_approval or side_effect_decision == "requires_approval":
+                return PolicyDecision(
+                    status="approval_required",
+                    allowed=False,
+                    reason="side effect policy requires approval",
+                    tool_name=spec_name,
+                )
+
         if getattr(spec, "policy", None) == "ask" and getattr(context, "require_human_approval", False):
             return PolicyDecision(
                 status="approval_required",
