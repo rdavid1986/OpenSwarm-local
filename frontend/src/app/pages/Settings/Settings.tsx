@@ -1309,6 +1309,211 @@ const API_KEY_STEPS = [
   },
 ];
 
+
+const ThemeCandidatePreviewPanel: React.FC = () => {
+  const c = useClaudeTokens();
+  const [themePreviewInput, setThemePreviewInput] = useState(`{
+  "path": ".vscode/themes/example-dark.json",
+  "payload": {
+    "name": "Example Dark",
+    "colors": {
+      "editor.background": "#111111"
+    },
+    "license": "MIT"
+  }
+}`);
+  const [themePreviewLoading, setThemePreviewLoading] = useState(false);
+  const [themePreviewError, setThemePreviewError] = useState('');
+  const [themePreviewResult, setThemePreviewResult] = useState<any | null>(null);
+
+  const runThemeCandidatePreview = async () => {
+    setThemePreviewLoading(true);
+    setThemePreviewError('');
+    setThemePreviewResult(null);
+
+    try {
+      const parsed = JSON.parse(themePreviewInput);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('Theme candidate input must be a JSON object.');
+      }
+
+      const response = await fetch(`${API_BASE}/theme-compat/ide-theme/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Theme preview failed: ${response.status}`);
+      }
+
+      setThemePreviewResult(await response.json());
+    } catch (error) {
+      setThemePreviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setThemePreviewLoading(false);
+    }
+  };
+
+  const adapter = themePreviewResult?.adapter || null;
+  const candidate = themePreviewResult?.candidate || null;
+  const report = themePreviewResult?.diagnostic_report || null;
+  const riskFlags = Array.isArray(report?.risk_flags) ? report.risk_flags : [];
+  const requiredActions = Array.isArray(report?.required_actions) ? report.required_actions : [];
+  const diagnostics = Array.isArray(report?.diagnostics) ? report.diagnostics : [];
+
+  const chipSx = {
+    px: 0.85,
+    py: 0.35,
+    borderRadius: 999,
+    fontSize: '0.68rem',
+    border: `1px solid ${c.border.subtle}`,
+    bgcolor: c.bg.elevated,
+    color: c.text.secondary,
+  };
+
+  return (
+    <Box sx={{ display: 'grid', gap: 2 }}>
+      <Box sx={{
+        p: 1.5,
+        borderRadius: `${c.radius.md}px`,
+        border: `1px solid ${c.border.subtle}`,
+        bgcolor: c.bg.elevated,
+      }}>
+        <Typography sx={{ color: c.text.primary, fontWeight: 700, fontSize: '0.95rem', mb: 0.4 }}>
+          IDE Theme Candidate Preview
+        </Typography>
+        <Typography sx={{ color: c.text.tertiary, fontSize: '0.76rem', lineHeight: 1.45 }}>
+          Review VS Code/Cursor theme, icon theme, product icon theme, settings or profile metadata before any future apply flow.
+          This panel is read-only: it does not apply themes, install extensions, copy assets, mutate settings or enable permissions.
+        </Typography>
+      </Box>
+
+      <TextField
+        label="Theme candidate JSON"
+        value={themePreviewInput}
+        onChange={(event) => setThemePreviewInput(event.target.value)}
+        multiline
+        minRows={10}
+        fullWidth
+        spellCheck={false}
+        sx={{
+          '& .MuiInputBase-root': {
+            bgcolor: c.bg.elevated,
+            color: c.text.primary,
+            fontFamily: 'monospace',
+            fontSize: '0.75rem',
+            borderRadius: `${c.radius.md}px`,
+          },
+          '& .MuiInputLabel-root': { color: c.text.muted },
+          '& .MuiOutlinedInput-notchedOutline': { borderColor: c.border.subtle },
+        }}
+      />
+
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+        <Button
+          variant="outlined"
+          onClick={runThemeCandidatePreview}
+          disabled={themePreviewLoading}
+          sx={{
+            textTransform: 'none',
+            borderColor: c.border.medium,
+            color: c.text.primary,
+            '&:hover': { borderColor: c.accent.primary },
+          }}
+        >
+          {themePreviewLoading ? 'Previewing...' : 'Preview candidate'}
+        </Button>
+        {themePreviewLoading && <CircularProgress size={16} sx={{ color: c.accent.primary }} />}
+        <Typography sx={{ color: c.text.ghost, fontSize: '0.7rem' }}>
+          Review-only. No Apply action exists in this phase.
+        </Typography>
+      </Box>
+
+      {themePreviewError && (
+        <Alert severity="error" sx={{ bgcolor: `${c.status.error}10`, color: c.text.primary }}>
+          {themePreviewError}
+        </Alert>
+      )}
+
+      {themePreviewResult && (
+        <Box sx={{
+          display: 'grid',
+          gap: 1.25,
+          p: 1.5,
+          borderRadius: `${c.radius.md}px`,
+          border: `1px solid ${c.border.subtle}`,
+          bgcolor: c.bg.secondary,
+        }}>
+          <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', alignItems: 'center' }}>
+            <Box sx={chipSx}>status: {report?.status || themePreviewResult.status || 'unknown'}</Box>
+            <Box sx={chipSx}>platform: {adapter?.detected_platform || candidate?.detected_platform || 'unknown'}</Box>
+            <Box sx={chipSx}>kind: {adapter?.detected_kind || candidate?.detected_kind || 'unknown'}</Box>
+            <Box sx={chipSx}>side-effect-free: {themePreviewResult.side_effect_free ? 'yes' : 'no'}</Box>
+          </Box>
+
+          <Box>
+            <Typography sx={{ color: c.text.primary, fontWeight: 700, fontSize: '0.82rem' }}>
+              {candidate?.title || adapter?.source_name || 'Untitled Theme Candidate'}
+            </Typography>
+            <Typography sx={{ color: c.text.tertiary, fontSize: '0.72rem', mt: 0.25 }}>
+              license: {candidate?.source_license || adapter?.source_license || 'unknown'} · source: {candidate?.source_uri || adapter?.source_uri || 'unknown'}
+            </Typography>
+          </Box>
+
+          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+            <Box>
+              <Typography sx={{ color: c.text.muted, fontWeight: 700, fontSize: '0.7rem', mb: 0.45 }}>
+                Risk flags
+              </Typography>
+              <Typography sx={{ color: riskFlags.length ? c.accent.primary : c.text.tertiary, fontSize: '0.72rem', lineHeight: 1.45 }}>
+                {riskFlags.length ? riskFlags.join(', ') : 'none'}
+              </Typography>
+            </Box>
+            <Box>
+              <Typography sx={{ color: c.text.muted, fontWeight: 700, fontSize: '0.7rem', mb: 0.45 }}>
+                Required actions
+              </Typography>
+              <Typography sx={{ color: requiredActions.length ? c.accent.primary : c.text.tertiary, fontSize: '0.72rem', lineHeight: 1.45 }}>
+                {requiredActions.length ? requiredActions.join(', ') : 'none'}
+              </Typography>
+            </Box>
+          </Box>
+
+          {diagnostics.length > 0 && (
+            <Box>
+              <Typography sx={{ color: c.text.muted, fontWeight: 700, fontSize: '0.7rem', mb: 0.45 }}>
+                Diagnostics
+              </Typography>
+              <Box sx={{ display: 'grid', gap: 0.6 }}>
+                {diagnostics.map((item: any, index: number) => (
+                  <Box
+                    key={`${item?.code || 'diagnostic'}-${index}`}
+                    sx={{
+                      p: 0.85,
+                      borderRadius: `${c.radius.sm}px`,
+                      border: `1px solid ${c.border.subtle}`,
+                      bgcolor: item?.level === 'error' ? `${c.status.error}10` : c.bg.elevated,
+                    }}
+                  >
+                    <Typography sx={{ color: c.text.primary, fontSize: '0.72rem', fontWeight: 700 }}>
+                      {item?.code || 'diagnostic'} · {item?.level || 'info'}
+                    </Typography>
+                    <Typography sx={{ color: c.text.secondary, fontSize: '0.72rem', mt: 0.25 }}>
+                      {item?.message || 'No diagnostic message.'}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+            </Box>
+          )}
+        </Box>
+      )}
+    </Box>
+  );
+};
+
+
 const Settings: React.FC = () => {
   const open = useAppSelector((s) => s.settings.modalOpen);
   const c = useClaudeTokens();
@@ -1351,13 +1556,13 @@ const Settings: React.FC = () => {
   const installing = useAppSelector((s) => s.update.installing);
 
   const initialTab = useAppSelector((s) => s.settings.initialTab);
-  const [activeTab, setActiveTab] = useState<'general' | 'models' | 'usage' | 'commands'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'models' | 'usage' | 'commands' | 'themes'>('general');
   const [form, setForm] = useState<AppSettings>({ ...settings });
 
   // When the modal opens with a requested tab (e.g., from the warning
   // banner's "Configure models" link), switch to it.
   useEffect(() => {
-    if (initialTab && ['general', 'models', 'usage', 'commands'].includes(initialTab)) {
+    if (initialTab && ['general', 'models', 'usage', 'commands', 'themes'].includes(initialTab)) {
       setActiveTab(initialTab as typeof activeTab);
     }
   }, [initialTab]);
@@ -1563,6 +1768,7 @@ const Settings: React.FC = () => {
           <Tab label="Models" value="models" disableRipple />
           <Tab label="Usage" value="usage" disableRipple />
           <Tab label="Commands" value="commands" disableRipple />
+          <Tab label="Themes" value="themes" disableRipple />
         </Tabs>
       </DialogTitle>
 
@@ -2332,6 +2538,10 @@ const Settings: React.FC = () => {
       ) : activeTab === 'usage' ? (
       <Box sx={{ display: 'flex', flexDirection: 'column', pt: 2.5, pb: 1, animation: 'fadeIn 0.2s ease', '@keyframes fadeIn': { from: { opacity: 0 }, to: { opacity: 1 } } }}>
         <UsageStats />
+      </Box>
+      ) : activeTab === 'themes' ? (
+      <Box sx={{ display: 'flex', flexDirection: 'column', pt: 2.5, pb: 1, animation: 'fadeIn 0.2s ease', '@keyframes fadeIn': { from: { opacity: 0 }, to: { opacity: 1 } } }}>
+        <ThemeCandidatePreviewPanel />
       </Box>
       ) : (
       <Box sx={{ pt: 2.5, pb: 1, animation: 'fadeIn 0.2s ease', '@keyframes fadeIn': { from: { opacity: 0 }, to: { opacity: 1 } } }}>
