@@ -323,3 +323,22 @@ def test_context_clarification_treats_ok_as_vague_without_pending_context():
     assert result["ok"] is False
     assert result["needs_clarification"] is True
     assert result["reason"] == "project_mode_request_too_vague"
+
+def test_context_clarification_does_not_treat_ios_inside_horarios_as_mobile():
+    result = resolve_context_clarification(
+        user_message="Quiero crear una landing para una peluquería con horarios y WhatsApp",
+        swarm_mode="app_builder",
+    )
+
+    assert result["needs_clarification"] is False
+    assert result["creation_type"] == "web"
+
+
+def test_context_clarification_still_detects_explicit_ios_app_as_mobile():
+    result = resolve_context_clarification(
+        user_message="Quiero crear una app iOS",
+        swarm_mode="app_builder",
+    )
+
+    assert result["needs_clarification"] is False
+    assert result["creation_type"] == "mobile"

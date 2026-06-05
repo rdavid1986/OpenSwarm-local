@@ -8,6 +8,7 @@ context to continue safely.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable
 from uuid import uuid5, NAMESPACE_URL
 
@@ -49,6 +50,12 @@ def _has_any(text: str, terms: set[str]) -> bool:
     return any(term in text for term in terms)
 
 
+def _has_term_any(text: str, terms: set[str]) -> bool:
+    return any(
+        re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", text, flags=re.IGNORECASE)
+        for term in terms
+    )
+
 def _extract_json_object(text: str) -> dict[str, Any] | None:
     raw = (text or "").strip()
     if not raw:
@@ -74,7 +81,7 @@ def infer_creation_type(user_message: str) -> str:
     if _has_any(text, {"videojuego", "juego", "unity", "godot", "unreal", "game"}):
         return "game"
 
-    if _has_any(text, {"android", "ios", "mobile", "móvil", "movil", "app móvil", "app movil"}):
+    if _has_term_any(text, {"android", "ios", "mobile", "móvil", "movil", "app móvil", "app movil", "mobile app"}):
         return "mobile"
 
     if _has_any(text, {"windows", "mac", "macos", "linux", "desktop", "escritorio", "programa de windows", "programa para windows"}):
