@@ -95,6 +95,7 @@ from backend.apps.swarms.candidate_refinement_planner import plan_candidate_refi
 from backend.apps.swarms.context_clarification import resolve_model_context_clarification
 from backend.apps.swarms.dynamic_intake_policy import resolve_dynamic_intake_policy
 from backend.apps.swarms.dynamic_intake_plan import enrich_dynamic_intake_plan
+from backend.apps.swarms.task_envelope import build_task_envelope_from_swarm_input, dump_task_envelope
 from backend.apps.swarms.intent_brief import build_intent_brief
 from backend.apps.swarms.model_response_contract import build_model_response_contract_prompt
 from backend.apps.swarms.state_context import build_state_context_payload, build_state_context_prompt
@@ -1878,6 +1879,43 @@ def _project_intake_skipped_questions(state: dict[str, Any]) -> set[str]:
     return {str(item) for item in skipped if str(item).strip()}
 
 
+def _build_project_intake_task_envelope(
+    swarm,
+    user_message: str,
+    *,
+    model: str = "qwen2.5-coder:14b",
+    intake_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    state = intake_state if isinstance(intake_state, dict) else {}
+    available_context = {
+        "objective": user_message,
+        "project_intake_status": state.get("status") or "collecting",
+        "project_intake_profile": (
+            state.get("intake_profile", {}).get("profile")
+            if isinstance(state.get("intake_profile"), dict)
+            else None
+        ),
+        "project_intake_answers": dict(state.get("answers") or {}),
+        "project_intake_skipped_questions": list(state.get("skipped_questions") or []),
+        "requested_outputs": ["preview", "implementation_plan"],
+        "model_requirements": {"preferred_model": model},
+    }
+    return dump_task_envelope(
+        build_task_envelope_from_swarm_input(
+            user_message=user_message,
+            swarm_mode="app_builder",
+            intent=getattr(swarm, "intent", None),
+            available_context=available_context,
+            requested_outputs=["preview", "implementation_plan"],
+            trace_context={
+                "source": "project_intake",
+                "swarm_id": str(getattr(swarm, "id", "") or ""),
+                "model": model,
+            },
+        )
+    )
+
+
 def _project_intake_question_title(question_id: str) -> str:
     question = _project_intake_question_by_id(question_id)
     return str((question or {}).get("title") or question_id)
@@ -1999,6 +2037,12 @@ async def _start_project_intake(swarm, user_message: str, model: str = "qwen2.5-
             "provider_health": policy.get("provider_health"),
         },
     }
+    state["task_envelope"] = _build_project_intake_task_envelope(
+        swarm,
+        user_message,
+        model=model,
+        intake_state=state,
+    )
     first_question_id = _next_project_intake_question_id({}, state)
     state["current_question_id"] = first_question_id
     swarm.project_intake_state = state
@@ -2013,6 +2057,13 @@ async def _advance_project_intake(swarm, user_message: str, model: str = "qwen2.
     state = dict(_get_project_intake_state(swarm))
     answers = dict(state.get("answers") or {})
     current_question_id = str(state.get("current_question_id") or "")
+    if not isinstance(state.get("task_envelope"), dict):
+        state["task_envelope"] = _build_project_intake_task_envelope(
+            swarm,
+            str(state.get("original_request") or user_message),
+            model=model,
+            intake_state=state,
+        )
     if current_question_id:
         answers[current_question_id] = user_message
 

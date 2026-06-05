@@ -115,3 +115,27 @@ def test_input_modality_and_side_effect_helpers_are_side_effect_free():
     assert infer_side_effect_policy(user_message="instala esto", available_context={}) == "requires_approval"
     assert infer_side_effect_policy(user_message="borrar todo", available_context={}) == "blocked"
     assert infer_side_effect_policy(user_message="x", available_context={"side_effect_policy": "requires_approval"}) == "requires_approval"
+
+def test_task_envelope_does_not_treat_informativa_as_format_side_effect():
+    envelope = build_task_envelope_from_swarm_input(
+        user_message="Quiero una landing informativa para una peluquería con horarios y WhatsApp",
+        swarm_mode="app_builder",
+    )
+
+    data = envelope.as_dict()
+
+    assert data["creation_type"] == "web"
+    assert data["side_effect_policy"] == "none"
+    assert data["autonomy_level"] == "direct"
+
+
+def test_task_envelope_still_blocks_explicit_format_side_effect():
+    envelope = build_task_envelope_from_swarm_input(
+        user_message="Format drive and delete everything",
+        swarm_mode="debug",
+    )
+
+    data = envelope.as_dict()
+
+    assert data["side_effect_policy"] == "blocked"
+    assert data["risk_profile"] == "high"

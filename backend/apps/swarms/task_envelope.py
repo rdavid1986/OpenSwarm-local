@@ -13,6 +13,7 @@ The envelope is a normalized contract consumed by later orchestration phases.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import re
 from typing import Any
 
 from backend.apps.modes.mode_ids import normalize_mode_id
@@ -28,6 +29,13 @@ KNOWN_AUTONOMY_LEVELS = {"direct", "supervised", "approval_required", "unknown"}
 def _as_text(value: Any, *, fallback: str = "") -> str:
     text = str(value or "").strip()
     return text if text else fallback
+
+
+def _has_term_any(text: str, terms: set[str]) -> bool:
+    return any(
+        re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", text, flags=re.IGNORECASE)
+        for term in terms
+    )
 
 
 def _clean_list(value: Any, *, limit: int = 12) -> list[str]:
@@ -81,6 +89,9 @@ def infer_side_effect_policy(*, user_message: str, available_context: dict[str, 
         "eliminar todo",
         "delete everything",
         "format",
+        "format drive",
+        "format disk",
+        "formatear",
         "destruir",
     }
     approval_terms = {
@@ -105,9 +116,9 @@ def infer_side_effect_policy(*, user_message: str, available_context: dict[str, 
         "rollback",
     }
 
-    if any(term in text for term in blocked_terms):
+    if _has_term_any(text, blocked_terms):
         return "blocked"
-    if any(term in text for term in approval_terms):
+    if _has_term_any(text, approval_terms):
         return "requires_approval"
     return "none"
 
