@@ -98,3 +98,48 @@ def test_template_selection_dynamic_plan_builds_readme_dag(tmp_path):
     assert "Create implementation brief README.md" in titles
     assert "Review implementation brief README.md" in titles
     assert "Create static app" not in titles
+
+
+def test_select_dag_template_landing_visual_without_backend_uses_static_app():
+    plan = SwarmOrchestrator._normalize_generated_plan(
+        {
+            "summary": "Landing visual para peluqueria",
+            "app_type": "landing page",
+            "main_goal": "mostrar horarios y WhatsApp",
+            "frontend": "HTML/CSS",
+            "backend": "sin backend por ahora",
+            "database": "no necesita base por ahora",
+        }
+    )
+
+    assert SwarmOrchestrator._select_dag_template(plan) == "static_app"
+
+
+def test_select_dag_template_real_backend_signal_overrides_visual_scope():
+    plan = SwarmOrchestrator._normalize_generated_plan(
+        {
+            "summary": "Dashboard visual con backend real",
+            "app_type": "dashboard",
+            "main_goal": "usuarios con login real y datos persistentes",
+            "frontend": "React",
+            "backend": "backend real FastAPI",
+            "database": "PostgreSQL",
+        }
+    )
+
+    assert SwarmOrchestrator._select_dag_template(plan) == "implementation_brief"
+
+
+def test_select_dag_template_static_label_with_real_database_stays_implementation_brief():
+    plan = SwarmOrchestrator._normalize_generated_plan(
+        {
+            "summary": "Static admin with persisted data",
+            "app_type": "static dashboard",
+            "main_goal": "manage products with production database",
+            "frontend": "HTML/CSS",
+            "backend": "server",
+            "database": "PostgreSQL",
+        }
+    )
+
+    assert SwarmOrchestrator._select_dag_template(plan) == "implementation_brief"
