@@ -11,6 +11,128 @@ export type CanvasProceduralNodeStatus =
   | 'next_to_run'
   | string;
 
+export type CanvasProceduralLiveStateTone =
+  | 'neutral'
+  | 'active'
+  | 'attention'
+  | 'success'
+  | 'danger'
+  | 'muted';
+
+export interface CanvasProceduralLiveStateMeta {
+  tone: CanvasProceduralLiveStateTone;
+  label: string;
+  description: string;
+  active: boolean;
+  attention: boolean;
+  terminal: boolean;
+  dimmed: boolean;
+  pulse: boolean;
+  glow: boolean;
+}
+
+export function resolveProceduralLiveExecutionState(
+  status: CanvasProceduralNodeStatus | undefined,
+): CanvasProceduralLiveStateMeta {
+  const normalized = normalizeStatus(status);
+
+  if (normalized === 'running') {
+    return {
+      tone: 'active',
+      label: 'Ejecutando',
+      description: 'El nodo está ejecutando una tarea, tool o subpaso activo.',
+      active: true,
+      attention: false,
+      terminal: false,
+      dimmed: false,
+      pulse: true,
+      glow: true,
+    };
+  }
+
+  if (normalized === 'next_to_run') {
+    return {
+      tone: 'active',
+      label: 'Siguiente',
+      description: 'El nodo está marcado como próximo paso del flujo.',
+      active: true,
+      attention: false,
+      terminal: false,
+      dimmed: false,
+      pulse: false,
+      glow: true,
+    };
+  }
+
+  if (normalized === 'waiting_approval' || normalized === 'blocked') {
+    return {
+      tone: 'attention',
+      label: normalized === 'waiting_approval' ? 'Esperando aprobación' : 'Bloqueado',
+      description: 'El nodo requiere aprobación, desbloqueo o una acción humana antes de continuar.',
+      active: true,
+      attention: true,
+      terminal: false,
+      dimmed: false,
+      pulse: true,
+      glow: true,
+    };
+  }
+
+  if (normalized === 'completed') {
+    return {
+      tone: 'success',
+      label: 'Completado',
+      description: 'El nodo terminó correctamente.',
+      active: false,
+      attention: false,
+      terminal: true,
+      dimmed: false,
+      pulse: false,
+      glow: false,
+    };
+  }
+
+  if (normalized === 'failed') {
+    return {
+      tone: 'danger',
+      label: 'Falló',
+      description: 'El nodo terminó con error y requiere revisión.',
+      active: false,
+      attention: true,
+      terminal: true,
+      dimmed: false,
+      pulse: false,
+      glow: true,
+    };
+  }
+
+  if (normalized === 'skipped') {
+    return {
+      tone: 'muted',
+      label: 'Omitido',
+      description: 'El nodo fue omitido por el flujo actual.',
+      active: false,
+      attention: false,
+      terminal: true,
+      dimmed: true,
+      pulse: false,
+      glow: false,
+    };
+  }
+
+  return {
+    tone: 'neutral',
+    label: 'Pendiente',
+    description: 'El nodo está pendiente de ejecución.',
+    active: false,
+    attention: false,
+    terminal: false,
+    dimmed: false,
+    pulse: false,
+    glow: false,
+  };
+}
+
 export interface CanvasProceduralSwarmAnchor {
   id: string;
   x: number;
@@ -47,6 +169,7 @@ export interface CanvasProceduralSwarmLayoutNode extends CanvasProceduralSwarmNo
   procedural_lane: 'right' | 'left' | 'below';
   procedural_order: number;
   procedural_active: boolean;
+  procedural_live_state: CanvasProceduralLiveStateMeta;
 }
 
 export interface CanvasProceduralSwarmLayoutResult {
@@ -185,6 +308,7 @@ export function resolveProceduralSwarmClusterLayout(params: {
       procedural_lane: lane,
       procedural_order: index,
       procedural_active: isActiveStatus(node.status),
+      procedural_live_state: resolveProceduralLiveExecutionState(node.status),
     };
   });
 

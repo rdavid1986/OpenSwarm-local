@@ -3,6 +3,9 @@ import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
 import Typography from '@mui/material/Typography';
 import { useClaudeTokens } from '@/shared/styles/ThemeContext';
+import type { CanvasProceduralLiveStateMeta as ImportedCanvasProceduralLiveStateMeta } from './canvasProceduralSwarmLayout';
+
+type CanvasProceduralLiveStateMeta = ImportedCanvasProceduralLiveStateMeta;
 
 type OrchestrationNodeStatus =
   | 'pending'
@@ -21,6 +24,7 @@ export interface OrchestrationCanvasNode {
   label: string;
   role?: string | null;
   status?: OrchestrationNodeStatus;
+  procedural_live_state?: CanvasProceduralLiveStateMeta;
   description?: string | null;
   assigned_agent_role?: string | null;
   assigned_contract_id?: string | null;
@@ -62,6 +66,19 @@ const NODE_W = 180;
 const NODE_H = 96;
 const NODE_EXPANDED_H = 172;
 const CLICK_DRAG_THRESHOLD = 4;
+
+interface CanvasStatusMeta {
+  label: string;
+  color: string;
+  border: string;
+  bg: string;
+  description: string;
+  active: boolean;
+  attention: boolean;
+  pulse?: boolean;
+  glow?: boolean;
+  dimmed?: boolean;
+}
 
 function normalizeCanvasStatus(status?: string | null): string {
   const raw = String(status || 'pending').trim().toLowerCase();
@@ -168,7 +185,33 @@ const SwarmOrchestrationPreview: React.FC<Props> = ({ state, zoom = 1, onNodeMov
     }
   }, [displayedNodes, localNodePositions, onNodeExpandedChange, onNodeMoveEnd]);
 
-  const getStatusMeta = useCallback((status?: string) => {
+  const getStatusMeta = useCallback((status?: string, liveState?: CanvasProceduralLiveStateMeta): CanvasStatusMeta => {
+    if (liveState) {
+      const color =
+        liveState.tone === 'danger'
+          ? c.status.error
+          : liveState.tone === 'success'
+            ? c.status.success
+            : liveState.tone === 'attention'
+              ? c.status.warning
+              : liveState.tone === 'active'
+                ? c.status.info
+                : c.text.tertiary;
+
+      return {
+        label: liveState.label,
+        color,
+        border: `${color}AA`,
+        bg: `${color}12`,
+        description: liveState.description,
+        active: liveState.active,
+        attention: liveState.attention,
+        pulse: liveState.pulse,
+        glow: liveState.glow,
+        dimmed: liveState.dimmed,
+      };
+    }
+
     const normalized = normalizeCanvasStatus(status);
 
     if (normalized === 'running') {
@@ -394,7 +437,8 @@ const SwarmOrchestrationPreview: React.FC<Props> = ({ state, zoom = 1, onNodeMov
         const width = node.width || NODE_W;
         const height = node.expanded ? NODE_EXPANDED_H : (node.height || NODE_H);
         const status = normalizeCanvasStatus(node.status || 'pending');
-        const statusMeta = getStatusMeta(status);
+        const statusMeta = getStatusMeta(node.status, node.procedural_live_state);
+        const meta = statusMeta;
         const attentionChips = [
           ...(statusMeta.attention ? [{ label: statusMeta.label, color: statusMeta.color }] : []),
           ...(node.evidence_ref ? [{ label: 'evidence', color: c.status.success }] : []),
@@ -423,13 +467,15 @@ const SwarmOrchestrationPreview: React.FC<Props> = ({ state, zoom = 1, onNodeMov
               borderRadius: 2,
               bgcolor: statusMeta.bg,
               border: `1px solid ${statusMeta.border}`,
-              boxShadow: statusMeta.active
-                ? `0 0 0 1px ${statusMeta.color}33, 0 0 20px ${statusMeta.color}24`
-                : statusMeta.attention
-                  ? `0 0 0 1px ${statusMeta.color}22, 0 0 14px ${statusMeta.color}16`
-                  : c.shadow.lg,
-              animation: statusMeta.active ? 'swarm-node-glow 2.4s ease-in-out infinite' : 'none',
-              opacity: status === 'skipped' ? 0.72 : 0.97,
+              boxShadow: meta.glow
+                ? `0 0 0 1px ${statusMeta.color}33, 0 0 22px ${statusMeta.color}26`
+                : statusMeta.active
+                  ? `0 0 0 1px ${statusMeta.color}33, 0 0 20px ${statusMeta.color}24`
+                  : statusMeta.attention
+                    ? `0 0 0 1px ${statusMeta.color}22, 0 0 14px ${statusMeta.color}16`
+                    : c.shadow.lg,
+              animation: meta.pulse ? 'swarm-node-glow 1.8s ease-in-out infinite' : statusMeta.active ? 'swarm-node-glow 2.4s ease-in-out infinite' : 'none',
+              opacity: meta.dimmed ? 0.58 : status === 'skipped' ? 0.72 : 0.97,
               pointerEvents: 'auto',
               userSelect: 'none',
             }}
