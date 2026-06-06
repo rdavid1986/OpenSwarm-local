@@ -1,3 +1,5 @@
+import { mergeCanvasBounds, rectsOverlap, type CanvasRect } from '@/shared/layout/canvasFreeSlotResolver';
+
 export type CanvasProceduralNodeStatus =
   | 'pending'
   | 'running'
@@ -8,13 +10,6 @@ export type CanvasProceduralNodeStatus =
   | 'blocked'
   | 'next_to_run'
   | string;
-
-export interface CanvasRect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
 
 export interface CanvasProceduralSwarmAnchor {
   id: string;
@@ -67,10 +62,6 @@ const DEFAULT_NODE_W = 180;
 const DEFAULT_NODE_H = 96;
 const DEFAULT_COLUMNS = 2;
 
-function rectsOverlap(a: CanvasRect, b: CanvasRect): boolean {
-  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-}
-
 function normalizeStatus(status: CanvasProceduralNodeStatus | undefined): string {
   return String(status || 'pending').trim().toLowerCase();
 }
@@ -78,15 +69,6 @@ function normalizeStatus(status: CanvasProceduralNodeStatus | undefined): string
 function isActiveStatus(status: CanvasProceduralNodeStatus | undefined): boolean {
   const normalized = normalizeStatus(status);
   return normalized === 'running' || normalized === 'next_to_run' || normalized === 'waiting_approval' || normalized === 'blocked';
-}
-
-function mergeBounds(rects: CanvasRect[]): CanvasRect | null {
-  if (!rects.length) return null;
-  const left = Math.min(...rects.map((rect) => rect.x));
-  const top = Math.min(...rects.map((rect) => rect.y));
-  const right = Math.max(...rects.map((rect) => rect.x + rect.w));
-  const bottom = Math.max(...rects.map((rect) => rect.y + rect.h));
-  return { x: left, y: top, w: right - left, h: bottom - top };
 }
 
 function laneOrigin(
@@ -207,7 +189,7 @@ export function resolveProceduralSwarmClusterLayout(params: {
   });
 
   const nodeRects = nodes.map((node) => ({ x: node.x, y: node.y, w: node.width, h: node.height }));
-  const bounds = mergeBounds([{ x: params.anchor.x, y: params.anchor.y, w: params.anchor.width, h: params.anchor.height }, ...nodeRects]);
+  const bounds = mergeCanvasBounds([{ x: params.anchor.x, y: params.anchor.y, w: params.anchor.width, h: params.anchor.height }, ...nodeRects]);
   const activeRects = nodes
     .filter((node) => node.procedural_active)
     .map((node) => ({ x: node.x, y: node.y, w: node.width, h: node.height }));
@@ -217,6 +199,6 @@ export function resolveProceduralSwarmClusterLayout(params: {
     lane,
     nodes,
     bounds,
-    focusRect: mergeBounds(activeRects.length ? activeRects : nodeRects),
+    focusRect: mergeCanvasBounds(activeRects.length ? activeRects : nodeRects),
   };
 }
