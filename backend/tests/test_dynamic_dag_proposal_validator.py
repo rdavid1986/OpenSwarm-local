@@ -1333,3 +1333,81 @@ def test_model_dag_proposal_prompt_uses_ri_prompt_architecture():
     assert "el modelo razona, pero no inventa estado" in prompt.lower()
     assert "model_generated_dag" in prompt
     assert "Do not execute tools" in prompt
+
+
+def test_subagent_decision_metadata_detects_backend_database_and_roles():
+    orchestrator = SwarmOrchestrator()
+
+    decision = orchestrator._build_subagent_decision_metadata(
+        proposal_tasks=[
+            {
+                "task_type": "architecture_plan_execute",
+                "role": "ArchitectAgent",
+            },
+            {
+                "task_type": "backend_plan_execute",
+                "role": "BackendAgent",
+            },
+            {
+                "task_type": "create_readme",
+                "role": "DocumentationAgent",
+            },
+        ],
+        generated_plan={
+            "backend": "FastAPI",
+            "database": "PostgreSQL",
+        },
+        validation_errors=[],
+    )
+
+    assert decision["kind"] == "subagent_creation_decision"
+    assert decision["backend_detected"] is True
+    assert decision["database_detected"] is True
+    assert "ArchitectAgent" in decision["created_roles"]
+    assert "BackendAgent" in decision["created_roles"]
+    assert "DocumentationAgent" in decision["created_roles"]
+    assert "FrontendAgent" in decision["skipped_roles"]
+    assert decision["validation_error_codes"] == []
+
+
+def test_subagent_decision_metadata_marks_validation_errors():
+    orchestrator = SwarmOrchestrator()
+
+    decision = orchestrator._build_subagent_decision_metadata(
+        proposal_tasks=[
+            {
+                "task_type": "architecture_plan_execute",
+                "role": "ArchitectAgent",
+            }
+        ],
+        generated_plan={
+            "backend": "none",
+            "database": "none",
+        },
+        validation_errors=[
+            {"error": "unknown_dependency"},
+            {"error": "invalid_role"},
+        ],
+    )
+
+    assert decision["backend_detected"] is False
+    assert decision["database_detected"] is False
+    assert decision["validation_error_codes"] == [
+        "unknown_dependency",
+        "invalid_role",
+    ]
+    assert "Validation errors are present" in decision["reason"]
+
+
+def test_subagent_decision_metadata_handles_empty_proposal():
+    orchestrator = SwarmOrchestrator()
+
+    decision = orchestrator._build_subagent_decision_metadata(
+        proposal_tasks=[],
+        generated_plan={},
+        validation_errors=[],
+    )
+
+    assert decision["task_count"] == 0
+    assert decision["created_roles"] == []
+    assert "No proposal tasks were available" in decision["reason"]
