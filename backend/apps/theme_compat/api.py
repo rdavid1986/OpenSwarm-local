@@ -15,7 +15,7 @@ from .ide_theme_candidates import (
 
 
 @asynccontextmanager
-async def _theme_compat_lifespan(app):
+async def _theme_compat_lifespan(app=None):
     yield
 
 
