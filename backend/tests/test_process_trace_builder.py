@@ -602,3 +602,37 @@ def test_builder_from_dag_subagent_decision_source():
     assert item["subsystem"] == "MiniAgentCore"
     assert item["details"]["task_count"] == 6
     assert item["details"]["backend_detected"] is False
+
+
+def test_builder_from_runtime_e2e_integration_source():
+    source = {"source_kind":"runtime_e2e_integration","runtime_e2e_kind":"runtime_e2e_integration_state","candidate_id":"cand-runtime","stage":"completed","can_mark_runtime_e2e_complete":True,"evidence_refs":["ev1"]}
+    item = build_process_trace_item_from_source(source)
+    assert normalize_process_trace_source_kind(source) == "runtime_e2e_integration"
+    assert item["kind"] == "validation"
+    assert item["subsystem"] == "RuntimeCore"
+    assert item["status"] == "completed"
+    assert item["details"]["can_execute"] is False
+    assert item["details"]["contains_private_reasoning"] is False
+
+
+def test_builder_from_sdd_tdd_materialization_e2e_source():
+    source = {"source_kind":"sdd_tdd_materialization_e2e","e2e_kind":"sdd_tdd_materialization_e2e_gate","candidate_id":"cand-e2e","gate_status":"blocked","blockers":["missing_validation"],"required_actions":["run_validation"]}
+    item = build_process_trace_item_from_source(source)
+    assert normalize_process_trace_source_kind(source) == "sdd_tdd_materialization_e2e"
+    assert item["kind"] == "validation"
+    assert item["subsystem"] == "ValidationCore"
+    assert item["status"] == "blocked"
+    assert item["details"]["blockers"] == ["missing_validation"]
+    assert item["details"]["can_execute_commands"] is False
+
+
+def test_builder_from_action_materialization_runtime_source():
+    source = {"source_kind":"action_materialization_runtime","materialization_kind":"action_materialization_decision","candidate_id":"cand-action","decision":"requires_approval","required_actions":["review_action_materialization_request"],"approval_id":"approval-1","requested_commands":["python -m pytest -q"]}
+    item = build_process_trace_item_from_source(source)
+    assert normalize_process_trace_source_kind(source) == "action_materialization_runtime"
+    assert item["kind"] == "action"
+    assert item["subsystem"] == "ActionCore"
+    assert item["status"] == "warning"
+    assert item["details"]["approval_id"] == "approval-1"
+    assert item["details"]["can_execute"] is False
+    assert item["details"]["contains_private_reasoning"] is False
