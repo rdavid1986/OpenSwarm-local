@@ -78,7 +78,7 @@ import PersistentPlansCanvasCard from './PersistentPlansCanvasCard';
 import ExperimentalSwarmCanvasCard from './ExperimentalSwarmCanvasCard';
 import SwarmOrchestrationPreview from './SwarmOrchestrationPreview';
 import type { OrchestrationCanvasState } from './SwarmOrchestrationPreview';
-import { resolveProceduralSwarmClusterLayout } from './canvasProceduralSwarmLayout';
+import { resolveProceduralSwarmClusterLayout, type CanvasProceduralSwarmLayoutResult } from './canvasProceduralSwarmLayout';
 import CanvasControls from './CanvasControls';
 import CardSearchPalette from './CardSearchPalette';
 import DirectionHints from './DirectionHints';
@@ -203,10 +203,10 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     return state as OrchestrationCanvasState;
   }, [activeExperimentalSwarm, linkedSwarmIds]);
 
-  const proceduralOrchestrationCanvasState = useMemo((): OrchestrationCanvasState | null => {
-    if (!orchestrationCanvasState || !linkedSwarmCard) return orchestrationCanvasState;
+  const proceduralOrchestrationLayout = useMemo((): CanvasProceduralSwarmLayoutResult | null => {
+    if (!orchestrationCanvasState || !linkedSwarmCard) return null;
     const nodes = Array.isArray(orchestrationCanvasState.nodes) ? orchestrationCanvasState.nodes : [];
-    if (nodes.length === 0) return orchestrationCanvasState;
+    if (nodes.length === 0) return null;
 
     const occupiedRects = [
       ...Object.values(cards).map((card) => ({
@@ -248,16 +248,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
       },
     });
 
-    return {
-      ...orchestrationCanvasState,
-      nodes: layout.nodes.map((node) => ({
-        ...node,
-        x: node.x,
-        y: node.y,
-        width: node.width,
-        height: node.height,
-      })),
-    };
+    return layout;
   }, [
     orchestrationCanvasState,
     linkedSwarmCard,
@@ -269,6 +260,36 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     swarmCards,
     expandedSessionIds,
   ]);
+
+  const proceduralOrchestrationCanvasState = useMemo((): OrchestrationCanvasState | null => {
+    if (!orchestrationCanvasState || !proceduralOrchestrationLayout) return orchestrationCanvasState;
+    return {
+      ...orchestrationCanvasState,
+      nodes: proceduralOrchestrationLayout.nodes.map((node) => ({
+        ...node,
+        x: node.x,
+        y: node.y,
+        width: node.width,
+        height: node.height,
+      })),
+    };
+  }, [orchestrationCanvasState, proceduralOrchestrationLayout]);
+
+  const activeClusterFocusRect = useMemo(() => {
+    const focusRect = proceduralOrchestrationLayout?.focusRect;
+    if (!focusRect) return null;
+    const activeNodes = proceduralOrchestrationLayout.nodes.filter((node) => node.procedural_active);
+    if (activeNodes.length === 0) return null;
+    return {
+      x: focusRect.x,
+      y: focusRect.y,
+      width: focusRect.w,
+      height: focusRect.h,
+      signature: activeNodes
+        .map((node) => `${node.id}:${node.status || 'pending'}:${Math.round(node.x)}:${Math.round(node.y)}`)
+        .join('|'),
+    };
+  }, [proceduralOrchestrationLayout]);
 
   const orchestrationRects = useMemo(() => {
     const nodes = Array.isArray(proceduralOrchestrationCanvasState?.nodes) ? proceduralOrchestrationCanvasState.nodes : [];
@@ -303,6 +324,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   }, [cards, viewCards, browserCards, plansCards, swarmCards, notes, orchestrationRects]);
 
   const canvas = useCanvasControls(zoomSensitivity, contentBounds, isActive);
+  const lastActiveClusterFocusSignatureRef = useRef<string | null>(null);
   const selection = useDashboardSelection(
     { panX: canvas.panX, panY: canvas.panY, zoom: canvas.zoom, viewportRef: canvas.viewportRef },
     cards,
@@ -790,6 +812,23 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
   const pendingBrowserUrl = useAppSelector((state) => state.tempState.pendingBrowserUrl);
   const pendingFocusAgentId = useAppSelector((state) => state.tempState.pendingFocusAgentId);
   const pendingFocusBrowserId = useAppSelector((state) => state.dashboardLayout.pendingFocusBrowserId);
+
+  useEffect(() => {
+    if (!isActive || !layoutInitialized || !activeClusterFocusRect) return;
+    if (lastActiveClusterFocusSignatureRef.current === activeClusterFocusRect.signature) return;
+    lastActiveClusterFocusSignatureRef.current = activeClusterFocusRect.signature;
+    canvas.actions.fitToCards(
+      [{
+        x: activeClusterFocusRect.x,
+        y: activeClusterFocusRect.y,
+        width: activeClusterFocusRect.width,
+        height: activeClusterFocusRect.height,
+      }],
+      1.15,
+      true,
+      0.55,
+    );
+  }, [isActive, layoutInitialized, activeClusterFocusRect, canvas.actions]);
 
   useEffect(() => {
     if (!dashboardId) return;
