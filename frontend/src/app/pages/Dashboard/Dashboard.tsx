@@ -78,6 +78,7 @@ import PersistentPlansCanvasCard from './PersistentPlansCanvasCard';
 import ExperimentalSwarmCanvasCard from './ExperimentalSwarmCanvasCard';
 import SwarmOrchestrationPreview from './SwarmOrchestrationPreview';
 import type { OrchestrationCanvasState } from './SwarmOrchestrationPreview';
+import { resolveProceduralSwarmClusterLayout } from './canvasProceduralSwarmLayout';
 import CanvasControls from './CanvasControls';
 import CardSearchPalette from './CardSearchPalette';
 import DirectionHints from './DirectionHints';
@@ -189,6 +190,12 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     [swarmCards],
   );
 
+  const linkedSwarmCard = useMemo(() => {
+    const swarmId = activeExperimentalSwarm?.id || null;
+    if (!swarmId) return null;
+    return Object.values(swarmCards).find((card) => !card.hidden && card.swarm_id === swarmId) || null;
+  }, [activeExperimentalSwarm, swarmCards]);
+
   const orchestrationCanvasState = useMemo((): OrchestrationCanvasState | null => {
     if (!activeExperimentalSwarm?.id || !linkedSwarmIds.has(activeExperimentalSwarm.id)) return null;
     const state = activeExperimentalSwarm.orchestration_canvas_state;
@@ -196,8 +203,75 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
     return state as OrchestrationCanvasState;
   }, [activeExperimentalSwarm, linkedSwarmIds]);
 
+  const proceduralOrchestrationCanvasState = useMemo((): OrchestrationCanvasState | null => {
+    if (!orchestrationCanvasState || !linkedSwarmCard) return orchestrationCanvasState;
+    const nodes = Array.isArray(orchestrationCanvasState.nodes) ? orchestrationCanvasState.nodes : [];
+    if (nodes.length === 0) return orchestrationCanvasState;
+
+    const occupiedRects = [
+      ...Object.values(cards).map((card) => ({
+        x: card.x,
+        y: card.y,
+        w: card.width,
+        h: expandedSessionIds.includes(card.session_id) ? Math.max(EXPANDED_CARD_MIN_H, card.height) : card.height,
+      })),
+      ...Object.values(viewCards).map((card) => ({ x: card.x, y: card.y, w: card.width, h: card.height })),
+      ...Object.values(browserCards).map((card) => ({ x: card.x, y: card.y, w: card.width, h: card.height })),
+      ...Object.values(plansCards).filter((card) => !card.hidden).map((card) => ({ x: card.x, y: card.y, w: card.width, h: card.height })),
+      ...Object.values(notes).map((card) => ({ x: card.x, y: card.y, w: card.width, h: card.height })),
+      ...Object.values(swarmCards)
+        .filter((card) => !card.hidden && card.swarm_card_id !== linkedSwarmCard.swarm_card_id)
+        .map((card) => ({ x: card.x, y: card.y, w: card.width, h: card.height })),
+    ];
+
+    const layout = resolveProceduralSwarmClusterLayout({
+      anchor: {
+        id: linkedSwarmCard.swarm_card_id,
+        x: linkedSwarmCard.x,
+        y: linkedSwarmCard.y,
+        width: linkedSwarmCard.width,
+        height: linkedSwarmCard.height,
+      },
+      nodes: nodes.map((node) => ({
+        ...node,
+        width: node.width || 180,
+        height: node.height || 96,
+      })),
+      occupiedRects,
+      options: {
+        lane: 'right',
+        gap: GRID_GAP,
+        nodeWidth: 180,
+        nodeHeight: 96,
+        columns: 2,
+        preserveManualPositions: false,
+      },
+    });
+
+    return {
+      ...orchestrationCanvasState,
+      nodes: layout.nodes.map((node) => ({
+        ...node,
+        x: node.x,
+        y: node.y,
+        width: node.width,
+        height: node.height,
+      })),
+    };
+  }, [
+    orchestrationCanvasState,
+    linkedSwarmCard,
+    cards,
+    viewCards,
+    browserCards,
+    plansCards,
+    notes,
+    swarmCards,
+    expandedSessionIds,
+  ]);
+
   const orchestrationRects = useMemo(() => {
-    const nodes = Array.isArray(orchestrationCanvasState?.nodes) ? orchestrationCanvasState.nodes : [];
+    const nodes = Array.isArray(proceduralOrchestrationCanvasState?.nodes) ? proceduralOrchestrationCanvasState.nodes : [];
     return nodes.map((node) => ({
       x: node.x,
       y: node.y,
@@ -205,7 +279,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
       height: node.height || 96,
       type: 'orchestration' as const,
     }));
-  }, [orchestrationCanvasState]);
+  }, [proceduralOrchestrationCanvasState]);
 
   const contentBounds = useMemo(() => {
     const allRects = [
@@ -2579,7 +2653,7 @@ const DashboardInner: React.FC<DashboardProps> = ({ dashboardId, isActive = true
               </svg>
             )}
             <SwarmOrchestrationPreview
-              state={orchestrationCanvasState}
+              state={proceduralOrchestrationCanvasState}
               zoom={canvas.zoom}
               onNodeMoveEnd={(nodeId, x, y) => {
                 const swarmId = activeExperimentalSwarm?.id;
